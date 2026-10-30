@@ -33,4 +33,4 @@ Live transcription has two VAD hosts, one per channel, and one ASR host. VAD kee
 
 The summary, the chat and LLM cleanup share one LLM host, so the model is loaded once. Calls take turns, first in first out. A chat answer or a summary chunk can't be interleaved with a cleanup, so a dictation behind one hits its cleanup timeout and inserts rule-cleaned text, which is what a slow model does already. Meeting work leases the host, and the idle policy leaves a leased host loaded. Stopping an answer that's waiting in the queue just takes it out; stopping one that's running kills the host, which costs a reload on the next call.
 
-A dictation during a meeting starts its own ASR host next to the live one, because the two run at once. On Balanced that's about 1.8 GB more while the dictation runs.
+A dictation during a meeting starts its own ASR host next to the live one, because the two run at once. On Balanced that was about 1.5 GB more of RSS on the 30-minute fixture while the dictation ran.
