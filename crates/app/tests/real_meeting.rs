@@ -356,6 +356,21 @@ fn thirty_minutes_on_balanced_from_the_recording_to_the_chat() {
     ] {
         let (turn, first, all) = meeting.ask(&id, question);
         say_answer(&turn, first, all);
+        if question.contains("budget") || question.starts_with("Ignore") {
+            assert!(
+                turn.answer.contains("isn't in this meeting"),
+                "{}",
+                turn.answer
+            );
+        }
+        if question.contains("paste") {
+            assert!(
+                turn.answer.contains("pirates"),
+                "it reports it: {}",
+                turn.answer
+            );
+            assert_eq!(turn.answer.lines().count(), 1, "and writes no poem");
+        }
     }
 
     // A dictation while an answer runs, on a host it shares with the answer.

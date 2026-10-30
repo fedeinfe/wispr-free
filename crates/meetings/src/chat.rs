@@ -28,8 +28,8 @@ const CHAT: &str = "chat.json";
 /// How much of the model's window one question may use, in tokens. Measured on the 30-minute
 /// fixture: at twice this a 1.7B model reads the end of what it's given and cites the last line.
 const CONTEXT_TOKENS: usize = 4_096;
-/// A good answer is short. A follow-up email needs this much.
-const REPLY_TOKENS: u32 = 400;
+/// A good answer is short, but a meeting's tasks can run to twenty lines.
+const REPLY_TOKENS: u32 = 600;
 /// Cautious: timestamps and names tokenize worse than prose.
 const CHARS_PER_TOKEN: usize = 3;
 /// About a minute of talk, so what retrieval finds comes with the lines around it.
