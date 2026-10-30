@@ -594,6 +594,27 @@ mod tests {
         assert_eq!(tier_to_recommend(&settings, &catalog, &store, "Lite"), None);
     }
 
+    /// Ticket 14 moved Balanced from Parakeet to Whisper. Someone set up before that keeps their
+    /// tier, and is told to fetch the new model rather than being moved to the recommended one.
+    #[test]
+    fn a_catalog_change_to_a_tier_leaves_the_tier_alone() {
+        let folder = tempfile::tempdir().unwrap();
+        let catalog = Catalog::bundled();
+        let settings = Settings::default();
+        let store = store_with(
+            folder.path(),
+            &catalog,
+            &[
+                "silero-vad-v5",
+                "parakeet-tdt-0.6b-v3-int8",
+                "qwen3-1.7b-q4_k_m",
+            ],
+        );
+
+        assert_eq!(tier_to_recommend(&settings, &catalog, &store, "High"), None);
+        assert_eq!(models_state(&settings, &catalog, &store), Models::Missing);
+    }
+
     #[test]
     fn missing_models_and_a_gone_folder_read_differently() {
         let folder = tempfile::tempdir().unwrap();

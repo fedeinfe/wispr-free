@@ -12,7 +12,7 @@ use wf_core::audio::SAMPLE_RATE_HZ;
 use crate::meeting_eval::{MeetingScript, PlacedTurn, Truth};
 
 /// A little under the default, which gets the script to half an hour.
-const SPEAKING_RATE: &str = "165";
+const SPEAKING_RATE: u32 = 165;
 const TARGET_MS: u64 = 30 * 60 * 1_000;
 /// Every twelfth turn cuts into the one before, as people do.
 const INTERRUPT_EVERY: usize = 12;
@@ -20,7 +20,8 @@ const INTERRUPT_MS: u64 = 350;
 /// About −66 dBFS on the mic, so its pauses aren't digital silence. System audio has that.
 const ROOM_NOISE: f32 = 0.0005;
 
-fn wav_path(dir: &Path, voice: &str, text: &str) -> PathBuf {
+/// Where `voice` reading `text` is kept between runs.
+pub fn spoken_path(dir: &Path, voice: &str, text: &str) -> PathBuf {
     let key = text
         .bytes()
         .chain(voice.bytes())
@@ -30,9 +31,9 @@ fn wav_path(dir: &Path, voice: &str, text: &str) -> PathBuf {
     dir.join(format!("{key:016x}.wav"))
 }
 
-fn say(voice: &str, text: &str, path: &Path) -> anyhow::Result<()> {
+pub fn say(voice: &str, rate: u32, text: &str, path: &Path) -> anyhow::Result<()> {
     let status = Command::new("say")
-        .args(["-v", voice, "-r", SPEAKING_RATE])
+        .args(["-v", voice, "-r", &rate.to_string()])
         .args(["--file-format=WAVE", "--data-format=LEI16@16000", "-o"])
         .arg(path)
         .arg(text)
@@ -63,7 +64,7 @@ pub fn read_wav(path: &Path) -> anyhow::Result<Vec<f32>> {
     bail!("{} has no audio", path.display())
 }
 
-fn write_wav(path: &Path, samples: &[f32]) -> anyhow::Result<()> {
+pub fn write_wav(path: &Path, samples: &[f32]) -> anyhow::Result<()> {
     let data_len = (samples.len() * 2) as u32;
     let mut bytes = Vec::with_capacity(44 + samples.len() * 2);
     bytes.extend_from_slice(b"RIFF");
@@ -107,9 +108,9 @@ pub fn build(script: &MeetingScript, out: &Path) -> anyhow::Result<Truth> {
             .voices
             .get(who)
             .context("a turn's speaker has no voice")?;
-        let path = wav_path(&cache, voice, text);
+        let path = spoken_path(&cache, voice, text);
         if !path.exists() {
-            say(voice, text, &path)?;
+            say(voice, SPEAKING_RATE, text, &path)?;
         }
         clips.push(read_wav(&path)?);
     }

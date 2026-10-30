@@ -20,23 +20,29 @@ const MIN_SAMPLES: usize = SAMPLE_RATE_HZ as usize;
 pub struct WhisperAsr {
     state: WhisperState,
     multilingual: bool,
+    threads: usize,
 }
 
 impl WhisperAsr {
     pub fn new(model: &Path) -> Result<Self, PipelineError> {
+        Self::with_threads(model, true, crate::inference_threads())
+    }
+
+    /// [`Self::new`] with the GPU and thread count fixed, to measure a smaller machine.
+    pub fn with_threads(model: &Path, gpu: bool, threads: usize) -> Result<Self, PipelineError> {
         if !model.is_file() {
             return Err(PipelineError::ModelMissing(model.display().to_string()));
         }
         // Without a log backend these send whisper.cpp's chatter nowhere.
         whisper_rs::install_logging_hooks();
-        let context = WhisperContext::new_with_params(
-            model.to_string_lossy().as_ref(),
-            WhisperContextParameters::default(),
-        )
-        .map_err(engine)?;
+        let mut params = WhisperContextParameters::default();
+        params.use_gpu(gpu);
+        let context = WhisperContext::new_with_params(model.to_string_lossy().as_ref(), params)
+            .map_err(engine)?;
         Ok(Self {
             multilingual: context.is_multilingual(),
             state: context.create_state().map_err(engine)?,
+            threads,
         })
     }
 
@@ -81,7 +87,7 @@ impl Asr for WhisperAsr {
         let language = self.language(options)?;
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         params.set_language(language.as_deref());
-        params.set_n_threads(crate::inference_threads() as i32);
+        params.set_n_threads(self.threads as i32);
         params.set_no_context(true);
         // Otherwise silence comes back as the text "[BLANK_AUDIO]".
         params.set_suppress_nst(true);

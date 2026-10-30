@@ -28,5 +28,9 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 
+# Whisper needs this for the GPU, as in wf-dictation. Without it a High run measures the CPU.
+[target.'cfg(target_os = "macos")'.dependencies]
+wf-pipeline = { workspace = true, features = ["metal"] }
+
 [dev-dependencies]
 tempfile.workspace = true

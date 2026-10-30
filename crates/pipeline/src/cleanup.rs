@@ -122,6 +122,10 @@ const EXAMPLES_EN: &[(&str, &str)] = &[
         "Let's paint it white instead.",
     ),
     (
+        "I want the small box, oh no, I meant the big box.",
+        "I want the big box.",
+    ),
+    (
         "Add the rice, sorry, the pasta to the list.",
         "Add the pasta to the list.",
     ),

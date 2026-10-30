@@ -32,6 +32,11 @@ pub struct SherpaAsr {
 impl SherpaAsr {
     /// `dir` holds the model's encoder, decoder, joiner and tokens, as the catalog installs them.
     pub fn new(dir: &Path) -> Result<Self, PipelineError> {
+        Self::with_threads(dir, crate::inference_threads())
+    }
+
+    /// [`Self::new`] with the thread count fixed, to measure a smaller machine.
+    pub fn with_threads(dir: &Path, threads: usize) -> Result<Self, PipelineError> {
         let file = |name: &str| {
             let path = dir.join(name);
             if path.is_file() {
@@ -60,7 +65,7 @@ impl SherpaAsr {
         config.model_config.model_type = Some("nemo_transducer".into());
         config.model_config.modeling_unit = Some("bpe".into());
         config.model_config.bpe_vocab = Some(vocab.path().to_string_lossy().into_owned());
-        config.model_config.num_threads = crate::inference_threads() as i32;
+        config.model_config.num_threads = threads as i32;
         config.decoding_method = Some(DECODING_METHOD.into());
         config.hotwords_score = HOTWORD_SCORE;
         config.blank_penalty = BLANK_PENALTY;

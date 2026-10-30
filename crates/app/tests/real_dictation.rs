@@ -20,10 +20,11 @@ use wf_core::audio::AudioClip;
 use wf_core::dictation::PillInput;
 use wf_core::pill::PillState;
 use wf_core::settings::{KeepModels, PipelineTier, Settings};
+use wf_dictation::plan::preset_tier;
 use wf_dictation::probe::{ClipMicrophone, NoContext, TextLog, read_wav};
 use wf_dictation::remote::ChildEngines;
 use wf_dictation::{Dictation, Event, Parts, Report, SystemClock, SystemMeetingRoom};
-use wf_models::Catalog;
+use wf_models::{Catalog, ModelEntry, Tier};
 
 const LONG_WAIT: Duration = Duration::from_secs(60);
 /// Spec §8's sentence. The commas make the voice pause the way a person does; run together, both
@@ -33,20 +34,21 @@ const CORRECTION: &str = "I like the red one, oh no, I meant the blue one";
 
 /// A model folder laid out the way the app expects, made of links to the test models.
 fn link_models(root: &Path) {
-    let source = PathBuf::from(std::env::var("WF_MODELS").expect("set WF_MODELS"));
-    let catalog = Catalog::bundled();
-    let single_files = [
-        ("silero-vad-v5", "silero_vad.onnx"),
-        ("qwen3-1.7b-q4_k_m", "Qwen3-1.7B-Q4_K_M.gguf"),
-    ];
-    for (id, file) in single_files {
-        let dir = root.join(id);
-        fs::create_dir_all(&dir).unwrap();
-        let name = &catalog.model(id).unwrap().files[0].name;
-        symlink(source.join(file), dir.join(name)).unwrap();
+    for model in &Catalog::bundled().models {
+        link_model(model, root);
     }
-    for id in ["parakeet-tdt-0.6b-v3-int8", "whisper-small-q8_0"] {
-        symlink(source.join(id), root.join(id)).unwrap();
+}
+
+fn link_model(model: &ModelEntry, root: &Path) {
+    let source = PathBuf::from(std::env::var("WF_MODELS").expect("set WF_MODELS"));
+    let folder = source.join(&model.id);
+    let loose = source.join(&model.files[0].name);
+    if folder.is_dir() {
+        symlink(folder, root.join(&model.id)).unwrap();
+    } else if loose.is_file() {
+        let dir = root.join(&model.id);
+        fs::create_dir_all(&dir).unwrap();
+        symlink(loose, dir.join(&model.files[0].name)).unwrap();
     }
 }
 
@@ -193,6 +195,18 @@ fn fillers_come_out_clean_on_balanced() {
 
 #[test]
 #[ignore = "needs models"]
+fn fillers_come_out_clean_on_high() {
+    let flow = start(tier(PipelineTier::High), false);
+    let clip = spoken(FILLERS, flow.data.path());
+
+    let (text, report) = flow.dictate(with_pauses(&clip));
+
+    println!("high: {text:?} {report:?}");
+    assert_eq!(text, "So I think we should ship it.");
+}
+
+#[test]
+#[ignore = "needs models"]
 fn fillers_come_out_clean_on_lite_with_the_llm_off() {
     let flow = start(tier(PipelineTier::Lite), false);
     let clip = spoken(FILLERS, flow.data.path());
@@ -239,10 +253,23 @@ fn a_self_correction_resolves_on_balanced() {
 
 #[test]
 #[ignore = "needs models"]
+fn a_self_correction_resolves_on_high() {
+    let flow = start(tier(PipelineTier::High), false);
+    let clip = spoken(CORRECTION, flow.data.path());
+
+    let (text, report) = flow.dictate(with_pauses(&clip));
+
+    println!("high: {text:?} {report:?}");
+    assert_eq!(text, "I like the blue one.");
+}
+
+#[test]
+#[ignore = "needs models"]
 fn latency_of_a_ten_second_clip() {
     let clip = fixture("speech_mid_phrase_en");
     let ten_seconds = AudioClip::new(clip.samples()[..160_000].to_vec());
     for (name, settings) in [
+        ("high", tier(PipelineTier::High)),
         ("balanced", tier(PipelineTier::Balanced)),
         ("lite", tier(PipelineTier::Lite)),
     ] {
@@ -260,6 +287,48 @@ fn latency_of_a_ten_second_clip() {
                 report.cleanup_fallback,
             );
         }
+    }
+}
+
+/// One setup on one clip, for `docs/benchmarks.md`: a cold dictation, then warm ones. Reads
+/// `WF_BENCH_CLIP` (a WAV), `WF_BENCH_TIER` and `WF_BENCH_RUNS`. `WF_BENCH_ASR` and `WF_BENCH_LLM`
+/// try other models on that tier's stages, and `WF_BENCH_LANGUAGE` fills in "My languages".
+#[test]
+#[ignore = "needs models"]
+fn tier_benchmark() {
+    let env = |name: &str| std::env::var(name).ok();
+    let Some(name) = env("WF_BENCH_TIER") else {
+        println!("set WF_BENCH_TIER to run this");
+        return;
+    };
+    let mut settings = tier(match name.as_str() {
+        "lite" => PipelineTier::Lite,
+        "balanced" => PipelineTier::Balanced,
+        "high" => PipelineTier::High,
+        other => panic!("unknown tier {other}"),
+    });
+    if env("WF_BENCH_ASR").is_some() || env("WF_BENCH_LLM").is_some() {
+        let catalog = Catalog::bundled();
+        let preset = catalog.preset(preset_tier(settings.pipeline.tier).unwrap());
+        settings.pipeline.tier = PipelineTier::Custom;
+        settings.pipeline.vad_model = preset.vad_model.clone();
+        settings.pipeline.asr_model = env("WF_BENCH_ASR").or(Some(preset.asr_model.clone()));
+        settings.pipeline.llm_model = env("WF_BENCH_LLM").or(preset.llm_model.clone());
+    }
+    settings.general.languages = env("WF_BENCH_LANGUAGE").into_iter().collect();
+    let runs: usize = env("WF_BENCH_RUNS").map_or(6, |runs| runs.parse().unwrap());
+    let clip = read_wav(Path::new(&env("WF_BENCH_CLIP").expect("set WF_BENCH_CLIP"))).unwrap();
+
+    let flow = start(settings, true);
+    for run in 0..runs {
+        let (text, report) = flow.dictate(with_pauses(&clip));
+        println!(
+            "bench run={run} release_ms={} asr_ms={} cleanup_ms={} fallback={:?} text={text:?}",
+            report.release_to_insert.as_millis(),
+            report.timings.asr.as_millis(),
+            report.timings.cleanup.as_millis(),
+            report.cleanup_fallback,
+        );
     }
 }
 
@@ -320,7 +389,10 @@ fn an_unplugged_models_drive_is_an_error_and_plugging_it_back_recovers() {
     hdiutil(&attach);
     let links = folder.path().join("links");
     fs::create_dir_all(&links).unwrap();
-    link_models(&links);
+    // Only what the dictation needs: the whole catalog wouldn't fit the image.
+    for model in Catalog::bundled().models_for_tier(Tier::Balanced) {
+        link_model(model, &links);
+    }
     let copied = Command::new("cp")
         .arg("-RL")
         .arg(&links)

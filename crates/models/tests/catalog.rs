@@ -138,14 +138,49 @@ fn balanced_and_high_run_llm_cleanup_with_more_memory_than_lite() {
 }
 
 #[test]
-fn bundled_models_stay_candidates_until_the_benchmark_picks_defaults() {
+fn a_model_stops_being_a_candidate_when_a_tier_picks_it() {
     let catalog = Catalog::bundled();
     assert_eq!(catalog.schema, Catalog::SCHEMA);
-    assert!(
-        catalog
-            .models
-            .iter()
-            .all(|m| m.candidate && m.download_size() > 0)
+    let picked: Vec<&str> = [Tier::Lite, Tier::Balanced, Tier::High]
+        .into_iter()
+        .flat_map(|tier| {
+            let models = catalog.models_for_tier(tier);
+            models
+                .into_iter()
+                .chain(catalog.speaker_models_for_tier(tier))
+        })
+        .map(|model| model.id.as_str())
+        .collect();
+    for model in &catalog.models {
+        assert!(model.download_size() > 0, "{}", model.id);
+        assert_eq!(
+            model.candidate,
+            !picked.contains(&model.id.as_str()),
+            "{}",
+            model.id
+        );
+    }
+}
+
+/// `docs/benchmarks.md` has the reasons. If a default moves, move the numbers with it.
+#[test]
+fn the_tiers_use_the_benchmarked_defaults() {
+    let catalog = Catalog::bundled();
+    let picks = |tier| {
+        let preset = catalog.preset(tier);
+        (preset.asr_model.as_str(), preset.llm_model.as_deref())
+    };
+    assert_eq!(picks(Tier::Lite), ("whisper-small-q8_0", None));
+    assert_eq!(
+        picks(Tier::Balanced),
+        ("whisper-large-v3-turbo-q5_0", Some("qwen3-1.7b-q4_k_m"))
+    );
+    assert_eq!(
+        picks(Tier::High),
+        (
+            "whisper-large-v3-turbo",
+            Some("qwen3-4b-instruct-2507-q4_k_m")
+        )
     );
 }
 
@@ -188,7 +223,7 @@ fn every_speaker_model_has_an_open_license_and_a_pinned_checksum() {
             model.id,
             model.license
         );
-        assert!(model.candidate && model.download_size() > 0, "{}", model.id);
+        assert!(model.download_size() > 0, "{}", model.id);
     }
 }
 

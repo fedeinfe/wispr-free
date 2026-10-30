@@ -1,6 +1,7 @@
 //! `cargo xtask eval --model model.gguf` scores LLM cleanup against `eval/cleanup.toml`.
-//! Flags: `--rules-only` scores rule cleanup alone, `--dev` skips the holdout cases, and
-//! `--cpu` keeps every layer off the GPU. `cargo xtask bundle` is in [`xtask::bundle`].
+//! Flags: `--rules-only` scores rule cleanup alone, `--dev` skips the holdout cases, `--cpu` keeps
+//! every layer off the GPU, and `--no-language` withholds each case's language, which is what
+//! cleanup gets from Parakeet on auto-detect. `cargo xtask bundle` is in [`xtask::bundle`].
 //!
 //! `cargo xtask-meeting meeting-fixture --out dir` builds the 30-minute meeting with macOS `say`.
 //! `cargo xtask-meeting meeting-run --fixture dir --models dir --out dir` runs it through every
@@ -11,6 +12,12 @@
 //! summarizes a transcript the prompts were never tuned on. `meeting-chat` puts the chat's
 //! questions to the newest meeting and scores where the citations land, and takes `--context`.
 //! `meeting-chat-score` scores the answers saved with it, and needs no model.
+//!
+//! `cargo xtask-meeting speech-fixture --out dir` builds the ASR benchmark's clips with macOS `say`.
+//! `cargo xtask-meeting asr-bench --fixture dir --models dir --model id --out file.json` times one
+//! ASR model over them and scores its WER. Flags: `--runs n`, `--filter text` keeps the clips whose
+//! id has it, `--mode auto|pinned` tries one way of choosing the language, `--threads n` runs on
+//! the CPU with that many threads, to stand in for a machine with no GPU.
 
 use std::process::ExitCode;
 
@@ -21,27 +28,32 @@ use xtask::eval::{self, Report, RulesOnly, TARGET};
 fn main() -> anyhow::Result<ExitCode> {
     let mut args = std::env::args().skip(1);
     let Some(task) = args.next() else {
-        bail!("usage: cargo xtask eval [--model model.gguf] [--rules-only] [--dev] [--cpu]");
+        bail!(
+            "usage: cargo xtask eval [--model model.gguf] [--rules-only] [--dev] [--cpu] \
+             [--no-language]"
+        );
     };
     match task.as_str() {
         "eval" => {}
         "bundle" => return bundle::run(args).map(|()| ExitCode::SUCCESS),
         "signing-identity" => return bundle::create_identity().map(|()| ExitCode::SUCCESS),
         "meeting-fixture" | "meeting-run" | "meeting-summary" | "meeting-diarize"
-        | "meeting-holdout" | "meeting-chat" | "meeting-chat-score" => {
+        | "meeting-holdout" | "meeting-chat" | "meeting-chat-score" | "speech-fixture"
+        | "asr-bench" => {
             return meeting_task(&task, args);
         }
         _ => bail!("unknown task {task:?}"),
     }
 
     let mut model = std::env::var("WF_LLM_MODEL").ok();
-    let (mut rules_only, mut dev, mut cpu) = (false, false, false);
+    let (mut rules_only, mut dev, mut cpu, mut no_language) = (false, false, false, false);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--model" => model = Some(args.next().context("--model needs a path")?),
             "--rules-only" => rules_only = true,
             "--dev" => dev = true,
             "--cpu" => cpu = true,
+            "--no-language" => no_language = true,
             other => bail!("unknown flag {other:?}"),
         }
     }
@@ -50,12 +62,22 @@ fn main() -> anyhow::Result<ExitCode> {
     if dev {
         cases.retain(|case| !case.holdout);
     }
-    let report = if rules_only {
+    // The report still splits by the language really spoken.
+    let spoken: Vec<_> = cases.iter().map(|case| case.language.clone()).collect();
+    if no_language {
+        for case in &mut cases {
+            case.language = None;
+        }
+    }
+    let mut report = if rules_only {
         eval::run(&cases, &mut RulesOnly)
     } else {
         let model = model.context("set --model or WF_LLM_MODEL to a GGUF file")?;
         eval_with_model(&cases, &model, cpu)?
     };
+    for (result, language) in report.results.iter_mut().zip(spoken) {
+        result.language = language;
+    }
     print!("{}", report.render());
     Ok(if report.score() >= TARGET {
         ExitCode::SUCCESS
@@ -71,7 +93,8 @@ fn meeting_task(task: &str, mut args: impl Iterator<Item = String>) -> anyhow::R
         match arg.as_str() {
             "--realtime" => realtime = true,
             "--fixture" | "--models" | "--out" | "--tier" | "--threshold" | "--shift"
-            | "--embedding" | "--context" => {
+            | "--embedding" | "--context" | "--model" | "--runs" | "--filter" | "--mode"
+            | "--threads" => {
                 let value = args
                     .next()
                     .with_context(|| format!("{arg} needs a value"))?;
@@ -93,6 +116,14 @@ fn meeting_task(task: &str, mut args: impl Iterator<Item = String>) -> anyhow::R
         );
         return Ok(ExitCode::SUCCESS);
     }
+    if task == "speech-fixture" {
+        let script = xtask::speech_fixture::SpeechScript::bundled()?;
+        let recordings =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../pipeline/tests/fixtures");
+        let clips = xtask::speech_fixture::build(&script, &recordings, out)?;
+        println!("{} clips in {}", clips.len(), out.display());
+        return Ok(ExitCode::SUCCESS);
+    }
     meeting_run(task, &flags, realtime, out)
 }
 
@@ -104,6 +135,7 @@ fn meeting_run(
     out: &std::path::Path,
 ) -> anyhow::Result<ExitCode> {
     use wf_models::Tier;
+    use xtask::asr_bench::{self, Bench};
     use xtask::meeting_run::{RunOptions, chat, holdout, rediarize, resummarize, run};
 
     let path = |flag: &str| -> anyhow::Result<std::path::PathBuf> {
@@ -129,6 +161,16 @@ fn meeting_run(
         Ok(flags.get(flag).map(|text| text.parse()).transpose()?)
     };
     let report = match task {
+        "asr-bench" => asr_bench::run(&Bench {
+            fixture: options.fixture.clone(),
+            models: options.models.clone(),
+            model: flags.get("--model").context("set --model")?.clone(),
+            out: out.to_owned(),
+            runs: flags.get("--runs").map_or(Ok(3), |n| n.parse())?,
+            filter: flags.get("--filter").cloned(),
+            mode: flags.get("--mode").cloned(),
+            cpu_threads: flags.get("--threads").map(|n| n.parse()).transpose()?,
+        })?,
         "meeting-summary" => resummarize(&options)?,
         "meeting-holdout" => holdout(&options)?,
         // Scoring what's saved needs no model.

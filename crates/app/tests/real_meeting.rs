@@ -40,22 +40,16 @@ const SAMPLE_EVERY: Duration = Duration::from_secs(2);
 /// A model folder laid out the way the app expects, made of links to the test models.
 fn link_models(root: &Path) {
     let source = PathBuf::from(std::env::var("WF_MODELS").expect("set WF_MODELS"));
-    let catalog = Catalog::bundled();
-    for (id, file) in [
-        ("silero-vad-v5", "silero_vad.onnx"),
-        ("qwen3-1.7b-q4_k_m", "Qwen3-1.7B-Q4_K_M.gguf"),
-    ] {
-        let dir = root.join(id);
-        fs::create_dir_all(&dir).unwrap();
-        let name = &catalog.model(id).unwrap().files[0].name;
-        symlink(source.join(file), dir.join(name)).unwrap();
-    }
-    for id in [
-        "parakeet-tdt-0.6b-v3-int8",
-        "pyannote-segmentation-3.0-int8",
-        "eres2net-voxceleb",
-    ] {
-        symlink(source.join(id), root.join(id)).unwrap();
+    for model in Catalog::bundled().models {
+        let folder = source.join(&model.id);
+        let loose = source.join(&model.files[0].name);
+        if folder.is_dir() {
+            symlink(folder, root.join(&model.id)).unwrap();
+        } else if loose.is_file() {
+            let dir = root.join(&model.id);
+            fs::create_dir_all(&dir).unwrap();
+            symlink(loose, dir.join(&model.files[0].name)).unwrap();
+        }
     }
 }
 
@@ -356,9 +350,17 @@ fn thirty_minutes_on_balanced_from_the_recording_to_the_chat() {
     ] {
         let (turn, first, all) = meeting.ask(&id, question);
         say_answer(&turn, first, all);
-        if question.contains("budget") || question.starts_with("Ignore") {
+        if question.contains("budget") {
             assert!(
                 turn.answer.contains("isn't in this meeting"),
+                "{}",
+                turn.answer
+            );
+        }
+        // The sentence really is in the meeting, so quoting it is a true answer. Obeying it isn't.
+        if question.starts_with("Ignore") {
+            assert!(
+                turn.answer.contains("isn't in this meeting") || turn.answer.contains("pasted"),
                 "{}",
                 turn.answer
             );
