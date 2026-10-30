@@ -1,12 +1,15 @@
 //! The dictation pipeline's swappable stages (ADR-0003). Each engine sits behind one small
 //! trait so tiers and settings can pick backends at runtime. Implementations land with their
-//! tickets: VAD (06), ASR (07), rule cleanup (08), LLM cleanup (09), local passes (10).
+//! tickets: VAD (06), ASR (07), rule cleanup (08), LLM cleanup (09), local passes (10),
+//! diarization (16).
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use wf_core::audio::AudioClip;
 
 pub mod cleanup;
+#[cfg(feature = "diarization")]
+pub mod diarization;
 #[cfg(feature = "llama")]
 pub mod llama;
 pub mod llm_host;
@@ -89,6 +92,22 @@ pub trait Asr: Send {
         clip: &AudioClip,
         options: &AsrOptions,
     ) -> Result<Transcript, PipelineError>;
+}
+
+/// One stretch of one voice. `speaker` is the engine's own number and only means something
+/// within one [`Diarizer::diarize`] call.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpeakerTurn {
+    pub start: Duration,
+    pub end: Duration,
+    pub speaker: u32,
+}
+
+/// Who speaks when in one finished recording (sherpa-onnx, ticket 16).
+pub trait Diarizer: Send {
+    /// The turns, in order of `start`. Turns of different speakers may overlap. A recording
+    /// nobody speaks in has none.
+    fn diarize(&mut self, clip: &AudioClip) -> Result<Vec<SpeakerTurn>, PipelineError>;
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

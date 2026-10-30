@@ -276,7 +276,8 @@ const DICTIONARY_EXAMPLES: &[(&str, &str, &str)] = &[
     ),
 ];
 
-fn escape_tags(text: &str) -> String {
+/// Keeps untrusted text from closing the tags that fence it in a prompt.
+pub fn escape_tags(text: &str) -> String {
     text.replace('<', "‹").replace('>', "›")
 }
 
