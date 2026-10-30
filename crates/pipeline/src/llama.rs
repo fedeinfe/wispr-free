@@ -49,6 +49,13 @@ fn default_threads() -> i32 {
     (logical / 2).max(4) as i32
 }
 
+/// Whether a model reasons before it answers, from its chat template. Mentioning `</think>` isn't
+/// enough: Qwen3 4B Instruct's template strips the tag from history and the model never writes it.
+/// Handed an empty thought anyway it refuses or says nothing, which took it to 65% on the eval.
+fn thinks(template: &str) -> bool {
+    template.contains("enable_thinking")
+}
+
 /// llama.cpp allows one backend per process, and it holds no model memory, so it stays up.
 fn backend() -> Result<&'static LlamaBackend, PipelineError> {
     static BACKEND: OnceLock<Result<LlamaBackend, String>> = OnceLock::new();
@@ -82,7 +89,7 @@ impl LlamaEngine {
         let model =
             LlamaModel::load_from_file(backend()?, &config.model, &params).map_err(engine)?;
         let template = model.chat_template(None).map_err(engine)?;
-        let reasoning = template.to_str().is_ok_and(|t| t.contains("</think>"));
+        let reasoning = template.to_str().is_ok_and(thinks);
         Ok(Self {
             model,
             template,
@@ -207,7 +214,17 @@ impl Utf8Stream {
 
 #[cfg(test)]
 mod tests {
-    use super::Utf8Stream;
+    use super::{Utf8Stream, thinks};
+
+    #[test]
+    fn only_a_template_that_can_turn_thinking_off_gets_an_empty_thought() {
+        let reasoning = "{%- if enable_thinking is defined and enable_thinking is false %}\
+                         {{- '<think>\\n\\n</think>\\n\\n' }}{%- endif %}";
+        let strips_history = "{%- set content = message.content.split('</think>')[-1] %}";
+
+        assert!(thinks(reasoning));
+        assert!(!thinks(strips_history));
+    }
 
     #[test]
     fn a_character_split_across_pieces_comes_out_whole() {
