@@ -20,7 +20,9 @@ use slint::platform::PointerEventButton;
 use slint::platform::WindowEvent;
 use slint::{ComponentHandle, LogicalSize, Model, SharedString};
 use wf_audio::InputDevice;
-use wf_core::settings::{HistoryRetention, Replacement, Settings, SettingsStore, Snippet, Theme};
+use wf_core::settings::{
+    HistoryRetention, PipelineTier, Replacement, Settings, SettingsStore, Snippet, Theme,
+};
 use wf_core::shortcut::Key::{self, Alt, Char, Ctrl, Esc, Meta, Shift};
 use wf_core::shortcut::Side::{Either, Left};
 use wf_core::shortcut::{Action, Bindings, Combo, KeyEvent, Platform};
@@ -142,6 +144,23 @@ impl Harness {
         memory_cap::install(MEMORY_LIMIT_MB);
         init_no_event_loop();
         Self::on_files(tempfile::tempdir().unwrap())
+    }
+
+    /// Parakeet on a Custom pipeline: the setup where VAD can be turned off. Whisper keeps it on.
+    fn on_parakeet() -> Self {
+        let mut harness = Self::new();
+        let (_, vad, llm) = balanced_models();
+        let store = SettingsStore::open(harness.settings_path());
+        store
+            .update(|settings| {
+                settings.pipeline.tier = PipelineTier::Custom;
+                settings.pipeline.asr_model = Some(PARAKEET.to_owned());
+                settings.pipeline.vad_model = Some(vad);
+                settings.pipeline.llm_model = Some(llm);
+            })
+            .unwrap();
+        harness.restart();
+        harness
     }
 
     fn on_files(dir: tempfile::TempDir) -> Self {
@@ -284,7 +303,7 @@ fn every_toggle_on_every_page_persists_across_a_restart() {
         }),
     ];
 
-    let mut harness = Harness::new();
+    let mut harness = Harness::on_parakeet();
     for &(page, label, get) in cases {
         harness.go_to(page);
         let before = harness.checked(label);
@@ -1360,6 +1379,8 @@ fn model_name(id: &str) -> String {
 }
 
 /// What the default tier asks for, read from the catalog so a new pick doesn't break the tests.
+const PARAKEET: &str = "parakeet-tdt-0.6b-v3-int8";
+
 fn balanced_models() -> (String, String, String) {
     let catalog = Catalog::bundled();
     let preset = catalog.preset(wf_models::Tier::Balanced);
@@ -1430,7 +1451,7 @@ fn rows_keep_their_place_in_the_catalog_when_filtered() {
 
 #[test]
 fn a_downloaded_model_says_which_stage_uses_it() {
-    let harness = Harness::new();
+    let harness = Harness::on_parakeet();
     let (_, vad, _) = balanced_models();
     let (index, _) = fake_model(&harness.default_models());
     assert_eq!(vad, "silero-vad-v5");
@@ -1444,11 +1465,10 @@ fn a_downloaded_model_says_which_stage_uses_it() {
             .used_for
     };
     assert_eq!(used_for(&harness), "Used for voice detection");
-    let (asr, ..) = balanced_models();
     let missing = Catalog::bundled()
         .models
         .iter()
-        .position(|model| model.id == asr)
+        .position(|model| model.id == PARAKEET)
         .unwrap();
     assert_eq!(
         harness
@@ -1485,8 +1505,20 @@ fn the_pipeline_offers_a_download_for_each_missing_model() {
 }
 
 #[test]
-fn a_stage_that_is_off_asks_for_no_download() {
+fn whisper_on_balanced_keeps_silence_trimming_on() {
     let harness = Harness::new();
+    harness.go_to(PIPELINE);
+
+    assert!(harness.checked("Silence trimming (VAD)"));
+    harness.click("Silence trimming (VAD)");
+
+    assert!(harness.checked("Silence trimming (VAD)"));
+    assert!(harness.saved().pipeline.vad);
+}
+
+#[test]
+fn a_stage_that_is_off_asks_for_no_download() {
+    let harness = Harness::on_parakeet();
     let (_, vad, llm) = balanced_models();
     harness.go_to(PIPELINE);
 
