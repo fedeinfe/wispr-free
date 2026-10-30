@@ -165,11 +165,16 @@ pub enum InsertOutcome {
     PasteFailed { error: String },
 }
 
+/// Text pasted here becomes a file: Finder makes a text clipping. Its rename and search fields
+/// report as editable, so an unknown focus there is never one of them.
+const FILE_MANAGERS: &[&str] = &["com.apple.finder"];
+
 /// Paste unless there's clearly no text field. Terminals draw their own text view, which
 /// often reports as a plain group/window, so they always get the paste.
 fn accepts_paste(focus: Focus, app: Option<&AppIdentity>) -> bool {
     match focus {
-        Focus::Editable | Focus::Secure | Focus::Unknown => true,
+        Focus::Editable | Focus::Secure => true,
+        Focus::Unknown => !app.is_some_and(|app| FILE_MANAGERS.contains(&app.id.as_str())),
         Focus::NotEditable => app.is_some_and(is_terminal),
         Focus::Nothing => false,
     }

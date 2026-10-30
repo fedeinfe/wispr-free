@@ -256,8 +256,21 @@ fn leaves_the_clipboard_alone_when_the_user_copied_something_meanwhile() {
 }
 
 #[test]
+fn finder_gets_the_paste_only_in_a_real_text_field() {
+    let (mut inserter, log) = inserter(Os::MacOs, "com.apple.finder", Focus::Editable);
+
+    let outcome = inserter.insert("hello").unwrap();
+
+    assert!(
+        matches!(outcome, InsertOutcome::Pasted { .. }),
+        "{outcome:?}"
+    );
+    assert!(!log.borrow().is_empty());
+}
+
+#[test]
 fn without_a_focused_text_field_nothing_is_pasted_and_the_clipboard_is_left_alone() {
-    for focus in [Focus::Nothing, Focus::NotEditable] {
+    for focus in [Focus::Nothing, Focus::NotEditable, Focus::Unknown] {
         let (mut inserter, log) = inserter(Os::MacOs, "com.apple.finder", focus);
 
         let outcome = inserter.insert("hello").unwrap();
