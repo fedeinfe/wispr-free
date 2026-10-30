@@ -15,7 +15,13 @@ wf-pipeline.workspace = true
 wf-platform.workspace = true
 wf-models.workspace = true
 wf-meetings.workspace = true
-slint.workspace = true
+slint = { workspace = true, features = ["unstable-winit-030"] }
+directories.workspace = true
+serde.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+i-slint-backend-testing.workspace = true
 
 [build-dependencies]
 slint-build.workspace = true

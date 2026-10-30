@@ -7,7 +7,30 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-# Per-OS deps (objc2 / windows / x11rb, evdev, wayland layer-shell) arrive with tickets 03, 04 and 05
-# under [target.'cfg(...)'.dependencies].
+# Per-OS deps (evdev, wayland layer-shell) arrive with tickets 03 and 04 under
+# [target.'cfg(...)'.dependencies].
 [dependencies]
 wf-core.workspace = true
+raw-window-handle.workspace = true
+thiserror.workspace = true
+
+# Pill overlay (05): NSPanel swap, screens, cursor and Esc state.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
+objc2-app-kit.workspace = true
+objc2-core-graphics.workspace = true
+
+# Pill overlay (05): extended window styles, monitors, cursor and Esc state.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# Pill overlay (05): stacking, monitors, cursor and Esc state.
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { workspace = true, features = ["randr"] }

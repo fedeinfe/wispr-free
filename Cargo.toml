@@ -25,6 +25,7 @@ wf-meetings = { path = "crates/meetings" }
 # UI
 slint = "1.18.1"
 slint-build = "1.18.1"
+i-slint-backend-testing = "1.18.1"
 
 # Audio
 cpal = "0.18.2"
@@ -38,6 +39,16 @@ llama-cpp-2 = { version = "0.1.160", default-features = false }
 
 # Storage
 rusqlite = { version = "0.41.1", features = ["bundled"] }
+
+# Platform: the pill overlay (ticket 05). objc2 0.6, windows-sys 0.61 and x11rb 0.13 match what
+# Slint already pulls in.
+raw-window-handle = { version = "0.6.2", features = ["std"] }
+objc2 = "0.6.5"
+objc2-foundation = "0.3.2"
+objc2-app-kit = "0.3.2"
+objc2-core-graphics = "0.3.2"
+windows-sys = "0.61.2"
+x11rb = "0.13.2"
 
 # Common
 anyhow = "1.0.104"
