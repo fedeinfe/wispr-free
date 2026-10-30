@@ -1,7 +1,9 @@
 //! The meeting score is only worth its number if it can fail, so it's tested without a model.
 
-use wf_meetings::{ActionItem, Item, Summary};
-use xtask::meeting_eval::{MeetingScript, score_summary, word_error_rate};
+use wf_meetings::{ActionItem, Item, Summary, TranscriptRow};
+use xtask::meeting_eval::{
+    MeetingScript, PlacedTurn, Truth, score_citations, score_summary, word_error_rate,
+};
 
 fn script() -> MeetingScript {
     toml::from_str(
@@ -202,4 +204,100 @@ fn word_error_rate_counts_edits_over_the_reference() {
     assert_eq!(word_error_rate("the cat sat", "The cat, sat."), 0.0);
     assert_eq!(word_error_rate("the cat sat down", "the dog sat"), 0.5);
     assert_eq!(word_error_rate("", ""), 0.0);
+}
+
+fn fixture_turns() -> (MeetingScript, Truth, Vec<TranscriptRow>) {
+    let script = MeetingScript::bundled().unwrap();
+    let turn = |who: &str, start_ms, end_ms, text: &str| PlacedTurn {
+        who: who.to_owned(),
+        start_ms,
+        end_ms,
+        text: text.to_owned(),
+    };
+    let truth = Truth {
+        length_ms: 1_800_000,
+        turns: vec![
+            turn(
+                "Marco",
+                379_000,
+                386_000,
+                "That is me. I will finish the migration script by Friday.",
+            ),
+            turn(
+                "Tom",
+                741_000,
+                756_000,
+                "I will have the regression test plan by Monday.",
+            ),
+        ],
+    };
+    let row = |at_ms, text: &str| TranscriptRow {
+        at_ms,
+        speaker: None,
+        name: "Others".to_owned(),
+        text: text.to_owned(),
+        gap: false,
+    };
+    let rows = vec![
+        row(100_000, "We talked about the migration a while ago."),
+        row(
+            380_000,
+            "That is me, I will finish the migration script by Friday.",
+        ),
+        row(742_000, "I'll have the plan by Monday."),
+    ];
+    (script, truth, rows)
+}
+
+#[test]
+fn a_citation_on_the_turn_that_took_the_action_is_right() {
+    let (script, truth, rows) = fixture_turns();
+
+    let score = score_citations(
+        &script,
+        &truth,
+        "- Marco will finish the migration script by Friday. [06:20]\n\
+         - Tom writes the regression test plan by Monday. [12:22]",
+        &rows,
+    );
+
+    assert_eq!((score.times.len(), score.real(), score.right()), (2, 2, 2));
+    assert_eq!(score.covered, ["migration-script", "regression-plan"]);
+    assert_eq!(score.known, 10);
+}
+
+#[test]
+fn a_real_line_about_something_else_is_wrong() {
+    let (script, truth, rows) = fixture_turns();
+    let score = score_citations(&script, &truth, "Marco does the migration. [01:40]", &rows);
+    assert_eq!((score.real(), score.right()), (1, 0));
+    assert!(score.covered.is_empty());
+    assert!(score.render().contains("WRONG"));
+}
+
+#[test]
+fn a_time_with_no_line_counts_for_nothing() {
+    let (script, truth, rows) = fixture_turns();
+    let score = score_citations(&script, &truth, "Marco does the migration. [09:09]", &rows);
+    assert_eq!((score.real(), score.right()), (0, 0));
+    assert!(score.render().contains("NO LINE"));
+}
+
+#[test]
+fn a_line_with_no_time_is_counted() {
+    let (script, truth, rows) = fixture_turns();
+    let score = score_citations(&script, &truth, "Marco does the migration.", &rows);
+    assert_eq!(score.bare_lines.len(), 1);
+    assert_eq!(score.times.len(), 0);
+}
+
+#[test]
+fn every_known_action_says_where_it_was_taken_on() {
+    let script = MeetingScript::bundled().unwrap();
+    for action in &script.actions {
+        assert!(!action.said.is_empty(), "{}", action.id);
+        let turns = script.turns().iter();
+        let found = turns.filter(|(_, text)| text.to_lowercase().contains(&action.said));
+        assert_eq!(found.count(), 1, "{}", action.id);
+    }
 }

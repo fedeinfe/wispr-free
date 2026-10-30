@@ -17,6 +17,8 @@ Marco = "Daniel"
 Sara = "Karen"
 Tom = "Reed (English (US))"
 
+# `said` under an action is words of the one turn that takes it on, for scoring chat citations.
+#
 # A decision counts if one summary line matches every group, each group by any of its phrases.
 # `not` lists phrases that make the line wrong: where the discussion started, not where it ended.
 [[decisions]]
@@ -57,60 +59,70 @@ all = [["german"], ["italian"]]
 [[actions]]
 id = "migration-script"
 owner = "Marco"
+said = "finish the migration script"
 task = [["migration"]]
 due = ["friday"]
 
 [[actions]]
 id = "onboarding-designs"
 owner = "Sara"
+said = "final onboarding designs"
 task = [["onboarding"]]
 due = ["wednesday"]
 
 [[actions]]
 id = "regression-plan"
 owner = "Tom"
+said = "regression test plan"
 task = [["regression", "test plan"]]
 due = ["monday"]
 
 [[actions]]
 id = "email-beta-customers"
 owner = "Elena"
+said = "email the beta customers"
 task = [["email", "invite", "write to"], ["beta", "customer"]]
 due = ["thursday"]
 
 [[actions]]
 id = "load-test"
 owner = "Marco"
+said = "run a load test"
 task = [["load test"]]
 due = ["november 7", "7th of november", "nov 7"]
 
 [[actions]]
 id = "pricing-page"
 owner = "Sara"
+said = "update the pricing page copy"
 task = [["pricing page", "pricing copy"]]
 due = ["end of next week", "next week"]
 
 [[actions]]
 id = "crash-backlog"
 owner = "Tom"
+said = "go through the crash backlog"
 task = [["crash"]]
 due = []
 
 [[actions]]
 id = "translation-quote"
 owner = "Elena"
+said = "get a quote from the translation agency"
 task = [["quote", "agency", "translation"]]
 due = ["tuesday"]
 
 [[actions]]
 id = "stripe-account"
 owner = "Marco"
+said = "set up the stripe test account"
 task = [["stripe"], ["account", "sandbox", "test"]]
 due = []
 
 [[actions]]
 id = "privacy-policy"
 owner = "Sara"
+said = "ask legal to update the privacy policy"
 task = [["privacy", "legal"]]
 due = ["end of the month", "month"]
 

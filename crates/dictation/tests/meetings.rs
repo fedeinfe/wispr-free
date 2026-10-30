@@ -6,6 +6,7 @@ mod support;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
+use std::sync::mpsc;
 use std::time::Duration;
 
 use support::{FN, QWEN, Rig, base_settings, wait_for};
@@ -14,7 +15,8 @@ use wf_core::pill::PillState;
 use wf_core::settings::{KeepModels, PipelineTier, Settings};
 use wf_core::shortcut::{Key, Side};
 use wf_dictation::plan::meeting_plan;
-use wf_dictation::{ChatUpdate, Event, MeetingNews, SummaryMode, WorkStep};
+use wf_dictation::probe::ClipRoom;
+use wf_dictation::{ChatUpdate, Event, MeetingNews, MeetingRoom, SummaryMode, WorkStep};
 use wf_meetings::{
     Channel, ChatTurn, LiveEvent, Meeting, MeetingEvent, MeetingStore, MeetingWriter, MicClient,
     Stage, StageState, read_meeting,
@@ -982,6 +984,25 @@ fn crashed_recording(path: &Path) {
         writer.write_frame(&frame, &frame).unwrap();
     }
     std::mem::forget(writer);
+}
+
+#[test]
+fn a_clip_room_plays_a_meeting_through_the_real_file_and_timeline() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("part.ogg");
+    let room = ClipRoom::new(speech(), silence(), 100.0);
+    let (timeline, frames) = mpsc::sync_channel(1_000);
+
+    let tape = room
+        .record(path.clone(), Vec::new(), Some(timeline))
+        .unwrap();
+    wait_for("the clip to play", || room.played());
+    let length = tape.stop().unwrap();
+
+    assert_eq!(length, speech().duration());
+    let played = speech().samples().len() / FRAME_SAMPLES;
+    assert_eq!(frames.try_iter().count(), played);
+    assert_eq!(read_meeting(&path).unwrap().you.duration(), length);
 }
 
 /// Starts the app over `prepare`d data, with nothing installed.

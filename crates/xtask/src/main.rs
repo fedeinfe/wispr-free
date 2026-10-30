@@ -8,7 +8,9 @@
 //! a real meeting, `--tier lite|balanced|high` picks another tier.
 //! `meeting-summary` and `meeting-diarize` redo one stage on the newest meeting in `--out`, for
 //! tuning. `meeting-diarize` takes `--threshold`, `--shift` and `--embedding`. `meeting-holdout`
-//! summarizes a transcript the prompts were never tuned on.
+//! summarizes a transcript the prompts were never tuned on. `meeting-chat` puts the chat's
+//! questions to the newest meeting and scores where the citations land, and takes `--context`.
+//! `meeting-chat-score` scores the answers saved with it, and needs no model.
 
 use std::process::ExitCode;
 
@@ -23,7 +25,7 @@ fn main() -> anyhow::Result<ExitCode> {
     match task.as_str() {
         "eval" => {}
         "meeting-fixture" | "meeting-run" | "meeting-summary" | "meeting-diarize"
-        | "meeting-holdout" => {
+        | "meeting-holdout" | "meeting-chat" | "meeting-chat-score" => {
             return meeting_task(&task, args);
         }
         _ => bail!("unknown task {task:?}"),
@@ -66,7 +68,7 @@ fn meeting_task(task: &str, mut args: impl Iterator<Item = String>) -> anyhow::R
         match arg.as_str() {
             "--realtime" => realtime = true,
             "--fixture" | "--models" | "--out" | "--tier" | "--threshold" | "--shift"
-            | "--embedding" => {
+            | "--embedding" | "--context" => {
                 let value = args
                     .next()
                     .with_context(|| format!("{arg} needs a value"))?;
@@ -99,7 +101,7 @@ fn meeting_run(
     out: &std::path::Path,
 ) -> anyhow::Result<ExitCode> {
     use wf_models::Tier;
-    use xtask::meeting_run::{RunOptions, holdout, rediarize, resummarize, run};
+    use xtask::meeting_run::{RunOptions, chat, holdout, rediarize, resummarize, run};
 
     let path = |flag: &str| -> anyhow::Result<std::path::PathBuf> {
         Ok(flags
@@ -126,6 +128,14 @@ fn meeting_run(
     let report = match task {
         "meeting-summary" => resummarize(&options)?,
         "meeting-holdout" => holdout(&options)?,
+        // Scoring what's saved needs no model.
+        "meeting-chat" | "meeting-chat-score" => {
+            let context = flags
+                .get("--context")
+                .map(|text| text.parse())
+                .transpose()?;
+            chat(&options, task == "meeting-chat", context)?
+        }
         "meeting-diarize" => rediarize(
             &options,
             number("--threshold")?,
