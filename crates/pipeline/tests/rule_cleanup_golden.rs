@@ -221,7 +221,11 @@ const CASES: &[(Option<&str>, &str, &str)] = &[
         "so I think we should, ah, ship it",
         "So I think we should ship it.",
     ),
-    (Some("en"), "ah, I see what you mean", "I see what you mean."),
+    (
+        Some("en"),
+        "ah, I see what you mean",
+        "I see what you mean.",
+    ),
     (Some("en"), "the ah moment", "The ah moment."),
     (Some("de"), "Ehm, das das ist gut.", "Das ist gut."),
     // Empty and whitespace-only input stays empty.

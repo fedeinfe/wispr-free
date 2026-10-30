@@ -134,6 +134,8 @@ impl Coordinator {
     }
 
     pub(crate) fn run(mut self, queue: Receiver<Input>) {
+        // The first check can be slow, and the next one comes on a key-down.
+        let _ = self.microphone.problem();
         loop {
             let input = match self.next_wake() {
                 Some(wait) => queue.recv_timeout(wait),

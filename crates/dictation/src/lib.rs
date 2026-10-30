@@ -78,7 +78,9 @@ pub struct SystemMicrophone;
 
 impl Microphone for SystemMicrophone {
     fn problem(&self) -> Option<String> {
-        None
+        wf_platform::permissions::check()
+            .microphone_problem()
+            .map(str::to_owned)
     }
 
     fn open(&self, ranking: Vec<String>) -> Result<Box<dyn MicStream>, String> {
