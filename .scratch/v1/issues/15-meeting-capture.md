@@ -25,7 +25,7 @@ Tests sit at four seams, chosen by the implementer since no human was available 
 Verified on macOS (Apple Silicon):
 - Crash safety for real: cutting the file at every byte around each page boundary and at a spread of offsets keeps exactly the complete pages, sample-identical to the full decode. A flipped byte keeps everything before the damaged page. SIGKILL on a live writer process keeps all but the last second or so.
 - ffmpeg, as an independent decoder, reads finished and repaired files as stereo with no warnings (`--ignored` tests). The `ogg` crate accepts the framing.
-- `tap-test` on the real tap, 4 of 4 runs: its own `afplay` tone went through the tap, recorder and Opus file and read back at 1000 Hz at the expected level, using a process-scoped muted tap and no mic. That is the only real audio this ticket touched.
+- `tap-test` on the real tap, 5 of 5 runs through the recorder: its own `afplay` tone went through the tap, recorder and Opus file and read back at 1000 Hz at the expected level, using a process-scoped muted tap and no mic. That is the only real audio this ticket touched.
 - `mic_clients()` against CoreAudio: real processes resolve to pids and bundle ids, and Slack, Chrome and WebKit classify correctly (with the mic-in-use filter temporarily removed, since nothing was using the mic).
 - 90× real time encoding, 18.6 MB/hour.
 - `cargo check` and `clippy -D warnings` pass for the Windows and Linux targets, with the C builds stubbed. That proves they type-check, nothing more.
