@@ -199,6 +199,28 @@ fn fillers_come_out_clean_on_lite_with_the_llm_off() {
 
 #[test]
 #[ignore = "needs models"]
+fn noise_suppression_leaves_clean_speech_readable() {
+    let mut settings = tier(PipelineTier::Balanced);
+    settings.pipeline.denoise = true;
+    let flow = start(settings, false);
+    let folder = tempfile::tempdir().unwrap();
+
+    let lead_in = AudioClip::new(vec![0.000_1; 64_000]);
+    let (text, _) = flow.dictate(with_pauses(&joined(
+        &lead_in,
+        &spoken(FILLERS, folder.path()),
+    )));
+
+    assert_eq!(text, "So I think we should ship it.");
+}
+
+/// `first`, then `second`.
+fn joined(first: &AudioClip, second: &AudioClip) -> AudioClip {
+    AudioClip::new([first.samples(), second.samples()].concat())
+}
+
+#[test]
+#[ignore = "needs models"]
 fn a_self_correction_resolves_on_balanced() {
     let flow = start(tier(PipelineTier::Balanced), false);
     let clip = spoken(CORRECTION, flow.data.path());
@@ -231,6 +253,32 @@ fn latency_of_a_ten_second_clip() {
                 text.len(),
                 report.cleanup_fallback,
             );
+        }
+    }
+}
+
+/// What a late mic costs someone who talks the moment they press: the first `ms` of the speech
+/// never arrive. The time itself comes from `cargo run -p wf-audio --example first_frame`.
+#[test]
+#[ignore = "needs models"]
+fn what_each_late_millisecond_costs() {
+    let folder = tempfile::tempdir().unwrap();
+    let sentence = "Please review the budget before Friday.";
+    let clip = spoken(sentence, folder.path());
+    let onset = clip
+        .samples()
+        .iter()
+        .position(|sample| sample.abs() > 0.01)
+        .expect("the voice speaks");
+    for (name, settings) in [
+        ("balanced", tier(PipelineTier::Balanced)),
+        ("lite", tier(PipelineTier::Lite)),
+    ] {
+        let flow = start(settings, false);
+        for ms in [0, 50, 100, 150, 200, 300, 400, 500] {
+            let cut = AudioClip::new(clip.samples()[onset + ms * 16..].to_vec());
+            let (text, _) = flow.dictate(with_pauses(&cut));
+            println!("{name} {ms} ms late: {text}");
         }
     }
 }

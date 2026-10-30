@@ -61,7 +61,8 @@ fn run(args: &[String]) -> Result<(), slint::PlatformError> {
         .map(prefs::Prefs::load)
         .unwrap_or_default();
     let pill = PillController::new(prefs, prefs_path)?;
-    let flow = dictation::start(store.get(), &pill, &tray);
+    let clip_run = debug::ClipRun::from_args(args);
+    let flow = dictation::start(store.get(), &pill, &tray, clip_run.as_ref());
     tray.on_toggle_meeting({
         let flow = flow.clone();
         move || flow.toggle_meeting()
@@ -103,7 +104,13 @@ fn run(args: &[String]) -> Result<(), slint::PlatformError> {
 
     tray.show()?;
     pill.show()?;
-    let _keys = dictation::listen_to_keys(&flow);
+    let _keys = match clip_run {
+        Some(clip_run) => {
+            clip_run.drive(flow.clone());
+            None
+        }
+        None => Some(dictation::listen_to_keys(&flow)),
+    };
 
     // A Dock icon needs the running event loop. The loop starts without one, so that launching
     // never takes the foreground from the app in use.

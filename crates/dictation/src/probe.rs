@@ -3,7 +3,7 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::Duration;
@@ -65,11 +65,15 @@ impl ClipMicrophone {
     }
 }
 
-struct ClipStream(Receiver<CaptureEvent>);
+struct ClipStream {
+    events: Receiver<CaptureEvent>,
+    /// Dropping this ends the thread that played the clip.
+    _open: Sender<()>,
+}
 
 impl MicStream for ClipStream {
     fn events(&self) -> &Receiver<CaptureEvent> {
-        &self.0
+        &self.events
     }
 }
 
@@ -85,6 +89,7 @@ impl Microphone for ClipMicrophone {
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
         let (events, stream) = mpsc::channel();
+        let (open, closed) = mpsc::channel();
         let (real_time, played) = (self.real_time, Arc::clone(&self.played));
         thread::spawn(move || {
             for frame in clip.samples().chunks(FRAME_SAMPLES) {
@@ -99,10 +104,12 @@ impl Microphone for ClipMicrophone {
             }
             played.store(true, Ordering::SeqCst);
             // Stays open like a real mic until the flow closes it.
-            let _ = events;
-            thread::park();
+            let _ = closed.recv();
         });
-        Ok(Box::new(ClipStream(stream)))
+        Ok(Box::new(ClipStream {
+            events: stream,
+            _open: open,
+        }))
     }
 }
 

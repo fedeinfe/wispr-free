@@ -16,6 +16,7 @@ use wf_models::{Catalog, ModelStore};
 use wf_platform::keys::{self, KeyListener};
 
 use crate::Tray;
+use crate::debug::ClipRun;
 use crate::memory;
 use crate::pill::{LANGUAGES, PillController, PillEvent};
 use crate::settings_window::SettingsHost;
@@ -32,14 +33,19 @@ const PIPELINE_QUALITIES: [PipelineTier; 4] = [
 ];
 
 /// Starts the flow on the real machine. Its events reach `pill` and `tray` on the UI thread.
-pub fn start(settings: Settings, pill: &PillController, tray: &Tray) -> Dictation {
+pub fn start(
+    settings: Settings,
+    pill: &PillController,
+    tray: &Tray,
+    clip: Option<&ClipRun>,
+) -> Dictation {
     let data = data_dir().unwrap_or_else(|| PathBuf::from("wispr-free"));
     let default_models = ModelStore::default_root().unwrap_or_else(|| data.join("models"));
     let history = History::default_path().unwrap_or_else(|| data.join("history.sqlite3"));
     let meetings = data.join("meetings");
     let executable = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("wispr-free"));
     let on_event = deliver_to(pill, tray.as_weak());
-    Dictation::start(Parts::system(
+    let mut parts = Parts::system(
         settings,
         Arc::new(Catalog::bundled()),
         default_models,
@@ -47,7 +53,11 @@ pub fn start(settings: Settings, pill: &PillController, tray: &Tray) -> Dictatio
         meetings,
         executable,
         on_event,
-    ))
+    );
+    if let Some(clip) = clip {
+        clip.fit(&mut parts);
+    }
+    Dictation::start(parts)
 }
 
 /// Returns the callback for the flow's threads. Events wait in a queue for the UI thread.
