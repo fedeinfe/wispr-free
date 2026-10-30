@@ -31,13 +31,13 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      # Slint (winit + femtovg) needs fontconfig and xkbcommon headers. Later tickets add
-      # libasound2-dev (cpal, 02) and the evdev/X11/Wayland deps for the platform crate.
+      # Slint (winit + femtovg) needs fontconfig and xkbcommon headers, cpal needs ALSA. Later
+      # tickets add the evdev/X11/Wayland deps for the platform crate.
       - name: Install Linux system deps
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libfontconfig1-dev libxkbcommon-dev
+          sudo apt-get install -y --no-install-recommends libfontconfig1-dev libxkbcommon-dev libasound2-dev
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo build --workspace --locked
       - run: cargo test --workspace --locked
