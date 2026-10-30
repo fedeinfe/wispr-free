@@ -51,3 +51,5 @@
 **Summary**: the AI-generated meeting notes (TL;DR, key points, decisions, action items). Distinct from the user's own **Notes**.
 
 **Meeting chat**: Q&A grounded in a meeting's transcript, notes and summary, citing timestamps.
+
+**Citation**: a `[mm:ss]` in a chat answer. It's checked against the transcript whenever it's shown: one that matches a line links to it, any other is shown as unverified and leads nowhere.

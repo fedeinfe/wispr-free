@@ -1291,16 +1291,6 @@ fn from_notes(notes: Notes, transcript_hash: String) -> Summary {
     }
 }
 
-/// What a summary says, in the shape the model read its notes in, each line with where it was said.
-pub(crate) fn render_summary(summary: &Summary) -> String {
-    let notes = Notes {
-        key_points: summary.key_points.clone(),
-        decisions: summary.decisions.clone(),
-        action_items: summary.action_items.clone(),
-    };
-    format!("TL;DR: {}\n{}", summary.tldr, notes.render())
-}
-
 /// Replaces "Speaker N" labels with names, whole labels only: "Speaker 1" never touches
 /// "Speaker 12". A stored summary keeps the labels, so a later rename still finds them.
 pub fn rename_speaker_labels(text: &str, names: &SpeakerNames) -> String {

@@ -123,7 +123,11 @@ fn the_model_gets_the_title_notes_and_summary_too() {
     assert!(prompt.user.contains("Billing review"));
     assert!(prompt.user.contains("Remember the invoice template"));
     assert!(prompt.user.contains("Stripe it is."));
-    assert!(prompt.user.contains("[00:04] Go with Stripe"));
+    assert!(prompt.user.contains("- Go with Stripe"));
+    assert!(
+        !prompt.user.contains("[00:04] Go with Stripe"),
+        "no time to copy"
+    );
     assert!(prompt.user.contains("Speaker 2 is Giulia"));
     assert!(prompt.user.ends_with("Question: Who pays?"));
 }
@@ -224,6 +228,51 @@ fn retrieval_goes_where_the_summary_says_the_tasks_were_said() {
         the_transcript_in(&prompt.prompt).contains("giraffe"),
         "the piece around the summary's task is in"
     );
+}
+
+#[test]
+fn a_question_about_tasks_reads_who_took_what_on_rather_than_the_summary_list() {
+    let mut source = long_source();
+    source.summary = Some(Summary {
+        title: None,
+        tldr: "Plenty was said.".into(),
+        key_points: Vec::new(),
+        decisions: Vec::new(),
+        action_items: vec![ActionItem {
+            task: "A task that nobody took on".into(),
+            owner: None,
+            due: None,
+            at_ms: None,
+        }],
+        partial: false,
+        transcript_hash: String::new(),
+    });
+
+    let prompt = chat_prompt(
+        &source,
+        "What were the action items?",
+        &ChatOptions::default(),
+    );
+
+    assert!(prompt.partial_transcript);
+    assert!(!prompt.prompt.user.contains("A task that nobody took on"));
+    let given = the_transcript_in(&prompt.prompt);
+    assert!(
+        given.contains("I will finish the migration script"),
+        "{given}"
+    );
+    assert!(given.len() < 2_000, "only the lines that matter: {given}");
+}
+
+#[test]
+fn a_question_about_tasks_on_a_short_meeting_still_reads_all_of_it() {
+    let prompt = chat_prompt(
+        &source(&SHORT),
+        "What are the next steps?",
+        &ChatOptions::default(),
+    );
+    assert!(!prompt.partial_transcript);
+    assert!(the_transcript_in(&prompt.prompt).contains("We go with Stripe"));
 }
 
 #[test]
@@ -405,10 +454,64 @@ fn a_gap_is_not_a_line_to_cite() {
 
 #[test]
 fn lists_and_ranges_of_times_are_each_their_own_citation() {
-    let answer = parsed("Both [00:04, 00:12] and [00:12-00:20].");
+    let rows = rows(&[
+        (10_000, None, "Stripe goes first."),
+        (70_000, Some(1), "Stripe goes last."),
+        (130_000, Some(2), "Stripe stays."),
+    ]);
 
-    let rows: Vec<_> = answer.blocks[0].citations.iter().map(|c| c.row).collect();
-    assert_eq!(rows, [Some(0), Some(1), Some(1), Some(2)]);
+    let answer = parse_answer("Stripe all along [00:10, 01:10] and [02:10-09:00].", &rows);
+
+    let cited: Vec<_> = answer.blocks[0].citations.iter().map(|c| c.row).collect();
+    assert_eq!(cited, [Some(0), Some(1), Some(2), None]);
+}
+
+const SPREAD: [(u64, Option<u32>, &str); 4] = [
+    (60_000, None, "We go with Stripe for billing."),
+    (
+        75_000,
+        Some(1),
+        "I will open the billing account by Friday.",
+    ),
+    (85_000, Some(2), "Sounds good to me."),
+    (1_000_000, None, "See you tomorrow."),
+];
+
+#[test]
+fn a_real_time_on_a_line_that_says_something_else_is_no_citation() {
+    let answer = parse_answer("Stripe was chosen for billing [16:40].", &rows(&SPREAD));
+
+    let citation = &answer.blocks[0].citations[0];
+    assert_eq!(citation.row, None);
+    assert_eq!(citation.label, "[16:40]");
+    assert!(answer.is_unbacked());
+}
+
+#[test]
+fn a_time_a_little_off_finds_the_line_that_says_it() {
+    let answer = parse_answer(
+        "The billing account opens by Friday [01:25].",
+        &rows(&SPREAD),
+    );
+
+    let citation = &answer.blocks[0].citations[0];
+    assert_eq!(citation.row, Some(1));
+    assert_eq!(citation.label, "[01:15]", "the line's own time");
+}
+
+#[test]
+fn a_line_says_a_thing_in_other_forms_of_the_same_words() {
+    let lines = [(5_000, None, "I am finishing the migration tonight.")];
+
+    let answer = parse_answer("Migrating finishes tonight [00:05].", &rows(&lines));
+
+    assert_eq!(answer.blocks[0].citations[0].row, Some(0));
+}
+
+#[test]
+fn a_time_with_a_claim_too_far_from_its_line_is_no_citation() {
+    let answer = parse_answer("Stripe for billing [05:00].", &rows(&SPREAD));
+    assert_eq!(answer.blocks[0].citations[0].row, None);
 }
 
 #[test]
@@ -457,9 +560,13 @@ fn a_saved_answer_is_checked_against_the_transcript_as_it_is_now() {
     let before = parsed("Stripe [00:04].");
     assert_eq!(before.blocks[0].citations[0].row, Some(0));
 
-    let refined = rows(&[(5_000, None, "We go with Stripe for billing.")]);
-    let after = parse_answer("Stripe [00:04].", &refined);
+    let moved = rows(&[(5_000, None, "We go with Stripe for billing.")]);
+    let after = parse_answer("Stripe [00:04].", &moved);
+    assert_eq!(after.blocks[0].citations[0].row, Some(0));
+    assert_eq!(after.blocks[0].citations[0].label, "[00:05]");
 
+    let gone = rows(&[(5_000, None, "We go with Paddle.")]);
+    let after = parse_answer("Stripe [00:04].", &gone);
     assert_eq!(after.blocks[0].citations[0].row, None);
 }
 

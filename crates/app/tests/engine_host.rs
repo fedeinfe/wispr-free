@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use wf_dictation::Engines;
-use wf_dictation::plan::{AsrModel, LlmModel};
+use wf_dictation::plan::{AsrModel, DiarizerModel, LlmModel};
 use wf_dictation::remote::ChildEngines;
 use wf_pipeline::PipelineError;
 
@@ -35,6 +35,14 @@ fn a_missing_model_comes_back_as_model_missing_from_every_engine() {
     };
     assert!(matches!(
         engines.llm(&model).map(|_| ()),
+        Err(PipelineError::ModelMissing(_))
+    ));
+    let model = DiarizerModel {
+        segmentation: gone.to_owned(),
+        embedding: gone.to_owned(),
+    };
+    assert!(matches!(
+        engines.diarizer(&model).map(|_| ()),
         Err(PipelineError::ModelMissing(_))
     ));
 }

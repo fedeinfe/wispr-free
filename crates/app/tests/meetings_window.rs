@@ -704,15 +704,15 @@ fn a_question_streams_and_ends_with_times_that_jump() {
 
     harness.controller().news(update(ChatUpdate::Done(Ok(turn(
         "Who sends it?",
-        "Speaker 1 sends it. [00:12] [00:13]",
+        "By Thursday, yes. [00:12] [05:00]",
     )))));
 
     assert!(!harness.ui().get_chat_running());
     assert_eq!(harness.ui().get_streaming_question(), "");
     let messages = harness.ui().get_chat();
     let block = messages.row_data(0).unwrap().blocks.row_data(0).unwrap();
-    assert_eq!(block.text, "Speaker 1 sends it.");
-    assert!(harness.on_screen("[00:13] matches no line of the transcript"));
+    assert_eq!(block.text, "By Thursday, yes.");
+    assert!(harness.on_screen("[05:00] matches no line of the transcript"));
 
     harness.click("Go to [00:12]");
     assert_eq!(harness.ui().get_tab(), TRANSCRIPT);
@@ -819,7 +819,7 @@ fn saved_answers_are_checked_again_when_the_meeting_opens() {
     let (harness, ids) = ready(&["Launch"]);
     let mut meeting = harness.store.open(&ids[0]).unwrap();
     meeting
-        .add_chat_turn(turn("Who?", "Speaker 1. [00:12]"))
+        .add_chat_turn(turn("Who?", "By Thursday. [00:12]"))
         .unwrap();
     meeting
         .add_chat_turn(turn("And?", "No one. [07:07]"))
