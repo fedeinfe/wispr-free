@@ -11,6 +11,12 @@
 //! summarizes a transcript the prompts were never tuned on. `meeting-chat` puts the chat's
 //! questions to the newest meeting and scores where the citations land, and takes `--context`.
 //! `meeting-chat-score` scores the answers saved with it, and needs no model.
+//!
+//! `cargo xtask-meeting speech-fixture --out dir` builds the ASR benchmark's clips with macOS `say`.
+//! `cargo xtask-meeting asr-bench --fixture dir --models dir --model id --out file.json` times one
+//! ASR model over them and scores its WER. Flags: `--runs n`, `--filter text` keeps the clips whose
+//! id has it, `--mode auto|pinned` tries one way of choosing the language, `--threads n` runs on
+//! the CPU with that many threads, to stand in for a machine with no GPU.
 
 use std::process::ExitCode;
 
@@ -28,7 +34,8 @@ fn main() -> anyhow::Result<ExitCode> {
         "bundle" => return bundle::run(args).map(|()| ExitCode::SUCCESS),
         "signing-identity" => return bundle::create_identity().map(|()| ExitCode::SUCCESS),
         "meeting-fixture" | "meeting-run" | "meeting-summary" | "meeting-diarize"
-        | "meeting-holdout" | "meeting-chat" | "meeting-chat-score" => {
+        | "meeting-holdout" | "meeting-chat" | "meeting-chat-score" | "speech-fixture"
+        | "asr-bench" => {
             return meeting_task(&task, args);
         }
         _ => bail!("unknown task {task:?}"),
@@ -71,7 +78,8 @@ fn meeting_task(task: &str, mut args: impl Iterator<Item = String>) -> anyhow::R
         match arg.as_str() {
             "--realtime" => realtime = true,
             "--fixture" | "--models" | "--out" | "--tier" | "--threshold" | "--shift"
-            | "--embedding" | "--context" => {
+            | "--embedding" | "--context" | "--model" | "--runs" | "--filter" | "--mode"
+            | "--threads" => {
                 let value = args
                     .next()
                     .with_context(|| format!("{arg} needs a value"))?;
@@ -93,6 +101,14 @@ fn meeting_task(task: &str, mut args: impl Iterator<Item = String>) -> anyhow::R
         );
         return Ok(ExitCode::SUCCESS);
     }
+    if task == "speech-fixture" {
+        let script = xtask::speech_fixture::SpeechScript::bundled()?;
+        let recordings =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../pipeline/tests/fixtures");
+        let clips = xtask::speech_fixture::build(&script, &recordings, out)?;
+        println!("{} clips in {}", clips.len(), out.display());
+        return Ok(ExitCode::SUCCESS);
+    }
     meeting_run(task, &flags, realtime, out)
 }
 
@@ -104,6 +120,7 @@ fn meeting_run(
     out: &std::path::Path,
 ) -> anyhow::Result<ExitCode> {
     use wf_models::Tier;
+    use xtask::asr_bench::{self, Bench};
     use xtask::meeting_run::{RunOptions, chat, holdout, rediarize, resummarize, run};
 
     let path = |flag: &str| -> anyhow::Result<std::path::PathBuf> {
@@ -129,6 +146,16 @@ fn meeting_run(
         Ok(flags.get(flag).map(|text| text.parse()).transpose()?)
     };
     let report = match task {
+        "asr-bench" => asr_bench::run(&Bench {
+            fixture: options.fixture.clone(),
+            models: options.models.clone(),
+            model: flags.get("--model").context("set --model")?.clone(),
+            out: out.to_owned(),
+            runs: flags.get("--runs").map_or(Ok(3), |n| n.parse())?,
+            filter: flags.get("--filter").cloned(),
+            mode: flags.get("--mode").cloned(),
+            cpu_threads: flags.get("--threads").map(|n| n.parse()).transpose()?,
+        })?,
         "meeting-summary" => resummarize(&options)?,
         "meeting-holdout" => holdout(&options)?,
         // Scoring what's saved needs no model.

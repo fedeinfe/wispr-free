@@ -20,6 +20,7 @@ use wf_core::audio::AudioClip;
 use wf_core::dictation::PillInput;
 use wf_core::pill::PillState;
 use wf_core::settings::{KeepModels, PipelineTier, Settings};
+use wf_dictation::plan::preset_tier;
 use wf_dictation::probe::{ClipMicrophone, NoContext, TextLog, read_wav};
 use wf_dictation::remote::ChildEngines;
 use wf_dictation::{Dictation, Event, Parts, Report, SystemClock, SystemMeetingRoom};
@@ -34,19 +35,16 @@ const CORRECTION: &str = "I like the red one, oh no, I meant the blue one";
 /// A model folder laid out the way the app expects, made of links to the test models.
 fn link_models(root: &Path) {
     let source = PathBuf::from(std::env::var("WF_MODELS").expect("set WF_MODELS"));
-    let catalog = Catalog::bundled();
-    let single_files = [
-        ("silero-vad-v5", "silero_vad.onnx"),
-        ("qwen3-1.7b-q4_k_m", "Qwen3-1.7B-Q4_K_M.gguf"),
-    ];
-    for (id, file) in single_files {
-        let dir = root.join(id);
-        fs::create_dir_all(&dir).unwrap();
-        let name = &catalog.model(id).unwrap().files[0].name;
-        symlink(source.join(file), dir.join(name)).unwrap();
-    }
-    for id in ["parakeet-tdt-0.6b-v3-int8", "whisper-small-q8_0"] {
-        symlink(source.join(id), root.join(id)).unwrap();
+    for model in Catalog::bundled().models {
+        let folder = source.join(&model.id);
+        let loose = source.join(&model.files[0].name);
+        if folder.is_dir() {
+            symlink(folder, root.join(&model.id)).unwrap();
+        } else if loose.is_file() {
+            let dir = root.join(&model.id);
+            fs::create_dir_all(&dir).unwrap();
+            symlink(loose, dir.join(&model.files[0].name)).unwrap();
+        }
     }
 }
 
@@ -260,6 +258,45 @@ fn latency_of_a_ten_second_clip() {
                 report.cleanup_fallback,
             );
         }
+    }
+}
+
+/// One setup on one clip, for `docs/benchmarks.md`: a cold dictation, then warm ones. Reads
+/// `WF_BENCH_CLIP` (a WAV), `WF_BENCH_TIER` and `WF_BENCH_RUNS`. `WF_BENCH_ASR` and `WF_BENCH_LLM`
+/// try other models on that tier's stages, and `WF_BENCH_LANGUAGE` fills in "My languages".
+#[test]
+#[ignore = "needs models"]
+fn tier_benchmark() {
+    let env = |name: &str| std::env::var(name).ok();
+    let name = env("WF_BENCH_TIER").expect("set WF_BENCH_TIER");
+    let mut settings = tier(match name.as_str() {
+        "lite" => PipelineTier::Lite,
+        "balanced" => PipelineTier::Balanced,
+        "high" => PipelineTier::High,
+        other => panic!("unknown tier {other}"),
+    });
+    if env("WF_BENCH_ASR").is_some() || env("WF_BENCH_LLM").is_some() {
+        let catalog = Catalog::bundled();
+        let preset = catalog.preset(preset_tier(settings.pipeline.tier).unwrap());
+        settings.pipeline.tier = PipelineTier::Custom;
+        settings.pipeline.vad_model = preset.vad_model.clone();
+        settings.pipeline.asr_model = env("WF_BENCH_ASR").or(Some(preset.asr_model.clone()));
+        settings.pipeline.llm_model = env("WF_BENCH_LLM").or(preset.llm_model.clone());
+    }
+    settings.general.languages = env("WF_BENCH_LANGUAGE").into_iter().collect();
+    let runs: usize = env("WF_BENCH_RUNS").map_or(6, |runs| runs.parse().unwrap());
+    let clip = read_wav(Path::new(&env("WF_BENCH_CLIP").expect("set WF_BENCH_CLIP"))).unwrap();
+
+    let flow = start(settings, true);
+    for run in 0..runs {
+        let (text, report) = flow.dictate(with_pauses(&clip));
+        println!(
+            "bench run={run} release_ms={} asr_ms={} cleanup_ms={} fallback={:?} text={text:?}",
+            report.release_to_insert.as_millis(),
+            report.timings.asr.as_millis(),
+            report.timings.cleanup.as_millis(),
+            report.cleanup_fallback,
+        );
     }
 }
 

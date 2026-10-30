@@ -1,0 +1,177 @@
+# Passages with known text, for comparing ASR models (ticket 14). Written for this project.
+# `cargo xtask-meeting speech-fixture` has macOS `say` read each one in every voice of its language.
+# The audio stays out of git: Apple's license limits system voices (see tests/fixtures/README.md).
+#
+# Synthetic voices flatter every model, so read these numbers as a comparison between models, not
+# as what a person at a microphone would get. There are no digits or spelled-out amounts here:
+# models disagree on how to write them, and that would count as a word error when it isn't one.
+#
+# A `short` passage runs about 10 s, the length of the spec's latency target. A `long` one runs
+# past Whisper's 30 s window. Each goes in clean and with noise added, because clean `say` audio
+# leaves the models almost tied.
+
+[voices]
+en = ["Samantha", "Daniel"]
+it = ["Alice", "Eddy (Italian (Italy))"]
+
+# Recordings of real people in crates/pipeline/tests/fixtures. There are few and they are short.
+# Their references come from what several models agreed on, checked against the book's title page
+# for the translator's name, so they are less sure than the passages below.
+[[recording]]
+id = "speech_en"
+language = "en"
+text = "Selected and translated by C. Fillingham Coxwell, M.D."
+
+[[recording]]
+id = "speech_it"
+language = "it"
+text = "Tutte le registrazioni di LibriVox sono di dominio pubblico."
+
+[[recording]]
+id = "speech_mid_phrase_en"
+language = "en"
+text = "should be wise. With hoodwinked eyes he scarce will notice wrongs or judgment exercise. An elephant was called to government's emprise."
+
+[[passage]]
+id = "en-review"
+language = "en"
+length = "short"
+text = "Hi Sarah, thanks for sending the report over this morning. I read the summary and the new budget section, and I think we should talk about the marketing plan before Friday."
+
+[[passage]]
+id = "en-standup"
+language = "en"
+length = "short"
+text = "Yesterday I finished the login page and fixed the bug in the payment form. Today I am going to write the tests and then help Daniel with the database migration."
+
+[[passage]]
+id = "en-groceries"
+language = "en"
+length = "short"
+text = "Remember to pick up some bread, olive oil and fresh tomatoes on the way home, and please call the dentist to move the appointment to the following week."
+
+[[passage]]
+id = "en-feedback"
+language = "en"
+length = "short"
+text = "The new design looks great, but the buttons are a little too small on the phone and the menu takes too long to open. Could we try a simpler layout next?"
+
+[[passage]]
+id = "en-travel"
+language = "en"
+length = "short"
+text = "Our flight to Lisbon leaves early in the morning, so we should book a taxi tonight and pack the bags before dinner. The hotel confirmed the room with a sea view."
+
+[[passage]]
+id = "en-support"
+language = "en"
+length = "short"
+text = "I am sorry to hear about the problem with your order. We have sent a replacement and refunded the delivery charge, and you should receive an email with the tracking details."
+
+[[passage]]
+id = "en-engineering"
+language = "en"
+length = "short"
+text = "The server crashed because the cache filled up the disk, so we added a cleanup job and a warning on the dashboard. The Kubernetes cluster has been stable since then."
+
+[[passage]]
+id = "en-meeting"
+language = "en"
+length = "short"
+text = "Let's move the design review to Thursday afternoon, because Maria is out on Wednesday. Could you also share the slides with the whole team and ask them for comments?"
+
+[[passage]]
+id = "en-garden"
+language = "en"
+length = "short"
+text = "The old apple tree at the end of the garden finally came down in the storm. My neighbour offered to cut it into logs, and we will burn them in the winter."
+
+[[passage]]
+id = "en-question"
+language = "en"
+length = "short"
+text = "Do you know whether the museum is open on Sunday, and how much the tickets cost for children? We would like to take the kids there while the weather is bad."
+
+[[passage]]
+id = "en-letter"
+language = "en"
+length = "long"
+text = "Dear Thomas, I wanted to give you an update on the move to the new office before the holidays. The landlord has finally signed the lease, and the builders will start on the kitchen next month. We still need to choose the furniture for the meeting rooms, and I would be grateful if you could look at the catalogue that Anna sent around. Parking is going to be harder than it is now, so we are talking to the council about permits for the street behind the building. The internet company has promised to connect the fibre line before we arrive, although I have heard that promise before. Please let me know if your team needs any special equipment, and remember to label your boxes clearly, because the removal company will not open anything that has no name on it. I am looking forward to seeing the place when it is finished."
+
+[[passage]]
+id = "en-story"
+language = "en"
+length = "long"
+text = "When my grandmother was young she worked at a small bakery near the harbour, and she used to get up long before the sun to light the ovens. She told me that the fishermen would come in from the night boats, cold and hungry, and that she always kept a basket of warm rolls by the door for them. Nobody ever paid for those rolls, and nobody ever asked her to stop giving them away. Years later, when the bakery was in trouble and the owner could not pay his bills, those same fishermen turned up one morning with a collection they had made along the quay. It was not a great deal of money, but it kept the doors open through a hard winter. She kept the old basket in her kitchen for the rest of her life, and she would smile whenever anybody asked her why she did not throw it away."
+
+[[passage]]
+id = "it-ufficio"
+language = "it"
+length = "short"
+text = "Ciao Giulia, grazie per avermi mandato la relazione stamattina. Ho letto il riassunto e la nuova parte sul bilancio, e credo che dovremmo parlare del piano di vendita prima di venerdì."
+
+[[passage]]
+id = "it-lavoro"
+language = "it"
+length = "short"
+text = "Ieri ho finito la pagina di accesso e ho corretto l'errore nel modulo di pagamento. Oggi scrivo le prove e poi aiuto Marco con il trasferimento della base di dati."
+
+[[passage]]
+id = "it-spesa"
+language = "it"
+length = "short"
+text = "Ricordati di comprare il pane, l'olio d'oliva e i pomodori freschi mentre torni a casa, e per favore chiama il dentista per spostare l'appuntamento alla settimana successiva."
+
+[[passage]]
+id = "it-commenti"
+language = "it"
+length = "short"
+text = "Il nuovo progetto grafico è molto bello, ma i pulsanti sono un po' troppo piccoli sul telefono e il menu ci mette troppo ad aprirsi. Possiamo provare una versione più semplice?"
+
+[[passage]]
+id = "it-viaggio"
+language = "it"
+length = "short"
+text = "Il nostro volo per Lisbona parte la mattina presto, quindi dovremmo prenotare un taxi stasera e preparare le valigie prima di cena. L'albergo ha confermato la camera con vista sul mare."
+
+[[passage]]
+id = "it-assistenza"
+language = "it"
+length = "short"
+text = "Mi dispiace per il problema con il suo ordine. Abbiamo spedito un prodotto sostitutivo e rimborsato le spese di consegna, e riceverà presto un messaggio con i dettagli della spedizione."
+
+[[passage]]
+id = "it-tecnico"
+language = "it"
+length = "short"
+text = "Il server si è bloccato perché la cache ha riempito il disco, quindi abbiamo aggiunto un'attività di pulizia e un avviso sul pannello di controllo. Da allora il sistema è stabile."
+
+[[passage]]
+id = "it-riunione"
+language = "it"
+length = "short"
+text = "Spostiamo la riunione a giovedì pomeriggio, perché mercoledì Maria non c'è. Potresti anche condividere le diapositive con tutto il gruppo e chiedere a tutti un parere?"
+
+[[passage]]
+id = "it-giardino"
+language = "it"
+length = "short"
+text = "Il vecchio melo in fondo al giardino è caduto durante il temporale. Il mio vicino si è offerto di tagliarlo a pezzi, e bruceremo la legna nel camino durante l'inverno."
+
+[[passage]]
+id = "it-domanda"
+language = "it"
+length = "short"
+text = "Sai se il museo è aperto la domenica e quanto costano i biglietti per i bambini? Vorremmo portarci i ragazzi finché il tempo resta brutto e non si può stare fuori."
+
+[[passage]]
+id = "it-lettera"
+language = "it"
+length = "long"
+text = "Caro Tommaso, volevo aggiornarti sul trasferimento nel nuovo ufficio prima delle feste. Il proprietario ha finalmente firmato il contratto, e gli operai cominceranno a lavorare in cucina il mese prossimo. Dobbiamo ancora scegliere i mobili per le sale riunioni, e ti sarei grato se potessi guardare il catalogo che Anna ha fatto girare. Parcheggiare sarà più difficile di adesso, quindi stiamo parlando con il comune per avere i permessi nella strada dietro al palazzo. La società telefonica ha promesso di collegare la fibra prima del nostro arrivo, anche se questa promessa l'ho già sentita altre volte. Fammi sapere se il tuo gruppo ha bisogno di attrezzature particolari, e ricordati di scrivere il nome sugli scatoloni, perché la ditta del trasloco non aprirà nulla che non abbia un'etichetta. Non vedo l'ora di vedere il posto quando sarà finito."
+
+[[passage]]
+id = "it-racconto"
+language = "it"
+length = "long"
+text = "Quando mia nonna era giovane lavorava in un piccolo forno vicino al porto, e si alzava molto prima del sole per accendere il fuoco. Mi raccontava che i pescatori tornavano dalle barche della notte, infreddoliti e affamati, e che lei teneva sempre un cesto di panini caldi vicino alla porta. Nessuno ha mai pagato quei panini, e nessuno le ha mai chiesto di smettere di regalarli. Molti anni dopo, quando il forno era in difficoltà e il padrone non riusciva a pagare i conti, gli stessi pescatori si presentarono una mattina con una colletta fatta lungo il molo. Non erano molti soldi, ma bastarono per tenere aperto durante un inverno difficile. Ha tenuto il vecchio cesto in cucina per tutta la vita, e sorrideva ogni volta che qualcuno le chiedeva perché non lo buttasse via."

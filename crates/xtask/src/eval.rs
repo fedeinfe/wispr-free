@@ -166,6 +166,7 @@ fn word_distance(a: &[String], b: &[String]) -> usize {
 pub struct CaseResult {
     pub id: String,
     pub category: String,
+    pub language: Option<String>,
     pub holdout: bool,
     pub input: String,
     pub output: String,
@@ -224,6 +225,7 @@ pub fn run(cases: &[Case], llm: &mut dyn Llm) -> Report {
         report.results.push(CaseResult {
             id: case.id.clone(),
             category: case.category.clone(),
+            language: case.language.clone(),
             holdout: case.holdout,
             input: cleaned.clone(),
             misses: score(case, &output),
@@ -315,6 +317,30 @@ impl Report {
             "holdout",
             tally(&|r: &CaseResult| r.holdout)
         );
+
+        let mut languages: Vec<&str> = self
+            .results
+            .iter()
+            .filter_map(|r| r.language.as_deref())
+            .collect();
+        languages.sort_unstable();
+        languages.dedup();
+        for language in languages {
+            let line = tally(&|r: &CaseResult| r.language.as_deref() == Some(language));
+            let mut times: Vec<_> = self
+                .results
+                .iter()
+                .filter(|r| r.language.as_deref() == Some(language))
+                .map(|r| r.elapsed)
+                .collect();
+            times.sort_unstable();
+            let _ = writeln!(
+                out,
+                "{:<16} {line}, p50 {:?}",
+                format!("language {language}"),
+                times[times.len() / 2],
+            );
+        }
 
         let mut elapsed: Vec<_> = self.results.iter().map(|r| r.elapsed).collect();
         elapsed.sort_unstable();

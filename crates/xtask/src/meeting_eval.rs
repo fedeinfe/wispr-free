@@ -286,7 +286,6 @@ fn due_right(known: &KnownAction, item: &ActionItem) -> bool {
     }
 }
 
-/// Word-level edit distance over the reference's length, ignoring case and punctuation.
 /// How close to a turn's start or end a transcript line may begin and still be that turn. ASR
 /// chunks start a little before the speech, and the fixture's turns are cut at the audio's edges.
 const TURN_SLACK_MS: u64 = 2_000;
@@ -425,7 +424,18 @@ fn heard_in_turn(action: &KnownAction, row: &TranscriptRow, truth: &Truth) -> bo
         })
 }
 
+/// Word-level edit distance over the reference's length, ignoring case and punctuation.
 pub fn word_error_rate(reference: &str, heard: &str) -> f64 {
+    let (edits, words) = word_edits(reference, heard);
+    match (edits, words) {
+        (0, 0) => 0.0,
+        (_, 0) => 1.0,
+        _ => edits as f64 / words as f64,
+    }
+}
+
+/// The edits between `heard` and `reference`, and how many words `reference` has.
+pub fn word_edits(reference: &str, heard: &str) -> (usize, usize) {
     let words = |text: &str| -> Vec<String> {
         text.split_whitespace()
             .map(|word| {
@@ -438,9 +448,6 @@ pub fn word_error_rate(reference: &str, heard: &str) -> f64 {
             .collect()
     };
     let (reference, heard) = (words(reference), words(heard));
-    if reference.is_empty() {
-        return if heard.is_empty() { 0.0 } else { 1.0 };
-    }
     let mut row: Vec<usize> = (0..=heard.len()).collect();
     for (r, word) in reference.iter().enumerate() {
         let mut diagonal = row[0];
@@ -451,5 +458,5 @@ pub fn word_error_rate(reference: &str, heard: &str) -> f64 {
             row[h + 1] = substitute.min(row[h] + 1).min(row[h + 1] + 1);
         }
     }
-    row[heard.len()] as f64 / reference.len() as f64
+    (row[heard.len()], reference.len())
 }
