@@ -1,7 +1,7 @@
 //! The host that owns the model: it loads on first use, unloads when idle, and keeps every
 //! caller inside its deadline even when the engine does not return.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -315,4 +315,155 @@ fn hosts_can_move_to_a_worker_thread_as_boxed_engines() {
         .unwrap();
 
     assert_eq!(reply.unwrap(), "one");
+}
+
+/// Runs until `stop` is called, like a process being killed from outside.
+struct StoppableEngine {
+    stopped: Arc<AtomicBool>,
+    entered: Arc<AtomicBool>,
+}
+
+impl Llm for StoppableEngine {
+    fn generate(
+        &mut self,
+        _prompt: &LlmPrompt,
+        on_token: &mut dyn FnMut(&str),
+    ) -> Result<String, PipelineError> {
+        self.entered.store(true, Ordering::SeqCst);
+        on_token("first ");
+        while !self.stopped.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(1));
+        }
+        Err(PipelineError::Engine("killed".into()))
+    }
+}
+
+struct Stoppable {
+    host: LlmHost,
+    stopped: Arc<AtomicBool>,
+    entered: Arc<AtomicBool>,
+    loads: Arc<AtomicUsize>,
+}
+
+fn stoppable() -> Stoppable {
+    let stopped = Arc::new(AtomicBool::new(false));
+    let entered = Arc::new(AtomicBool::new(false));
+    let loads = Arc::new(AtomicUsize::new(0));
+    let (engine_stopped, engine_entered, counted) =
+        (stopped.clone(), entered.clone(), loads.clone());
+    let stop = stopped.clone();
+    let host = LlmHost::spawn_stoppable(
+        move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            engine_stopped.store(false, Ordering::SeqCst);
+            Ok(Box::new(StoppableEngine {
+                stopped: engine_stopped.clone(),
+                entered: engine_entered.clone(),
+            }) as Box<dyn Llm>)
+        },
+        KeepLoaded::Always,
+        move || stop.store(true, Ordering::SeqCst),
+    );
+    Stoppable {
+        host,
+        stopped,
+        entered,
+        loads,
+    }
+}
+
+#[test]
+fn cancelling_a_running_generation_stops_the_engine_and_the_next_call_reloads() {
+    let stoppable = stoppable();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let trigger = cancel.clone();
+    let entered = stoppable.entered.clone();
+    thread::spawn(move || {
+        while !entered.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(1));
+        }
+        trigger.store(true, Ordering::SeqCst);
+    });
+
+    let mut tokens = Vec::new();
+    let result = stoppable
+        .host
+        .generate_until(&prompt("question"), &cancel, &mut |token| {
+            tokens.push(token.to_owned())
+        });
+
+    assert!(
+        matches!(result, Err(PipelineError::Cancelled)),
+        "{result:?}"
+    );
+    assert_eq!(tokens, ["first "]);
+    assert!(stoppable.stopped.load(Ordering::SeqCst));
+
+    stoppable.entered.store(false, Ordering::SeqCst);
+    let again = Arc::new(AtomicBool::new(false));
+    let trigger = again.clone();
+    let entered = stoppable.entered.clone();
+    thread::spawn(move || {
+        while !entered.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(1));
+        }
+        trigger.store(true, Ordering::SeqCst);
+    });
+    let result = stoppable
+        .host
+        .generate_until(&prompt("again"), &again, &mut |_| {});
+    assert!(
+        matches!(result, Err(PipelineError::Cancelled)),
+        "{result:?}"
+    );
+    assert_eq!(stoppable.loads.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn cancelling_a_call_still_in_the_queue_leaves_the_running_one_alone() {
+    let probe = Probe::default();
+    let counted = probe.clone();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let stop = stopped.clone();
+    let host = LlmHost::spawn_stoppable(
+        move || {
+            counted.loads.fetch_add(1, Ordering::SeqCst);
+            counted.alive.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(FakeEngine {
+                probe: counted.clone(),
+                hold: Duration::from_millis(150),
+            }) as Box<dyn Llm>)
+        },
+        KeepLoaded::Always,
+        move || stop.store(true, Ordering::SeqCst),
+    );
+    let mut first = host.clone();
+    let running = thread::spawn(move || first.generate(&prompt("first"), &mut |_| {}));
+    assert!(eventually(|| probe.generations() == 1));
+
+    let cancel = Arc::new(AtomicBool::new(true));
+    let queued = host.generate_until(&prompt("second"), &cancel, &mut |_| {});
+
+    assert!(
+        matches!(queued, Err(PipelineError::Cancelled)),
+        "{queued:?}"
+    );
+    assert_eq!(running.join().unwrap().unwrap(), "first");
+    assert!(
+        !stopped.load(Ordering::SeqCst),
+        "the running call was not ours"
+    );
+    thread::sleep(Duration::from_millis(50));
+    assert_eq!(probe.generations(), 1, "the queued call never ran");
+}
+
+#[test]
+fn a_call_nobody_cancels_finishes_normally() {
+    let probe = Probe::default();
+    let host = probe.host(KeepLoaded::Always);
+    let cancel = AtomicBool::new(false);
+
+    let result = host.generate_until(&prompt("hello there"), &cancel, &mut |_| {});
+
+    assert_eq!(result.unwrap(), "hello there");
 }
