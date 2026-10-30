@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tempfile::TempDir;
-use wf_core::history::{Dictation, History, HistoryRetention, Timings};
+use wf_history::{Dictation, History, HistoryRetention, Timings};
 
 const SECRET: &str = "the-quick-secret-transcript-7f3a";
 const HOUR: Duration = Duration::from_secs(3600);

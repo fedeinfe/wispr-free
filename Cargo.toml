@@ -20,6 +20,7 @@ wf-audio = { path = "crates/audio" }
 wf-pipeline = { path = "crates/pipeline" }
 wf-platform = { path = "crates/platform" }
 wf-models = { path = "crates/models" }
+wf-history = { path = "crates/history" }
 wf-meetings = { path = "crates/meetings" }
 
 # UI

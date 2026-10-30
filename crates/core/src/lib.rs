@@ -1,7 +1,6 @@
-//! Engine-free logic shared by every other crate: the audio format the pipeline speaks, the
-//! shortcut model, the dictation state machine, the dictation history, and later settings.
+//! Pure, engine-free logic shared by every other crate: the audio format the pipeline speaks,
+//! the shortcut model and the dictation state machine, and later settings.
 
 pub mod audio;
 pub mod dictation;
-pub mod history;
 pub mod shortcut;
