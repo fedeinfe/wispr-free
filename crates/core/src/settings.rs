@@ -78,6 +78,8 @@ pub struct Pipeline {
     pub vad_model: Option<String>,
     pub llm_model: Option<String>,
     pub keep_models_loaded: KeepModels,
+    /// Where models live, perhaps on an external drive. `None` is the app's data folder.
+    pub models_folder: Option<PathBuf>,
 }
 
 impl Default for Pipeline {
@@ -94,6 +96,7 @@ impl Default for Pipeline {
             vad_model: None,
             llm_model: None,
             keep_models_loaded: KeepModels::default(),
+            models_folder: None,
         }
     }
 }

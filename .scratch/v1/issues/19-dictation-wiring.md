@@ -8,8 +8,11 @@ Connect shortcut → state machine → capture → VAD → ASR → rule cleanup 
 
 Loose ends from earlier tickets (details in each ticket's Comments and the shared notes):
 
-- 02/06: expose `Recorder` pre-roll so `LiveVad` chunks keep their first 300 ms.
-- 02: mic stream policy. Pre-roll needs the stream open before key-down, which keeps the OS mic indicator on while idle. Needs a human decision before this ships.
+- 02/06: expose `Recorder` pre-roll so `LiveVad` chunks keep the audio captured since key-down.
+- 02: mic stream policy, decided 2026-10-30: the mic opens on key-down and closes when the dictation ends, so the OS indicator stays off while idle. Measure how much of the first syllable this loses.
+- 07: VAD stays on whenever the engine is Whisper, whatever the setting says; show that in Settings. Decided 2026-10-30.
+- 07: test one long clip with VAD off on Parakeet before allowing that combination.
+- Models folder: build stores with `ModelStore::configured(settings.pipeline.models_folder, default)`, react to `on_change`, and turn `!available()` or a missing model into the pill's error state instead of a failed dictation. llama.cpp maps model files into memory by default, so unplugging an external drive under a loaded model can crash the app: check this and load into RAM from a chosen folder if so.
 - 04: show the no-focus toast from the insertion outcome.
 - 05: handle pill menu events (only Hide for 1 hour and Quit work today).
 - 09: resolve the idle RSS problem after model unload (122 MB measured against the §8 limit of 40 MB).

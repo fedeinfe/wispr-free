@@ -3,7 +3,6 @@ import { Theme } from "../theme.slint";
 import { Btn, Card, ErrorText, Hint, Label, Page } from "../controls.slint";
 
 component ModelLine inherits VerticalLayout {
-    in property <int> index;
     in property <ModelRow> model;
 
     spacing: 4px;
@@ -18,6 +17,11 @@ component ModelLine inherits VerticalLayout {
 
             Label {
                 text: root.model.name;
+            }
+
+            if root.model.used-for != "": Hint {
+                text: root.model.used-for;
+                color: Theme.accent;
             }
 
             Hint {
@@ -43,9 +47,9 @@ component ModelLine inherits VerticalLayout {
             width: 86px;
             text: root.model.partial ? "Resume" : "Download";
             accessible-label: "Download " + root.model.name;
-            enabled: !Prefs.model-busy;
+            enabled: !Prefs.model-busy && !Prefs.models-folder-missing;
             clicked => {
-                Prefs.download-model(root.index);
+                Prefs.download-model(root.model.index);
             }
         }
 
@@ -55,7 +59,7 @@ component ModelLine inherits VerticalLayout {
             accessible-label: "Verify " + root.model.name;
             enabled: !Prefs.model-busy;
             clicked => {
-                Prefs.verify-model(root.index);
+                Prefs.verify-model(root.model.index);
             }
         }
 
@@ -66,7 +70,7 @@ component ModelLine inherits VerticalLayout {
             accessible-label: "Delete " + root.model.name;
             enabled: !Prefs.model-busy;
             clicked => {
-                Prefs.delete-model(root.index);
+                Prefs.delete-model(root.model.index);
             }
         }
     }
@@ -99,16 +103,173 @@ export component ModelsPage inherits Page {
     }
 
     Card {
-        title: "Models";
-        hint: "Downloads start only when you ask, and every file is checked against its SHA-256.";
+        title: "Models folder";
+        hint: "Models take gigabytes. Keep them anywhere, an external drive included.";
 
-        for model[index] in Prefs.models: ModelLine {
-            index: index;
-            model: model;
+        HorizontalLayout {
+            spacing: 8px;
+
+            Hint {
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+                text: Prefs.models-folder;
+            }
+
+            Btn {
+                width: 100px;
+                text: "Open folder";
+                enabled: !Prefs.models-folder-missing;
+                clicked => {
+                    Prefs.open-models-folder();
+                }
+            }
+
+            Btn {
+                width: 80px;
+                text: "Change…";
+                accessible-label: "Change models folder";
+                enabled: !Prefs.model-busy && Prefs.pending-folder == "";
+                clicked => {
+                    Prefs.choose-models-folder();
+                }
+            }
+
+            if Prefs.models-folder-custom: Btn {
+                width: 90px;
+                text: "Use default";
+                enabled: !Prefs.model-busy && Prefs.pending-folder == "";
+                clicked => {
+                    Prefs.use-default-models-folder();
+                }
+            }
         }
 
-        if Prefs.model-error != "": ErrorText {
-            text: Prefs.model-error;
+        if Prefs.models-folder-missing: HorizontalLayout {
+            spacing: 8px;
+
+            ErrorText {
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+                text: "This folder isn't available. Connect its drive, or choose another folder.";
+            }
+
+            Btn {
+                width: 100px;
+                text: "Check again";
+                enabled: !Prefs.model-busy;
+                clicked => {
+                    Prefs.recheck-models-folder();
+                }
+            }
+        }
+
+        if Prefs.pending-folder != "": VerticalLayout {
+            spacing: 8px;
+
+            Label {
+                text: "Move to " + Prefs.pending-folder + "?";
+                wrap: word-wrap;
+            }
+
+            Hint {
+                text: Prefs.pending-summary;
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+
+                Btn {
+                    width: 110px;
+                    text: "Move them";
+                    primary: true;
+                    enabled: !Prefs.model-busy;
+                    clicked => {
+                        Prefs.move-to-pending-folder();
+                    }
+                }
+
+                Btn {
+                    width: 170px;
+                    text: "Switch without moving";
+                    enabled: !Prefs.model-busy;
+                    clicked => {
+                        Prefs.switch-to-pending-folder();
+                    }
+                }
+
+                Btn {
+                    width: 70px;
+                    text: "Cancel";
+                    accessible-label: "Keep the current folder";
+                    clicked => {
+                        Prefs.cancel-pending-folder();
+                    }
+                }
+            }
+        }
+
+        if Prefs.moving-models: HorizontalLayout {
+            spacing: 8px;
+
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 4px;
+
+                Hint {
+                    text: "Moving models… The originals stay until every file is copied.";
+                }
+
+                Rectangle {
+                    height: 4px;
+                    border-radius: 2px;
+                    background: Theme.track;
+                    clip: true;
+
+                    Rectangle {
+                        x: 0;
+                        width: parent.width * Prefs.move-progress;
+                        background: Theme.accent;
+                    }
+                }
+            }
+
+            Btn {
+                width: 76px;
+                text: "Cancel";
+                accessible-label: "Cancel moving models";
+                clicked => {
+                    Prefs.cancel-move();
+                }
+            }
+        }
+    }
+
+    if Prefs.model-error != "": ErrorText {
+        text: Prefs.model-error;
+    }
+
+    Card {
+        title: "Downloaded";
+        hint: Prefs.downloaded-summary;
+
+        if Prefs.downloaded-models.length == 0: Hint {
+            text: Prefs.models-folder-missing ? "Connect the folder to see its models."
+                : "Nothing yet. Download a model below, or from the Pipeline page.";
+        }
+
+        for model in Prefs.downloaded-models: ModelLine {
+            model: model;
+        }
+    }
+
+    if Prefs.available-models.length > 0: Card {
+        title: "Available";
+        hint: "Downloads start only when you ask, and every file is checked against its SHA-256.";
+
+        for model in Prefs.available-models: ModelLine {
+            model: model;
         }
     }
 }

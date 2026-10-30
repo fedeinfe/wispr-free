@@ -32,6 +32,8 @@
 
 **Model catalog**: the versioned manifest of downloadable models with size, checksum, license and RAM needs.
 
+**Models folder**: where downloaded models live: the app data folder, or a folder the user chose, possibly on an external drive.
+
 **Meeting**: one notetaker recording with two channels: "You" (mic) and "Others" (system audio).
 
 **Refine pass**: the post-meeting re-transcription with a larger model plus diarization.

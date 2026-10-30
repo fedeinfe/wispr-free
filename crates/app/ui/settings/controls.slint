@@ -443,6 +443,37 @@ export component Page inherits VerticalLayout {
     alignment: start;
 }
 
+// A tick for what's ready, an exclamation mark for what needs attention. Drawn rather than typed,
+// so it doesn't depend on the font having the glyph.
+export component StatusMark inherits Rectangle {
+    in property <bool> ok;
+
+    width: 14px;
+    height: 14px;
+    border-radius: 7px;
+    background: ok ? Theme.accent : Theme.danger;
+
+    if root.ok: Path {
+        x: 3px;
+        y: 4px;
+        width: 8px;
+        height: 6px;
+        commands: "M 0 3 L 3 6 L 8 0";
+        stroke: Theme.on-accent;
+        stroke-width: 1.5px;
+        fill: transparent;
+    }
+
+    if !root.ok: Text {
+        text: "!";
+        color: Theme.on-accent;
+        font-size: 11px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
 export component ErrorText inherits Text {
     color: Theme.danger;
     font-size: Theme.small-text;

@@ -18,7 +18,7 @@
 use std::any::Any;
 use std::cell::Cell;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -31,7 +31,7 @@ use wf_core::settings::{
     Settings, SettingsStore, Snippet, Style, Theme,
 };
 use wf_core::shortcut::{Action, Combo, Key, KeyEvent, Platform, Side};
-use wf_models::{Catalog, ModelStore};
+use wf_models::Catalog;
 use wf_platform::keys::KeySignal;
 use wispr_free::settings_window::values::{ModelChoices, values_of};
 use wispr_free::settings_window::{
@@ -79,13 +79,14 @@ impl Desktop for HeadlessDesktop {
     ) -> Result<Box<dyn Any>, String> {
         Err("not in a headless run".to_owned())
     }
+
+    fn pick_folder(&self, _start: &Path, _done: Box<dyn FnOnce(PathBuf)>) {}
 }
 
 fn parts(folder: &Path) -> SettingsParts {
     SettingsParts {
         store: Arc::new(SettingsStore::open(folder.join("settings.toml"))),
         catalog: Arc::new(Catalog::bundled()),
-        models: Arc::new(ModelStore::new(folder.join("data/models"))),
         desktop: Rc::new(HeadlessDesktop),
         on_change: Rc::new(|_| {}),
         paths: Paths {
@@ -184,10 +185,22 @@ fn save_png(window: &SettingsWindow, path: &Path) {
     .expect("png is written");
 }
 
+/// So the pages show a downloaded model next to missing ones.
+fn fake_a_downloaded_model(parts: &SettingsParts) {
+    let catalog = Catalog::bundled();
+    let model = catalog.model("silero-vad-v5").expect("in the catalog");
+    let folder = parts.paths.data_dir.join("models").join(&model.id);
+    std::fs::create_dir_all(&folder).expect("model folder");
+    for file in &model.files {
+        std::fs::write(folder.join(&file.name), vec![0; file.size as usize]).expect("model file");
+    }
+}
+
 fn render(target: &Path) {
     std::fs::create_dir_all(target).expect("output folder");
     let folder = tempfile::tempdir().expect("temporary folder");
     let parts = parts(folder.path());
+    fake_a_downloaded_model(&parts);
     parts
         .store
         .update(|settings| {
@@ -225,6 +238,10 @@ fn render(target: &Path) {
         window.set_page(0);
         window.window().set_size(LogicalSize::new(880.0, 1500.0));
         save_png(window, &target.join(format!("{name}-general-full.png")));
+        window.set_page(1);
+        save_png(window, &target.join(format!("{name}-models-full.png")));
+        window.set_page(2);
+        save_png(window, &target.join(format!("{name}-pipeline-full.png")));
     }
 }
 

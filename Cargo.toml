@@ -31,6 +31,12 @@ i-slint-backend-testing = "1.18.1"
 # Allocator that hands freed pages back, so closing a window shrinks the process (ticket 12)
 mimalloc = { version = "0.1.52", default-features = false }
 
+# Native dialogs
+rfd = "0.17.2"
+
+# Files
+same-file = "1.0.6"
+
 # Audio
 cpal = "0.18.2"
 rubato = "5.0.1"

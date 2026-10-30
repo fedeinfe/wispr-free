@@ -1,6 +1,10 @@
 //! Installed models on disk: `<root>/<model id>/<file name>`. Downloads stream into
 //! `<file name>.part`, are checked against the manifest's size and SHA-256, then renamed into
 //! place, so a file under its final name is always complete.
+//!
+//! The root is the app's own folder or one the user chose, perhaps on an external drive. A chosen
+//! folder is never created: if it's missing the drive is unplugged, and creating it would put the
+//! models on the wrong disk.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -8,11 +12,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use same_file::is_same_file;
 use sha2::{Digest, Sha256};
 
 use crate::{Catalog, ModelEntry, ModelFile, Tier};
 
 const PART_SUFFIX: &str = ".part";
+const MOVING_SUFFIX: &str = ".moving";
 const CHUNK: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +43,13 @@ pub struct Progress {
 pub enum DownloadError {
     #[error("download cancelled")]
     Cancelled,
+    #[error("{} isn't available. Connect its drive or choose another folder.", .0.display())]
+    FolderUnavailable(PathBuf),
+    #[error("that folder holds the models already")]
+    SameFolder,
+    /// The move itself worked: the app now uses the new folder.
+    #[error("The models moved, but some originals are still in {}.", .0.display())]
+    OriginalsLeft(PathBuf),
     #[error("{file}: checksum mismatch (expected {expected}, got {actual})")]
     ChecksumMismatch {
         file: String,
@@ -60,11 +73,27 @@ pub enum DownloadError {
 
 pub struct ModelStore {
     root: PathBuf,
+    chosen: bool,
     agent: ureq::Agent,
 }
 
 impl ModelStore {
+    /// The app's own folder, created when first needed.
     pub fn new(root: impl Into<PathBuf>) -> ModelStore {
+        Self::with_root(root.into(), false)
+    }
+
+    /// A folder the user chose.
+    pub fn in_folder(root: impl Into<PathBuf>) -> ModelStore {
+        Self::with_root(root.into(), true)
+    }
+
+    /// The store the settings ask for: `chosen`, or else the app's own folder.
+    pub fn configured(chosen: Option<&Path>, default_root: &Path) -> ModelStore {
+        chosen.map_or_else(|| Self::new(default_root), Self::in_folder)
+    }
+
+    fn with_root(root: PathBuf, chosen: bool) -> ModelStore {
         let agent = ureq::Agent::config_builder()
             .user_agent(concat!("wispr-free/", env!("CARGO_PKG_VERSION")))
             .timeout_connect(Some(Duration::from_secs(20)))
@@ -74,7 +103,8 @@ impl ModelStore {
             .build()
             .new_agent();
         ModelStore {
-            root: root.into(),
+            root,
+            chosen,
             agent,
         }
     }
@@ -83,6 +113,24 @@ impl ModelStore {
     pub fn default_root() -> Option<PathBuf> {
         let dirs = directories::ProjectDirs::from("", "", "wispr-free")?;
         Some(dirs.data_dir().join("models"))
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// `false` when a chosen folder is gone, usually because its drive is unplugged. Every model
+    /// then reads as not installed, so show this rather than offering to download them again.
+    pub fn available(&self) -> bool {
+        !self.chosen || self.root.is_dir()
+    }
+
+    /// Makes sure the folder exists, for showing it before anything is downloaded. A chosen folder
+    /// is never created.
+    pub fn prepare(&self) -> Result<(), DownloadError> {
+        self.ensure_available()?;
+        fs::create_dir_all(&self.root)?;
+        Ok(())
     }
 
     pub fn model_dir(&self, id: &str) -> PathBuf {
@@ -144,6 +192,7 @@ impl ModelStore {
         cancel: &AtomicBool,
         on_progress: &mut dyn FnMut(Progress),
     ) -> Result<(), DownloadError> {
+        self.ensure_available()?;
         let dir = self.model_dir(&model.id);
         fs::create_dir_all(&dir)?;
         let total = model.download_size();
@@ -189,6 +238,102 @@ impl ModelStore {
             done += model.download_size();
         }
         Ok(())
+    }
+
+    /// Moves `models` to `target`, partial downloads included. Blocking: run it on a worker
+    /// thread. Originals are removed only after everything is copied and `commit` has succeeded,
+    /// so make `commit` the step that points the app at `target`. Until then a failure or `cancel`
+    /// leaves every model here, working. Files already copied stay in `target` for the next try,
+    /// and a finished file already there is reused only if it matches the manifest.
+    pub fn move_to(
+        &self,
+        target: &ModelStore,
+        models: &[ModelEntry],
+        cancel: &AtomicBool,
+        on_progress: &mut dyn FnMut(Progress),
+        commit: impl FnOnce() -> io::Result<()>,
+    ) -> Result<(), DownloadError> {
+        self.ensure_available()?;
+        target.ensure_available()?;
+        if self.overlaps(target, models) {
+            return Err(DownloadError::SameFolder);
+        }
+        let files: Vec<_> = models
+            .iter()
+            .flat_map(|model| self.files_on_disk(model, target))
+            .collect();
+        // Another path to the same bytes, such as a link: "copied" would delete the only copy.
+        let aliased = |file: &FileCopy| is_same_file(&file.source, &file.target).unwrap_or(false);
+        if files.iter().any(aliased) {
+            return Err(DownloadError::SameFolder);
+        }
+        let total = files.iter().map(|file| file.len).sum();
+        let mut done = 0;
+        for file in &files {
+            copy_file(file, cancel, &mut |n| {
+                on_progress(Progress {
+                    downloaded: done + n,
+                    total,
+                })
+            })?;
+            done += file.len;
+        }
+        // Nothing may be left to copy, so this can be the only place a cancel is seen.
+        if cancel.load(Ordering::Relaxed) {
+            return Err(DownloadError::Cancelled);
+        }
+        commit()?;
+        let mut left_behind = false;
+        for model in models {
+            left_behind |= self.delete(model).is_err();
+        }
+        if left_behind {
+            return Err(DownloadError::OriginalsLeft(self.root.clone()));
+        }
+        Ok(())
+    }
+
+    fn ensure_available(&self) -> Result<(), DownloadError> {
+        if self.available() {
+            Ok(())
+        } else {
+            Err(DownloadError::FolderUnavailable(self.root.clone()))
+        }
+    }
+
+    /// Whether removing `models` from here would also remove what's in `target`.
+    fn overlaps(&self, target: &ModelStore, models: &[ModelEntry]) -> bool {
+        let real = |path: &Path| fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+        let destination = real(&target.root);
+        is_same_file(&self.root, &target.root).unwrap_or(false)
+            || models
+                .iter()
+                .any(|model| destination.starts_with(real(&self.model_dir(&model.id))))
+    }
+
+    fn files_on_disk(&self, model: &ModelEntry, target: &ModelStore) -> Vec<FileCopy> {
+        let dir = self.model_dir(&model.id);
+        let into = target.model_dir(&model.id);
+        model
+            .files
+            .iter()
+            .filter_map(|file| {
+                let finished = dir.join(&file.name);
+                let (source, sha256) = if file_len(&finished) == Some(file.size) {
+                    (finished, Some(file.sha256.clone()))
+                } else {
+                    (part_path(&dir, file), None)
+                };
+                let len = file_len(&source)?;
+                let target = into.join(source.file_name()?);
+                Some(FileCopy {
+                    source,
+                    target,
+                    len,
+                    sha256,
+                })
+            })
+            .collect()
     }
 
     /// Downloads one file to `<name>.part`, verifies it and renames it into place.
@@ -265,6 +410,80 @@ impl ModelStore {
         drop(out);
         finish(file, &part, dir, written, hasher)
     }
+}
+
+struct FileCopy {
+    source: PathBuf,
+    target: PathBuf,
+    len: u64,
+    /// The manifest's hash for a finished file. Partial downloads have none.
+    sha256: Option<String>,
+}
+
+impl FileCopy {
+    /// The right size proves nothing: originals get deleted on the strength of this.
+    fn already_done(&self) -> io::Result<bool> {
+        let Some(expected) = &self.sha256 else {
+            return Ok(false);
+        };
+        if file_len(&self.target) != Some(self.len) {
+            return Ok(false);
+        }
+        let mut hasher = Sha256::new();
+        hash_into(&self.target, &mut hasher)?;
+        Ok(hex(&hasher.finalize()) == *expected)
+    }
+}
+
+/// Copies to `<name>.moving` and renames, so a file under its final name is complete. Not
+/// `fs::copy`, which can't report progress or stop partway.
+fn copy_file(
+    file: &FileCopy,
+    cancel: &AtomicBool,
+    on_bytes: &mut dyn FnMut(u64),
+) -> Result<(), DownloadError> {
+    if file.already_done()? {
+        on_bytes(file.len);
+        return Ok(());
+    }
+    if let Some(dir) = file.target.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let mut temporary = file.target.clone().into_os_string();
+    temporary.push(MOVING_SUFFIX);
+    let temporary = PathBuf::from(temporary);
+    let result = copy_bytes(&file.source, &temporary, cancel, on_bytes)
+        .and_then(|()| Ok(fs::rename(&temporary, &file.target)?));
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn copy_bytes(
+    source: &Path,
+    target: &Path,
+    cancel: &AtomicBool,
+    on_bytes: &mut dyn FnMut(u64),
+) -> Result<(), DownloadError> {
+    let mut from = File::open(source)?;
+    let mut out = File::create(target)?;
+    let mut buf = vec![0; CHUNK];
+    let mut written = 0;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(DownloadError::Cancelled);
+        }
+        let n = from.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        out.write_all(&buf[..n])?;
+        written += n as u64;
+        on_bytes(written);
+    }
+    out.sync_all()?;
+    Ok(())
 }
 
 fn finish(

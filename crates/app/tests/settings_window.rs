@@ -5,10 +5,10 @@ use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use i_slint_backend_testing::{
     AccessibleRole, ElementHandle, init_no_event_loop, mock_elapsed_time,
@@ -48,6 +48,8 @@ struct FakeDesktop {
     mic_test: RefCell<Option<Rc<()>>>,
     brought_to_front: Cell<u32>,
     probes_started: Cell<u32>,
+    folder_to_pick: RefCell<Option<PathBuf>>,
+    picker_started_at: RefCell<Option<PathBuf>>,
 }
 
 impl Desktop for FakeDesktop {
@@ -96,6 +98,13 @@ impl Desktop for FakeDesktop {
         let guard = Rc::new(());
         *self.mic_test.borrow_mut() = Some(Rc::clone(&guard));
         Ok(Box::new(guard))
+    }
+
+    fn pick_folder(&self, start: &Path, done: Box<dyn FnOnce(PathBuf)>) {
+        *self.picker_started_at.borrow_mut() = Some(start.to_owned());
+        if let Some(folder) = self.folder_to_pick.take() {
+            done(folder);
+        }
     }
 }
 
@@ -155,7 +164,6 @@ impl Harness {
         SettingsParts {
             store: Arc::new(SettingsStore::open(self.settings_path())),
             catalog: Arc::new(Catalog::bundled()),
-            models: Arc::new(ModelStore::new(self.data_dir().join("models"))),
             desktop: self.desktop.clone(),
             on_change: {
                 let announced = Rc::clone(&self.announced);
@@ -839,7 +847,7 @@ fn the_models_page_lists_the_catalog_with_size_ram_and_status() {
         silero.detail
     );
     assert!(silero.detail.contains("MIT"), "{}", silero.detail);
-    assert_eq!(silero.status, "Not installed");
+    assert_eq!(silero.status, "Not downloaded");
     assert!(!silero.installed);
 }
 
@@ -1058,4 +1066,624 @@ fn the_window_can_be_opened_again_after_closing_with_what_was_saved() {
 
     let window = host.window().unwrap().upgrade().unwrap();
     assert!(!window.global::<Prefs>().get_values().sounds);
+}
+
+/// The bundled catalog's smallest model, faked on disk under `root`.
+fn fake_model(root: &Path) -> (usize, PathBuf) {
+    let catalog = Catalog::bundled();
+    let (index, model) = catalog
+        .models
+        .iter()
+        .enumerate()
+        .find(|(_, model)| model.id == "silero-vad-v5")
+        .unwrap();
+    let store = ModelStore::new(root);
+    let dir = store.model_dir(&model.id);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join(&model.files[0].name);
+    fs::write(&file, vec![0; model.files[0].size as usize]).unwrap();
+    (index, file)
+}
+
+impl Harness {
+    fn default_models(&self) -> PathBuf {
+        self.data_dir().join("models")
+    }
+
+    /// A folder standing in for an external drive.
+    fn drive(&self) -> PathBuf {
+        let drive = self.dir.path().join("ssd");
+        fs::create_dir_all(&drive).unwrap();
+        drive
+    }
+
+    fn pick(&self, folder: &Path) {
+        self.desktop.folder_to_pick.replace(Some(folder.to_owned()));
+        self.prefs().invoke_choose_models_folder();
+    }
+
+    fn row_installed(&self, index: usize) -> bool {
+        self.prefs().get_models().row_data(index).unwrap().installed
+    }
+
+    fn wait_for_move(&self) {
+        self.wait_for_model_task();
+    }
+
+    fn wait_for_model_task(&self) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while self.prefs().get_model_busy() {
+            assert!(Instant::now() < deadline, "the task never finished");
+            self.prefs().invoke_events_arrived();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+#[test]
+fn a_new_folder_applies_at_once_and_survives_a_restart() {
+    let mut harness = Harness::new();
+    let drive = harness.drive();
+    let (index, _) = fake_model(&drive);
+    assert!(!harness.row_installed(index));
+
+    harness.pick(&drive);
+
+    assert!(harness.row_installed(index), "models there are found");
+    assert_eq!(
+        harness.prefs().get_models_folder(),
+        drive.to_string_lossy().as_ref()
+    );
+    assert!(harness.prefs().get_models_folder_custom());
+    assert_eq!(harness.saved().pipeline.models_folder, Some(drive.clone()));
+    assert!(
+        harness
+            .announced
+            .borrow()
+            .last()
+            .unwrap()
+            .pipeline
+            .models_folder
+            .is_some()
+    );
+
+    harness.restart();
+
+    assert!(harness.row_installed(index));
+    assert_eq!(
+        harness.prefs().get_models_folder(),
+        drive.to_string_lossy().as_ref()
+    );
+}
+
+#[test]
+fn the_picker_opens_at_the_current_folder() {
+    let harness = Harness::new();
+
+    harness.prefs().invoke_choose_models_folder();
+
+    assert_eq!(
+        harness.desktop.picker_started_at.borrow().as_deref(),
+        Some(harness.default_models().as_path())
+    );
+    assert_eq!(
+        harness.saved().pipeline.models_folder,
+        None,
+        "cancelling changes nothing"
+    );
+}
+
+#[test]
+fn an_unplugged_drive_is_reported_and_nothing_lands_on_the_wrong_disk() {
+    let mut harness = Harness::new();
+    let drive = harness.drive();
+    let (index, _) = fake_model(&drive);
+    harness.pick(&drive);
+    let unplugged = harness.dir.path().join("ssd-unplugged");
+    fs::rename(&drive, &unplugged).unwrap();
+
+    harness.restart();
+
+    let prefs = harness.prefs();
+    assert!(prefs.get_models_folder_missing());
+    let row = prefs.get_models().row_data(index).unwrap();
+    assert_eq!(row.status, "Folder not connected");
+    assert!(!row.installed);
+    assert_eq!(
+        harness.saved().pipeline.models_folder,
+        Some(drive.clone()),
+        "the choice is kept"
+    );
+
+    prefs.invoke_download_model(index as i32);
+    harness.wait_for_model_task();
+    assert!(!drive.exists(), "no stand-in folder");
+
+    fs::rename(&unplugged, &drive).unwrap();
+    prefs.invoke_recheck_models_folder();
+
+    assert!(!prefs.get_models_folder_missing());
+    assert!(harness.row_installed(index));
+}
+
+#[test]
+fn models_on_disk_ask_first_and_cancelling_changes_nothing() {
+    let harness = Harness::new();
+    let drive = harness.drive();
+    let (index, file) = fake_model(&harness.default_models());
+    harness.controller().refresh_models();
+
+    harness.pick(&drive);
+
+    let prefs = harness.prefs();
+    assert_eq!(prefs.get_pending_folder(), drive.to_string_lossy().as_ref());
+    assert!(
+        prefs.get_pending_summary().starts_with("1 model"),
+        "{}",
+        prefs.get_pending_summary()
+    );
+    assert_eq!(harness.saved().pipeline.models_folder, None);
+
+    prefs.invoke_cancel_pending_folder();
+
+    assert_eq!(prefs.get_pending_folder(), "");
+    assert!(harness.row_installed(index));
+    assert!(file.exists());
+}
+
+#[test]
+fn moving_takes_the_models_to_the_new_folder() {
+    let harness = Harness::new();
+    let drive = harness.drive();
+    let (index, file) = fake_model(&harness.default_models());
+    harness.controller().refresh_models();
+    harness.pick(&drive);
+
+    harness.prefs().invoke_move_to_pending_folder();
+    assert!(
+        harness.prefs().get_model_busy(),
+        "no downloads during a move"
+    );
+    harness.wait_for_move();
+
+    let moved = drive.join(file.strip_prefix(harness.default_models()).unwrap());
+    assert!(moved.exists());
+    assert!(!file.exists());
+    assert!(harness.row_installed(index));
+    assert!(!harness.prefs().get_model_busy());
+    assert_eq!(harness.prefs().get_model_error(), "");
+    assert_eq!(harness.saved().pipeline.models_folder, Some(drive));
+}
+
+#[test]
+fn switching_without_moving_leaves_the_models_where_they_are() {
+    let harness = Harness::new();
+    let drive = harness.drive();
+    let (index, file) = fake_model(&harness.default_models());
+    harness.controller().refresh_models();
+    harness.pick(&drive);
+
+    harness.prefs().invoke_switch_to_pending_folder();
+
+    assert!(file.exists());
+    assert!(!harness.row_installed(index));
+    assert_eq!(harness.saved().pipeline.models_folder, Some(drive));
+}
+
+#[test]
+fn going_back_to_the_default_folder_works_the_same_way() {
+    let harness = Harness::new();
+    let drive = harness.drive();
+    let (index, file) = fake_model(&drive);
+    harness.pick(&drive);
+
+    harness.prefs().invoke_use_default_models_folder();
+    harness.prefs().invoke_move_to_pending_folder();
+    harness.wait_for_move();
+
+    assert!(!file.exists());
+    assert!(harness.row_installed(index));
+    assert_eq!(harness.saved().pipeline.models_folder, None);
+    assert!(!harness.prefs().get_models_folder_custom());
+}
+
+#[test]
+fn picking_the_current_folder_again_does_nothing() {
+    let harness = Harness::new();
+    let drive = harness.drive();
+    let (index, _) = fake_model(&drive);
+    harness.pick(&drive);
+
+    harness.pick(&drive);
+
+    assert_eq!(harness.prefs().get_pending_folder(), "");
+    assert!(harness.row_installed(index));
+}
+
+#[test]
+fn delete_all_removes_models_from_a_chosen_folder_but_not_the_folder() {
+    let harness = Harness::new();
+    let drive = harness.drive();
+    let (_, file) = fake_model(&drive);
+    let photo = drive.join("holiday.jpg");
+    fs::write(&photo, "precious").unwrap();
+    harness.pick(&drive);
+
+    harness.prefs().invoke_delete_all();
+
+    assert!(!file.exists());
+    assert_eq!(fs::read(&photo).unwrap(), b"precious");
+    assert_eq!(harness.saved().pipeline.models_folder, None);
+    assert_eq!(
+        harness.prefs().get_models_folder(),
+        harness.default_models().to_string_lossy().as_ref()
+    );
+}
+
+#[test]
+fn delete_all_says_when_a_chosen_folder_was_out_of_reach() {
+    let mut harness = Harness::new();
+    let drive = harness.drive();
+    harness.pick(&drive);
+    fs::remove_dir(&drive).unwrap();
+    harness.restart();
+
+    harness.prefs().invoke_delete_all();
+
+    let status = harness.prefs().get_data_status();
+    assert!(status.contains("wasn't connected"), "{status}");
+}
+
+impl Harness {
+    fn has_control(&self, label: &str) -> bool {
+        ElementHandle::find_by_accessible_label(self.window(), label)
+            .any(|element| element.accessible_role() != Some(AccessibleRole::Text))
+    }
+
+    fn names(rows: slint::ModelRc<wispr_free::ModelRow>) -> Vec<String> {
+        rows.iter().map(|row| row.name.to_string()).collect()
+    }
+}
+
+fn model_name(id: &str) -> String {
+    Catalog::bundled().model(id).unwrap().name.clone()
+}
+
+/// What the default tier asks for, read from the catalog so a new pick doesn't break the tests.
+fn balanced_models() -> (String, String, String) {
+    let catalog = Catalog::bundled();
+    let preset = catalog.preset(wf_models::Tier::Balanced);
+    (
+        preset.asr_model.clone(),
+        preset.vad_model.clone().unwrap(),
+        preset.llm_model.clone().unwrap(),
+    )
+}
+
+#[test]
+fn open_folder_works_before_anything_is_downloaded() {
+    let harness = Harness::new();
+    assert!(!harness.default_models().exists());
+
+    harness.prefs().invoke_open_models_folder();
+
+    assert!(
+        harness.default_models().is_dir(),
+        "the file manager needs it to exist"
+    );
+    assert_eq!(
+        harness.desktop.opened.borrow().last().unwrap(),
+        harness.default_models().to_string_lossy().as_ref(),
+    );
+}
+
+#[test]
+fn the_models_page_separates_what_is_downloaded() {
+    let harness = Harness::new();
+    let total = harness.prefs().get_models().row_count();
+    let silero = model_name("silero-vad-v5");
+    assert_eq!(harness.prefs().get_downloaded_models().row_count(), 0);
+    assert_eq!(harness.prefs().get_available_models().row_count(), total);
+
+    let (index, _) = fake_model(&harness.default_models());
+    harness.controller().refresh_models();
+
+    let prefs = harness.prefs();
+    assert_eq!(
+        Harness::names(prefs.get_downloaded_models()),
+        std::slice::from_ref(&silero)
+    );
+    assert!(!Harness::names(prefs.get_available_models()).contains(&silero));
+    assert_eq!(prefs.get_available_models().row_count(), total - 1);
+    assert!(
+        prefs.get_downloaded_summary().starts_with("1 model"),
+        "{}",
+        prefs.get_downloaded_summary()
+    );
+
+    prefs.invoke_delete_model(index as i32);
+
+    assert_eq!(prefs.get_downloaded_models().row_count(), 0);
+    assert!(Harness::names(prefs.get_available_models()).contains(&silero));
+}
+
+#[test]
+fn rows_keep_their_place_in_the_catalog_when_filtered() {
+    let harness = Harness::new();
+    let (index, _) = fake_model(&harness.default_models());
+    harness.controller().refresh_models();
+
+    let row = harness.prefs().get_downloaded_models().row_data(0).unwrap();
+
+    assert_eq!(row.index as usize, index);
+}
+
+#[test]
+fn a_downloaded_model_says_which_stage_uses_it() {
+    let harness = Harness::new();
+    let (_, vad, _) = balanced_models();
+    let (index, _) = fake_model(&harness.default_models());
+    assert_eq!(vad, "silero-vad-v5");
+    harness.controller().refresh_models();
+    let used_for = |harness: &Harness| {
+        harness
+            .prefs()
+            .get_models()
+            .row_data(index)
+            .unwrap()
+            .used_for
+    };
+    assert_eq!(used_for(&harness), "Used for voice detection");
+    let (asr, ..) = balanced_models();
+    let missing = Catalog::bundled()
+        .models
+        .iter()
+        .position(|model| model.id == asr)
+        .unwrap();
+    assert_eq!(
+        harness
+            .prefs()
+            .get_models()
+            .row_data(missing)
+            .unwrap()
+            .used_for,
+        "Needed for speech recognition",
+    );
+
+    harness.go_to(PIPELINE);
+    harness.click("Silence trimming (VAD)");
+
+    assert_eq!(used_for(&harness), "");
+}
+
+#[test]
+fn the_pipeline_offers_a_download_for_each_missing_model() {
+    let harness = Harness::new();
+    let (asr, vad, llm) = balanced_models();
+    harness.go_to(PIPELINE);
+
+    for id in [&asr, &vad, &llm] {
+        let label = format!("Download {}", model_name(id));
+        assert!(harness.has_control(&label), "no {label:?}");
+    }
+
+    fake_model(&harness.default_models());
+    harness.controller().refresh_models();
+
+    assert!(!harness.has_control(&format!("Download {}", model_name(&vad))));
+    assert!(harness.has_control(&format!("Download {}", model_name(&asr))));
+}
+
+#[test]
+fn a_stage_that_is_off_asks_for_no_download() {
+    let harness = Harness::new();
+    let (_, vad, llm) = balanced_models();
+    harness.go_to(PIPELINE);
+
+    harness.click("Silence trimming (VAD)");
+    harness.click("LLM cleanup");
+
+    assert!(!harness.has_control(&format!("Download {}", model_name(&vad))));
+    assert!(!harness.has_control(&format!("Download {}", model_name(&llm))));
+}
+
+#[test]
+fn an_unplugged_folder_offers_no_download_in_the_pipeline() {
+    let mut harness = Harness::new();
+    let (asr, ..) = balanced_models();
+    let drive = harness.drive();
+    harness.pick(&drive);
+    fs::remove_dir(&drive).unwrap();
+    harness.restart();
+    harness.go_to(PIPELINE);
+
+    assert!(!harness.has_control(&format!("Download {}", model_name(&asr))));
+}
+
+#[test]
+fn the_model_menus_mark_what_is_downloaded() {
+    let harness = Harness::new();
+    let silero = model_name("silero-vad-v5");
+    assert_eq!(
+        harness.prefs().get_vad_options().row_data(0).unwrap(),
+        silero.as_str()
+    );
+
+    fake_model(&harness.default_models());
+    harness.controller().refresh_models();
+
+    assert_eq!(
+        harness.prefs().get_vad_options().row_data(0).unwrap(),
+        format!("✓ {silero}").as_str(),
+    );
+}
+
+#[test]
+fn each_menu_entry_points_at_its_model() {
+    let harness = Harness::new();
+    let prefs = harness.prefs();
+    let names = Harness::names(prefs.get_models());
+
+    for (options, rows) in [
+        (prefs.get_asr_options(), prefs.get_asr_rows()),
+        (prefs.get_vad_options(), prefs.get_vad_rows()),
+        (prefs.get_llm_options(), prefs.get_llm_rows()),
+    ] {
+        assert_eq!(options.row_count(), rows.row_count());
+        for (option, row) in options.iter().zip(rows.iter()) {
+            assert_eq!(option.as_str(), names[row as usize]);
+        }
+    }
+}
+
+#[test]
+fn a_folder_switch_waits_for_a_running_task() {
+    let harness = Harness::new();
+    let drive = harness.drive();
+    let (index, _) = fake_model(&harness.default_models());
+    harness.controller().refresh_models();
+    harness.pick(&drive);
+    let prefs = harness.prefs();
+
+    // The task counts as running until its result is read from the mailbox.
+    prefs.invoke_verify_model(index as i32);
+    prefs.invoke_switch_to_pending_folder();
+
+    assert_eq!(harness.saved().pipeline.models_folder, None);
+    assert_eq!(
+        prefs.get_pending_folder(),
+        drive.to_string_lossy().as_ref(),
+        "the question stays"
+    );
+}
+
+#[test]
+fn verifying_on_an_unplugged_drive_says_so_instead_of_calling_the_model_damaged() {
+    let harness = Harness::new();
+    let drive = harness.drive();
+    let (index, _) = fake_model(&drive);
+    harness.pick(&drive);
+    fs::rename(&drive, harness.dir.path().join("unplugged")).unwrap();
+
+    harness.prefs().invoke_verify_model(index as i32);
+
+    let prefs = harness.prefs();
+    assert!(prefs.get_models_folder_missing());
+    assert_eq!(prefs.get_model_error(), "");
+    assert_eq!(
+        prefs.get_models().row_data(index).unwrap().status,
+        "Folder not connected"
+    );
+}
+
+#[test]
+fn checking_the_folder_again_clears_the_last_error() {
+    let harness = Harness::new();
+    harness
+        .prefs()
+        .set_model_error("Couldn't reach the drive".into());
+
+    harness.prefs().invoke_recheck_models_folder();
+
+    assert_eq!(harness.prefs().get_model_error(), "");
+}
+
+#[test]
+fn picking_the_default_folder_is_the_same_as_use_default() {
+    let harness = Harness::new();
+    let drive = harness.drive();
+    harness.pick(&drive);
+
+    harness.pick(&harness.default_models());
+
+    assert_eq!(harness.saved().pipeline.models_folder, None);
+    assert!(!harness.prefs().get_models_folder_custom());
+}
+
+#[test]
+fn use_default_works_when_the_saved_folder_already_is_the_default() {
+    let mut harness = Harness::new();
+    let default = harness.default_models();
+    SettingsStore::open(harness.settings_path())
+        .update(|settings| settings.pipeline.models_folder = Some(default))
+        .unwrap();
+    harness.restart();
+    assert!(harness.prefs().get_models_folder_custom());
+
+    harness.prefs().invoke_use_default_models_folder();
+
+    assert_eq!(harness.saved().pipeline.models_folder, None);
+    assert!(!harness.prefs().get_models_folder_custom());
+}
+
+#[cfg(unix)]
+#[test]
+fn delete_all_names_a_chosen_folder_it_could_not_empty() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let harness = Harness::new();
+    let drive = harness.drive();
+    let (_, file) = fake_model(&drive);
+    harness.pick(&drive);
+    let locked = file.parent().unwrap();
+    fs::set_permissions(locked, fs::Permissions::from_mode(0o555)).unwrap();
+
+    harness.prefs().invoke_delete_all();
+    fs::set_permissions(locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let status = harness.prefs().get_data_status();
+    assert!(
+        status.contains(drive.to_string_lossy().as_ref()),
+        "{status}"
+    );
+    assert!(file.exists());
+}
+
+#[test]
+fn open_folder_on_an_unplugged_drive_offers_the_way_back() {
+    let harness = Harness::new();
+    let drive = harness.drive();
+    harness.pick(&drive);
+    let unplugged = harness.dir.path().join("unplugged");
+    fs::rename(&drive, &unplugged).unwrap();
+
+    harness.prefs().invoke_open_models_folder();
+
+    assert!(
+        harness.prefs().get_models_folder_missing(),
+        "Check again must appear"
+    );
+    assert_ne!(harness.prefs().get_model_error(), "");
+
+    fs::rename(&unplugged, &drive).unwrap();
+    harness.prefs().invoke_open_models_folder();
+
+    assert!(!harness.prefs().get_models_folder_missing());
+    assert_eq!(harness.prefs().get_model_error(), "");
+}
+
+#[cfg(unix)]
+#[test]
+fn delete_all_still_names_the_chosen_folder_when_everything_fails() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut harness = Harness::new();
+    let drive = harness.drive();
+    harness.pick(&drive);
+    fs::remove_dir(&drive).unwrap();
+    harness.restart();
+    let locked = harness.data_dir().join("meetings");
+    fs::create_dir_all(&locked).unwrap();
+    fs::write(locked.join("notes.md"), "notes").unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+
+    harness.prefs().invoke_delete_all();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let status = harness.prefs().get_data_status();
+    assert!(status.starts_with("Delete failed"), "{status}");
+    assert!(
+        status.contains(drive.to_string_lossy().as_ref()),
+        "{status}"
+    );
 }

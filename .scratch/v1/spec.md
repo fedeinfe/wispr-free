@@ -11,7 +11,7 @@ This spec describes behaviour in our own words. It is based on a clean-room stud
 1. **Dictation anywhere.** Hold a shortcut, speak, release, and polished text appears in the focused app.
 2. **Local only.** Audio, transcripts, notes and models stay on the device. No account, no telemetry, no network except model downloads the user starts.
 3. **Wispr-level output where the hardware allows.** Same cleanup behaviour (fillers, stutters, self-corrections, formatting), using a local pipeline whose heavy stages can be turned off on weak machines.
-4. **Light.** Idle RAM under 40 MB with no models loaded. One small native binary per platform. Models load lazily and unload after an idle timeout.
+4. **Light.** Idle RAM under 40 MB with no models loaded. One small native binary per platform, with the inference libraries it needs beside it (ADR-0003). Models load lazily and unload after an idle timeout.
 
 ## Non-goals (v1)
 
@@ -87,11 +87,11 @@ mic ─► capture ─► [denoise] ─► [VAD] ─► ASR ─► rule cleanup 
             16 kHz mono f32         ^ optional stages in [brackets]
 ```
 
-**Capture.** Default or user-ranked input device, resampled to 16 kHz mono, 40 ms frames, no OS AEC/AGC. A ring buffer keeps the last ~300 ms before key-down so the first syllable is never clipped.
+**Capture.** Default or user-ranked input device, resampled to 16 kHz mono, 40 ms frames, no OS AEC/AGC. The mic opens on key-down and closes when the dictation ends, so the OS mic indicator stays off while idle. The pre-roll buffer only holds audio from that moment on.
 
 **Denoise (optional).** RNNoise-class suppression. Off by default; useful for noisy rooms and cheap mics.
 
-**VAD (optional, on by default).** Silero VAD:
+**VAD (optional, on by default; always on when the ASR engine is Whisper, which invents text on noise without it).** Silero VAD:
 
 - trims leading and trailing silence before ASR, which saves ASR time and avoids hallucinations on silence;
 - in hands-free mode, an optional auto-stop after N seconds of silence (default off, 3 s);
@@ -196,8 +196,8 @@ If no text field is focused, keep the text as "last transcript" and show a toast
 Opened from the tray or the pill menu. Created on open and destroyed on close to save memory. Sidebar pages:
 
 - **General:** shortcuts (recorder), microphone (auto / ranked list / test meter), my languages (or auto-detect), app language, theme (system/light/dark), launch at login, show pill, show in Dock (mac).
-- **Models:** hardware summary, recommended tier, installed models with size and RAM, and download / delete / verify (see §6).
-- **Pipeline:** quality tier (Lite / Balanced / High / Custom) plus per-stage toggles (denoise, VAD, LLM cleanup), cleanup strength, VAD auto-stop, the model per stage, and keep models loaded (always / 5 min / unload after use).
+- **Models:** hardware summary, recommended tier, the models folder (any folder, external drives included), downloaded models apart from the available ones, each with size, RAM and the stage that uses it, and download / delete / verify (see §6).
+- **Pipeline:** quality tier (Lite / Balanced / High / Custom) plus per-stage toggles (denoise, VAD, LLM cleanup), cleanup strength, VAD auto-stop, the model per stage with its download state and a Download button when it is missing, and keep models loaded (always / 5 min / unload after use).
 - **Style & dictionary:** styles per app category, dictionary words and replacements, snippets, auto-add corrected words to the dictionary.
 - **Meetings:** auto-detect suggestion, live transcript, refine pass, diarization, keep audio, max length, summary template.
 - **Sounds & media:** sounds, mute or pause media while dictating.
@@ -212,7 +212,7 @@ On first run and from Settings → Models, the app detects:
 - CPU cores and SIMD features;
 - the GPU: Apple Silicon / Metal, NVIDIA CUDA or a Vulkan-capable GPU, and its VRAM.
 
-It then recommends a tier. The user picks and downloads. Downloads are resumable and SHA-256 verified, and models are stored in the app data folder. The catalog is a versioned manifest bundled with the app (URL, size, checksum, license, languages, RAM need), so models can be updated without new code.
+It then recommends a tier. The user picks and downloads. Downloads are resumable and SHA-256 verified. Models are stored in the app data folder, or in a folder the user chooses. Changing folder offers to move the models already on disk; originals are removed only after every file is copied. A chosen folder that is missing (drive unplugged) is reported and never recreated, so models can't land on the wrong disk. Delete all removes only model folders from a chosen folder, never the folder itself. The catalog is a versioned manifest bundled with the app (URL, size, checksum, license, languages, RAM need), so models can be updated without new code.
 
 | Tier | Target machine | ASR | VAD | LLM cleanup | Meetings |
 |---|---|---|---|---|---|
@@ -242,4 +242,4 @@ Exact model picks are validated by benchmark (ticket 14) and live in the manifes
 - [ ] With no network, every feature works once the models are downloaded.
 - [ ] Idle RSS < 40 MB with no models loaded. Settings window closed → its memory is released.
 - [ ] A 30-minute meeting produces a timestamped transcript, a summary and a working chat on Balanced.
-- [ ] Turning off LLM cleanup and VAD on a Lite machine keeps dictation latency within the Lite target.
+- [ ] Turning off LLM cleanup on a Lite machine, and VAD where the engine allows it, keeps dictation latency within the Lite target.

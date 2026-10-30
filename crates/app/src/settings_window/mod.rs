@@ -11,7 +11,7 @@ pub mod values;
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,18 +20,22 @@ use std::thread;
 use std::time::Duration;
 
 use slint::{
-    ComponentHandle, Model, ModelRc, PlatformError, SharedString, Timer, TimerMode, VecModel, Weak,
+    ComponentHandle, FilterModel, Model, ModelRc, PlatformError, SharedString, Timer, TimerMode,
+    VecModel, Weak,
 };
 use wf_audio::InputDevice;
 use wf_core::settings::{Replacement, Settings, SettingsStore, Snippet};
 use wf_core::shortcut::recorder::{RecorderStep, ShortcutRecorder, reset_to_default};
 use wf_core::shortcut::{Action, Platform};
-use wf_models::{Catalog, DownloadError, ModelStore};
+use wf_models::{Catalog, DownloadError, ModelEntry, ModelStatus, ModelStore};
 use wf_platform::keys::KeySignal;
 
 use crate::{MicrophoneRow, ModelRow, Prefs, ReplacementRow, SettingsWindow, SnippetRow};
-use rows::{LANGUAGES, MicrophoneLine, language_rows, microphone_lines, model_row, shortcut_rows};
-use values::{ModelChoices, apply_values, values_of};
+use rows::{
+    LANGUAGES, MicrophoneLine, downloaded_summary, format_bytes, language_rows, microphone_lines,
+    model_row, model_row_unavailable, shortcut_rows,
+};
+use values::{ModelChoices, apply_values, models_in_use, values_of};
 
 pub use host::{MakeParts, SettingsHost};
 
@@ -63,11 +67,14 @@ pub trait Desktop {
         ranking: Vec<String>,
         on_level: Box<dyn FnMut(f32) + Send>,
     ) -> Result<Box<dyn Any>, String>;
+    /// Asks for a folder, starting at `start`. `done` runs on the UI thread, only if one is picked.
+    fn pick_folder(&self, start: &Path, done: Box<dyn FnOnce(PathBuf)>);
 }
 
 #[derive(Debug, Clone)]
 pub struct Paths {
-    /// Models, history and meetings. Delete all removes this folder.
+    /// History, meetings, and models unless the user chose another folder for them. Delete all
+    /// removes this folder.
     pub data_dir: PathBuf,
     /// Where Export all puts its folder.
     pub export_dir: PathBuf,
@@ -78,7 +85,6 @@ pub struct Paths {
 pub struct SettingsParts {
     pub store: Arc<SettingsStore>,
     pub catalog: Arc<Catalog>,
-    pub models: Arc<ModelStore>,
     pub desktop: Rc<dyn Desktop>,
     /// Told about every change the rest of the running app may care about.
     pub on_change: OnChange,
@@ -109,6 +115,8 @@ pub enum Event {
         index: usize,
         outcome: Result<Option<String>, String>,
     },
+    MoveProgress(f32),
+    MoveDone(Result<(), String>),
 }
 
 /// Delivers [`Event`]s to the window from any thread. Dropped silently once the window is gone.
@@ -152,6 +160,11 @@ struct Inner {
     models: Rc<VecModel<ModelRow>>,
     model_task: Cell<Option<usize>>,
     cancel_download: Arc<AtomicBool>,
+    model_store: RefCell<Arc<ModelStore>>,
+    /// The folder waiting for the user to say what happens to their models. The inner `None` is
+    /// the app's default folder.
+    pending_folder: RefCell<Option<Option<PathBuf>>>,
+    moving_models: Cell<bool>,
     replacements: Rc<VecModel<ReplacementRow>>,
     snippets: Rc<VecModel<SnippetRow>>,
 }
@@ -177,6 +190,7 @@ impl SettingsController {
             window: window.as_weak(),
         };
         let choices = ModelChoices::from_catalog(&parts.catalog);
+        let model_store = RefCell::new(Arc::new(configured_store(&parts)));
         let inner = Rc::new(Inner {
             window,
             parts,
@@ -190,6 +204,9 @@ impl SettingsController {
             models: Rc::default(),
             model_task: Cell::default(),
             cancel_download: Arc::default(),
+            model_store,
+            pending_folder: RefCell::default(),
+            moving_models: Cell::default(),
             replacements: Rc::default(),
             snippets: Rc::default(),
         });
@@ -226,7 +243,8 @@ impl SettingsController {
 
 impl Drop for SettingsController {
     fn drop(&mut self) {
-        // A `.part` file stays, so the download resumes from the Models page.
+        // A `.part` file stays, so the download resumes from the Models page. A cancelled move
+        // leaves the models where they were.
         self.inner.cancel_download.store(true, Ordering::Relaxed);
     }
 }
@@ -242,10 +260,18 @@ impl Inner {
         prefs.set_is_macos(self.parts.platform == Platform::MacOs);
         prefs.set_version(env!("CARGO_PKG_VERSION").into());
         prefs.set_data_folder(self.parts.paths.data_dir.to_string_lossy().as_ref().into());
-        prefs.set_asr_options(string_model(self.choices.asr_names()));
-        prefs.set_vad_options(string_model(self.choices.vad_names()));
-        prefs.set_llm_options(string_model(self.choices.llm_names()));
+        prefs.set_asr_rows(self.catalog_rows(&self.choices.asr_ids()));
+        prefs.set_vad_rows(self.catalog_rows(&self.choices.vad_ids()));
+        prefs.set_llm_rows(self.catalog_rows(&self.choices.llm_ids()));
         prefs.set_models(ModelRc::from(Rc::clone(&self.models)));
+        prefs.set_downloaded_models(ModelRc::new(FilterModel::new(
+            Rc::clone(&self.models),
+            |row: &ModelRow| row.installed,
+        )));
+        prefs.set_available_models(ModelRc::new(FilterModel::new(
+            Rc::clone(&self.models),
+            |row: &ModelRow| !row.installed,
+        )));
         prefs.set_replacements(ModelRc::from(Rc::clone(&self.replacements)));
         prefs.set_snippets(ModelRc::from(Rc::clone(&self.snippets)));
 
@@ -304,8 +330,32 @@ impl Inner {
             this.snippets.set_vec(rows);
             this.save_snippets();
         });
+        wire!(inner, prefs.on_choose_models_folder, |this| {
+            Inner::choose_models_folder(&this)
+        });
+        wire!(inner, prefs.on_use_default_models_folder, |this| this
+            .offer_folder(None));
+        wire!(inner, prefs.on_open_models_folder, |this| this
+            .open_models_folder());
+        wire!(inner, prefs.on_recheck_models_folder, |this| this
+            .recheck_models_folder());
+        wire!(inner, prefs.on_move_to_pending_folder, |this| this
+            .move_to_pending_folder());
+        wire!(inner, prefs.on_switch_to_pending_folder, |this| {
+            if !this.busy()
+                && let Some(folder) = this.take_pending_folder()
+            {
+                this.switch_folder(folder);
+            }
+        });
+        wire!(inner, prefs.on_cancel_pending_folder, |this| {
+            this.take_pending_folder();
+        });
+        wire!(inner, prefs.on_cancel_move, |this| this
+            .cancel_download
+            .store(true, Ordering::Relaxed));
         wire!(inner, prefs.on_open_data_folder, |this| this
-            .open(&this.parts.paths.data_dir.to_string_lossy()));
+            .open_data_folder());
         wire!(inner, prefs.on_export_all, |this| this.export_all());
         wire!(inner, prefs.on_delete_all, |this| this.delete_all());
         wire!(inner, prefs.on_check_for_updates, |this| this
@@ -412,6 +462,7 @@ impl Inner {
         }
         let settings = self.settings();
         self.show_values(&settings);
+        self.show_models_in_use();
         (self.parts.on_change)(&settings);
     }
 
@@ -449,6 +500,8 @@ impl Inner {
                 }
             }
             Event::ModelDone { index, outcome } => self.finish_model_task(index, outcome),
+            Event::MoveProgress(fraction) => self.prefs().set_move_progress(fraction),
+            Event::MoveDone(outcome) => self.finish_move(outcome),
         }
     }
 
@@ -698,20 +751,274 @@ impl Inner {
         self.update(|settings| settings.style.snippets = snippets);
     }
 
+    fn store(&self) -> Arc<ModelStore> {
+        Arc::clone(&self.model_store.borrow())
+    }
+
+    fn catalog_rows(&self, ids: &[String]) -> ModelRc<i32> {
+        let models = &self.parts.catalog.models;
+        let rows: Vec<i32> = ids
+            .iter()
+            .filter_map(|id| models.iter().position(|model| model.id == *id))
+            .map(|row| row as i32)
+            .collect();
+        ModelRc::new(VecModel::from(rows))
+    }
+
+    fn row(&self, index: usize) -> ModelRow {
+        let store = self.store();
+        let model = &self.parts.catalog.models[index];
+        let mut row = if store.available() {
+            model_row(index, model, store.status(model))
+        } else {
+            model_row_unavailable(index, model)
+        };
+        row.used_for = self.used_for(&model.id, row.installed);
+        row
+    }
+
+    fn used_for(&self, id: &str, installed: bool) -> SharedString {
+        let verb = if installed { "Used" } else { "Needed" };
+        models_in_use(&self.settings(), &self.parts.catalog)
+            .into_iter()
+            .find(|(model, _)| model == id)
+            .map_or_else(SharedString::new, |(_, stage)| {
+                format!("{verb} for {stage}").into()
+            })
+    }
+
     fn show_models(&self) {
-        let rows: Vec<_> = self
-            .parts
+        let store = self.store();
+        let prefs = self.prefs();
+        prefs.set_models_folder(store.root().to_string_lossy().as_ref().into());
+        prefs.set_models_folder_missing(!store.available());
+        prefs.set_models_folder_custom(self.settings().pipeline.models_folder.is_some());
+        let rows: Vec<_> = (0..self.parts.catalog.models.len())
+            .map(|index| self.row(index))
+            .collect();
+        self.models.set_vec(rows);
+        self.show_model_overview();
+    }
+
+    /// What depends on which models are downloaded, beyond their own rows.
+    fn show_model_overview(&self) {
+        let prefs = self.prefs();
+        let store = self.store();
+        let catalog = &self.parts.catalog;
+        let downloaded: Vec<_> = catalog
+            .models
+            .iter()
+            .filter(|model| store.status(model) == ModelStatus::Installed)
+            .collect();
+        prefs.set_downloaded_summary(downloaded_summary(&downloaded).into());
+        let menu = |ids: Vec<String>, names: Vec<String>| {
+            let entries = ids.iter().zip(names).map(|(id, name)| {
+                if downloaded.iter().any(|model| model.id == *id) {
+                    format!("✓ {name}")
+                } else {
+                    name
+                }
+            });
+            string_model(entries.collect())
+        };
+        prefs.set_asr_options(menu(self.choices.asr_ids(), self.choices.asr_names()));
+        prefs.set_vad_options(menu(self.choices.vad_ids(), self.choices.vad_names()));
+        prefs.set_llm_options(menu(self.choices.llm_ids(), self.choices.llm_names()));
+    }
+
+    /// The pipeline changed: rows keep their task and progress, only their stage moves.
+    fn show_models_in_use(&self) {
+        for (index, model) in self.parts.catalog.models.iter().enumerate() {
+            if let Some(mut row) = self.models.row_data(index) {
+                let used_for = self.used_for(&model.id, row.installed);
+                if row.used_for != used_for {
+                    row.used_for = used_for;
+                    self.models.set_row_data(index, row);
+                }
+            }
+        }
+    }
+
+    fn open_models_folder(&self) {
+        self.recheck_models_folder();
+        let store = self.store();
+        match store.prepare() {
+            Ok(()) => self.open(&store.root().to_string_lossy()),
+            Err(error) => self.prefs().set_model_error(error.to_string().into()),
+        }
+    }
+
+    fn open_data_folder(&self) {
+        let folder = &self.parts.paths.data_dir;
+        match std::fs::create_dir_all(folder) {
+            Ok(()) => self.open(&folder.to_string_lossy()),
+            Err(error) => self
+                .prefs()
+                .set_data_status(format!("Couldn't open the folder: {error}").into()),
+        }
+    }
+
+    /// A model task or a move is running. Only one at a time (ticket 11: no file locking).
+    fn busy(&self) -> bool {
+        self.model_task.get().is_some() || self.moving_models.get()
+    }
+
+    fn choose_models_folder(this: &Rc<Self>) {
+        if this.busy() {
+            return;
+        }
+        let weak = Rc::downgrade(this);
+        this.parts.desktop.pick_folder(
+            this.store().root(),
+            Box::new(move |folder| {
+                if let Some(this) = weak.upgrade() {
+                    this.offer_folder(Some(folder));
+                }
+            }),
+        );
+    }
+
+    fn recheck_models_folder(&self) {
+        // Rebuilding the rows would drop a running task's progress and Cancel.
+        if !self.busy() {
+            self.prefs().set_model_error(SharedString::new());
+            self.show_models();
+        }
+    }
+
+    /// Switches to `folder`, first asking what to do with any models in the current one.
+    fn offer_folder(&self, folder: Option<PathBuf>) {
+        let prefs = self.prefs();
+        prefs.set_model_error(SharedString::new());
+        if self.busy() {
+            return;
+        }
+        // The settings file is text, so a path it can't hold wouldn't survive a restart.
+        if folder.as_ref().is_some_and(|path| path.to_str().is_none()) {
+            prefs.set_model_error("That folder's name can't be saved. Choose another.".into());
+            return;
+        }
+        let default_root = self.parts.paths.data_dir.join("models");
+        let folder = folder.filter(|path| *path != default_root);
+        let target = store_for(&self.parts, folder.as_deref());
+        let store = self.store();
+        if target.root() == store.root() {
+            if self.settings().pipeline.models_folder != folder {
+                self.switch_folder(folder);
+            }
+            return;
+        }
+        let models = self.models_on_disk();
+        if models.is_empty() {
+            self.switch_folder(folder);
+            return;
+        }
+        let size: u64 = models.iter().map(ModelEntry::download_size).sum();
+        let summary = match models.len() {
+            1 => format!("1 model ({}) is in the current folder.", format_bytes(size)),
+            count => format!(
+                "{count} models ({}) are in the current folder.",
+                format_bytes(size)
+            ),
+        };
+        prefs.set_pending_summary(summary.into());
+        prefs.set_pending_folder(target.root().to_string_lossy().as_ref().into());
+        self.pending_folder.replace(Some(folder));
+    }
+
+    /// The models with anything on disk, partial downloads included.
+    fn models_on_disk(&self) -> Vec<ModelEntry> {
+        let store = self.store();
+        self.parts
             .catalog
             .models
             .iter()
-            .map(|model| model_row(model, self.parts.models.status(model)))
-            .collect();
-        self.models.set_vec(rows);
+            .filter(|model| store.status(model) != ModelStatus::NotInstalled)
+            .cloned()
+            .collect()
+    }
+
+    fn take_pending_folder(&self) -> Option<Option<PathBuf>> {
+        let prefs = self.prefs();
+        prefs.set_pending_folder(SharedString::new());
+        prefs.set_pending_summary(SharedString::new());
+        self.pending_folder.take()
+    }
+
+    fn switch_folder(&self, folder: Option<PathBuf>) {
+        self.update(|settings| settings.pipeline.models_folder = folder);
+        self.reload_store();
+        (self.parts.on_change)(&self.settings());
+    }
+
+    fn reload_store(&self) {
+        self.model_store
+            .replace(Arc::new(configured_store(&self.parts)));
+        self.show_models();
+    }
+
+    fn move_to_pending_folder(&self) {
+        if self.busy() {
+            return;
+        }
+        let Some(folder) = self.take_pending_folder() else {
+            return;
+        };
+        let prefs = self.prefs();
+        prefs.set_moving_models(true);
+        prefs.set_model_busy(true);
+        prefs.set_move_progress(0.0);
+        self.moving_models.set(true);
+        self.cancel_download.store(false, Ordering::Relaxed);
+        let cancel = Arc::clone(&self.cancel_download);
+        let source = self.store();
+        let target = store_for(&self.parts, folder.as_deref());
+        let models = self.models_on_disk();
+        let settings = Arc::clone(&self.parts.store);
+        let mailbox = self.mailbox.clone();
+        thread::spawn(move || {
+            let mut shown = -1;
+            // On this thread so that closing the window can't delete the originals with the
+            // settings still pointing at them.
+            let commit = || settings.update(|all| all.pipeline.models_folder = folder);
+            let outcome = source.move_to(
+                &target,
+                &models,
+                &cancel,
+                &mut |progress| {
+                    let fraction = progress.downloaded as f32 / progress.total.max(1) as f32;
+                    let percent = (fraction * 100.0) as i32;
+                    if percent != shown {
+                        shown = percent;
+                        mailbox.post(Event::MoveProgress(fraction));
+                    }
+                },
+                commit,
+            );
+            let outcome = match outcome {
+                Ok(()) | Err(DownloadError::Cancelled) => Ok(()),
+                Err(error @ DownloadError::OriginalsLeft(_)) => Err(error.to_string()),
+                Err(error) => Err(format!("Couldn't move the models: {error}")),
+            };
+            mailbox.post(Event::MoveDone(outcome));
+        });
+    }
+
+    fn finish_move(&self, outcome: Result<(), String>) {
+        self.moving_models.set(false);
+        let prefs = self.prefs();
+        prefs.set_moving_models(false);
+        prefs.set_model_busy(false);
+        if let Err(error) = outcome {
+            prefs.set_model_error(error.into());
+        }
+        self.reload_store();
+        (self.parts.on_change)(&self.settings());
     }
 
     /// Marks the model as being worked on. Only one runs at a time (ticket 11: no file locking).
     fn begin_model_task(&self, index: usize, downloading: bool, status: &str) -> bool {
-        if self.model_task.get().is_some() {
+        if self.busy() {
             return false;
         }
         let Some(mut row) = self.models.row_data(index) else {
@@ -732,14 +1039,15 @@ impl Inner {
         self.model_task.set(None);
         let prefs = self.prefs();
         prefs.set_model_busy(false);
-        let model = &self.parts.catalog.models[index];
-        let mut row = model_row(model, self.parts.models.status(model));
+        let mut row = self.row(index);
         match outcome {
             Ok(Some(note)) => row.status = note.into(),
             Ok(None) => {}
             Err(error) => prefs.set_model_error(error.into()),
         }
         self.models.set_row_data(index, row);
+        prefs.set_models_folder_missing(!self.store().available());
+        self.show_model_overview();
     }
 
     fn download_model(&self, index: i32) {
@@ -749,7 +1057,7 @@ impl Inner {
         }
         self.cancel_download.store(false, Ordering::Relaxed);
         let cancel = Arc::clone(&self.cancel_download);
-        let store = Arc::clone(&self.parts.models);
+        let store = self.store();
         let model = self.parts.catalog.models[index].clone();
         let mailbox = self.mailbox.clone();
         thread::spawn(move || {
@@ -772,15 +1080,24 @@ impl Inner {
 
     fn verify_model(&self, index: i32) {
         let index = index as usize;
+        // Missing files on a gone drive would read as a damaged model.
+        if !self.busy() && !self.store().available() {
+            self.show_models();
+            return;
+        }
         if !self.begin_model_task(index, false, "Verifying…") {
             return;
         }
-        let store = Arc::clone(&self.parts.models);
+        let store = self.store();
         let model = self.parts.catalog.models[index].clone();
         let mailbox = self.mailbox.clone();
         thread::spawn(move || {
             let outcome = match store.verify(&model) {
                 Ok(true) => Ok(Some("Verified".to_owned())),
+                Ok(false) if !store.available() => {
+                    let folder = store.root().to_owned();
+                    Err(DownloadError::FolderUnavailable(folder).to_string())
+                }
                 Ok(false) => Err(format!(
                     "{} is damaged. Delete it and download it again.",
                     model.name
@@ -793,17 +1110,32 @@ impl Inner {
 
     fn delete_model(&self, index: i32) {
         let index = index as usize;
-        if self.model_task.get().is_some() {
+        if self.busy() {
             return;
         }
         let model = &self.parts.catalog.models[index];
         let outcome = self
-            .parts
-            .models
+            .store()
             .delete(model)
             .map(|()| None)
             .map_err(|error| format!("{}: {error}", model.name));
         self.finish_model_task(index, outcome);
+    }
+
+    /// Only the catalog's model folders: the chosen folder itself holds the user's other files,
+    /// and may be a whole drive. Returns what stayed, for the status line.
+    fn delete_models_in_chosen_folder(&self) -> Option<String> {
+        self.settings().pipeline.models_folder.as_ref()?;
+        let store = self.store();
+        let folder = store.root().display();
+        if !store.available() {
+            return Some(format!("models in {folder}, which wasn't connected"));
+        }
+        let mut failed = false;
+        for model in &self.parts.catalog.models {
+            failed |= store.delete(model).is_err();
+        }
+        failed.then(|| format!("models in {folder} that couldn't be removed"))
     }
 
     fn open(&self, target: &str) {
@@ -825,15 +1157,20 @@ impl Inner {
 
     fn delete_all(&self) {
         let prefs = self.prefs();
-        if self.model_task.get().is_some() {
+        if self.busy() {
             prefs.set_data_status("Wait for the model task to finish, then try again.".into());
             return;
         }
-        let status = match data::delete_all(&self.parts.paths.data_dir) {
-            Ok(()) => "All data deleted.".to_owned(),
-            Err(error) => format!("Delete failed: {error}"),
+        self.take_pending_folder();
+        let left = self.delete_models_in_chosen_folder();
+        let status = match (data::delete_all(&self.parts.paths.data_dir), left) {
+            (Err(error), Some(left)) => format!("Delete failed: {error}. Also left {left}."),
+            (Err(error), None) => format!("Delete failed: {error}"),
+            (Ok(()), Some(left)) => format!("All data deleted, except {left}."),
+            (Ok(()), None) => "All data deleted.".to_owned(),
         };
         self.update(|settings| *settings = Settings::default());
+        self.reload_store();
         let general = self.settings().general;
         if let Err(error) = self
             .parts
@@ -850,6 +1187,14 @@ impl Inner {
         prefs.set_data_status(status.into());
         (self.parts.on_change)(&self.settings());
     }
+}
+
+fn store_for(parts: &SettingsParts, chosen: Option<&Path>) -> ModelStore {
+    ModelStore::configured(chosen, &parts.paths.data_dir.join("models"))
+}
+
+fn configured_store(parts: &SettingsParts) -> ModelStore {
+    store_for(parts, parts.store.get().pipeline.models_folder.as_deref())
 }
 
 fn string_model(items: Vec<String>) -> ModelRc<SharedString> {

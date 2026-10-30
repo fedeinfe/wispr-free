@@ -25,3 +25,11 @@ Needs human verification:
 - `ram_mb` values are estimates until ticket 14. The tier picks are placeholders until ticket 14.
 - Balanced and High set `diarization = true` but the catalog has no diarization models yet (ticket 16).
 - Tier thresholds involve judgement calls on spec §6, listed in the notes: please review them.
+
+**2026-10-30 · custom models folder (user request, after ticket 12)**
+
+Done in `wf-models` and the Settings window: `ModelStore::in_folder` / `configured`, `available`, `move_to`, and `pipeline.models_folder`. The Models page has Change…, Use default, Open folder, a move-or-switch choice with progress and cancel, and an unplugged-drive state.
+
+Verified: 17 store tests and 18 window tests, on a fake desktop and temporary folders; the user picked a real external SSD through the native picker on macOS. Not verified: downloading to or moving models onto a real external drive, unplugging one mid-download or mid-move, Windows and Linux. There is no free-space check, so a full disk shows as a plain I/O error, and FAT32 drives can't hold models over 4 GB.
+
+Later the same day, from user feedback: Models splits Downloaded from Available and says which stage needs each model, Pipeline shows each stage's model state with a Download button, and the menus mark downloaded models. Open folder now creates the app's own folder first; `open` on a path that doesn't exist fails silently.

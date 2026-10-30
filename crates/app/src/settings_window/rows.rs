@@ -86,7 +86,8 @@ pub fn microphone_lines(
     lines
 }
 
-pub fn model_row(model: &ModelEntry, status: ModelStatus) -> ModelRow {
+/// `index` is the model's place in the catalog, which is also its row in `Prefs.models`.
+pub fn model_row(index: usize, model: &ModelEntry, status: ModelStatus) -> ModelRow {
     let kind = match model.kind {
         ModelKind::Vad => "Voice detection",
         ModelKind::Asr => "Speech recognition",
@@ -99,16 +100,19 @@ pub fn model_row(model: &ModelEntry, status: ModelStatus) -> ModelRow {
         model.license,
     );
     let (status_text, installed, partial): (SharedString, _, _) = match status {
-        ModelStatus::NotInstalled => ("Not installed".into(), false, false),
+        ModelStatus::NotInstalled => ("Not downloaded".into(), false, false),
         ModelStatus::Partial { downloaded } => (
             format!("{} downloaded", format_bytes(downloaded)).into(),
             false,
             true,
         ),
-        ModelStatus::Installed => ("Installed".into(), true, false),
+        ModelStatus::Installed => ("Downloaded".into(), true, false),
     };
     ModelRow {
+        index: index as i32,
         name: model.name.as_str().into(),
+        size: format_bytes(model.download_size()).into(),
+        used_for: SharedString::new(),
         detail: detail.into(),
         status: status_text,
         installed,
@@ -116,6 +120,25 @@ pub fn model_row(model: &ModelEntry, status: ModelStatus) -> ModelRow {
         busy: false,
         downloading: false,
         progress: 0.0,
+    }
+}
+
+/// What a chosen models folder that's gone means for a model: not "Not downloaded", which would
+/// invite downloading it again.
+pub fn model_row_unavailable(index: usize, model: &ModelEntry) -> ModelRow {
+    ModelRow {
+        status: "Folder not connected".into(),
+        ..model_row(index, model, ModelStatus::NotInstalled)
+    }
+}
+
+/// How many models are downloaded and how much room they take. Empty for none.
+pub fn downloaded_summary(models: &[&ModelEntry]) -> String {
+    let size = format_bytes(models.iter().map(|model| model.download_size()).sum());
+    match models.len() {
+        0 => String::new(),
+        1 => format!("1 model · {size}"),
+        count => format!("{count} models · {size}"),
     }
 }
 

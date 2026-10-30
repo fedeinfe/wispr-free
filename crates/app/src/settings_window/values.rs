@@ -154,6 +154,20 @@ fn effective_models(settings: &Settings, catalog: &Catalog) -> [Option<String>; 
     }
 }
 
+/// The models the pipeline runs with, and what for. A stage that's off needs no model.
+pub fn models_in_use(settings: &Settings, catalog: &Catalog) -> Vec<(String, &'static str)> {
+    let [asr, vad, llm] = effective_models(settings, catalog);
+    let pipeline = &settings.pipeline;
+    [
+        (asr, "speech recognition"),
+        (vad.filter(|_| pipeline.vad), "voice detection"),
+        (llm.filter(|_| pipeline.llm_cleanup), "cleanup"),
+    ]
+    .into_iter()
+    .filter_map(|(model, stage)| Some((model?, stage)))
+    .collect()
+}
+
 fn model_index(ids: &[String], model: Option<&String>) -> i32 {
     model.map_or(-1, |model| index_of(ids, model))
 }

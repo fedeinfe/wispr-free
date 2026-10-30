@@ -2,6 +2,7 @@
 
 use std::any::Any;
 use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
@@ -39,6 +40,21 @@ impl Desktop for SystemDesktop {
 
     fn open(&self, target: &str) -> io::Result<()> {
         desktop::open(target)
+    }
+
+    fn pick_folder(&self, start: &Path, done: Box<dyn FnOnce(PathBuf)>) {
+        let dialog = rfd::AsyncFileDialog::new()
+            .set_title("Choose a folder for models")
+            .set_directory(start);
+        // Not the blocking dialog: its nested run loop would re-enter Slint's event handler.
+        let picked = slint::spawn_local(async move {
+            if let Some(folder) = dialog.pick_folder().await {
+                done(folder.path().to_path_buf());
+            }
+        });
+        if let Err(error) = picked {
+            eprintln!("could not open the folder picker: {error}");
+        }
     }
 
     fn capture_keys(

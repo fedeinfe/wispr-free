@@ -10,7 +10,7 @@ use directories::UserDirs;
 use slint::{CloseRequestResponse, ComponentHandle, PlatformError, Timer, Weak};
 use wf_core::settings::{SettingsStore, data_dir};
 use wf_core::shortcut::Platform;
-use wf_models::{Catalog, ModelStore};
+use wf_models::Catalog;
 
 use super::system::SystemDesktop;
 use super::{OnChange, Paths, SettingsController, SettingsParts};
@@ -97,7 +97,6 @@ fn system_parts(store: Arc<SettingsStore>, on_change: OnChange) -> SettingsParts
     SettingsParts {
         store,
         catalog: Arc::new(Catalog::bundled()),
-        models: Arc::new(ModelStore::new(data_dir.join("models"))),
         desktop: Rc::new(SystemDesktop),
         on_change,
         paths: Paths {
