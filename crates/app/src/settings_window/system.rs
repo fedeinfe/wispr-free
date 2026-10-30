@@ -161,13 +161,17 @@ pub fn start_probes(mailbox: &Mailbox) {
     look_for_microphones(mailbox);
 }
 
+/// One at a time: onboarding looks every second, and a slow audio system mustn't pile threads up.
 fn look_for_microphones(mailbox: &Mailbox) {
+    static LOOKING: AtomicBool = AtomicBool::new(false);
+    if LOOKING.swap(true, Ordering::SeqCst) {
+        return;
+    }
     let mailbox = mailbox.clone();
     thread::spawn(move || {
         let backend = CpalBackend::new();
-        mailbox.post(Event::Microphones {
-            devices: backend.devices(),
-            default: backend.default_device(),
-        });
+        let (devices, default) = (backend.devices(), backend.default_device());
+        LOOKING.store(false, Ordering::SeqCst);
+        mailbox.post(Event::Microphones { devices, default });
     });
 }

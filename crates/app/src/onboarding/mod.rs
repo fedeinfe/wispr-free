@@ -12,7 +12,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use slint::{ComponentHandle, ModelRc, PlatformError, SharedString, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, PlatformError, SharedString, VecModel};
 use wf_core::pill::PillState;
 use wf_core::settings::{PipelineTier, Settings, SettingsStore};
 use wf_core::shortcut::{Action, Platform};
@@ -395,7 +395,9 @@ impl Inner {
         } else {
             0
         });
-        if facts.models == Models::FolderGone || self.step() == Step::Models {
+        // Only when it changed: a re-check rebuilds every row and clears the last error.
+        let folder_gone = facts.models == Models::FolderGone;
+        if folder_gone != self.pages.window().prefs().get_models_folder_missing() {
             self.pages.recheck_models_folder();
         }
         self.recommend_tier();
@@ -499,7 +501,10 @@ impl Inner {
             .collect();
         let last = self.current.get() + 1 == steps.len();
         drop(steps);
-        setup.set_steps(ModelRc::new(VecModel::from(rows)));
+        // This runs every second: a new model would rebuild the sidebar each time.
+        if !setup.get_steps().iter().eq(rows.iter().cloned()) {
+            setup.set_steps(ModelRc::new(VecModel::from(rows)));
+        }
         setup.set_current(self.current.get() as i32);
         setup.set_page(page_of(self.step()));
         setup.set_can_continue(self.can_continue());
@@ -552,7 +557,8 @@ mod tests {
             let folder = store.model_dir(id);
             std::fs::create_dir_all(&folder).unwrap();
             for file in &model.files {
-                std::fs::write(folder.join(&file.name), vec![0; file.size as usize]).unwrap();
+                let handle = std::fs::File::create(folder.join(&file.name)).unwrap();
+                handle.set_len(file.size).unwrap();
             }
         }
         store

@@ -2,14 +2,17 @@
 //! in for TCC, the key listener and the dictation flow, so that every state of every permission
 //! can be reached without touching the real ones.
 
+#[path = "support/memory_cap.rs"]
+mod memory_cap;
+
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::fs;
 use std::io::{self, Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -29,6 +32,9 @@ use wispr_free::onboarding::steps::Step;
 use wispr_free::onboarding::{Machine, OnboardingHost, OnboardingParts, Opening};
 use wispr_free::settings_window::{Desktop, Event, Mailbox, Paths, SettingsParts};
 use wispr_free::{Consent, Mark, OnboardingWindow, Prefs, Setup, TrialPhase};
+
+/// Well above what these tests use, far below what would hurt.
+const MEMORY_LIMIT_MB: u64 = 1024;
 
 const GRANTED: Permissions = Permissions {
     microphone: Access::Granted,
@@ -190,6 +196,7 @@ impl Harness {
     }
 
     fn on(dir: tempfile::TempDir, permissions: Permissions, catalog: Catalog) -> Self {
+        memory_cap::install(MEMORY_LIMIT_MB);
         init_no_event_loop();
         let machine = Rc::new(FakeMachine::new(permissions));
         let desktop = Rc::new(FakeDesktop::default());
@@ -366,7 +373,8 @@ impl Harness {
             let folder = self.dir.path().join("data/models").join(&model.id);
             fs::create_dir_all(&folder).unwrap();
             for file in &model.files {
-                fs::write(folder.join(&file.name), vec![0; file.size as usize]).unwrap();
+                let handle = fs::File::create(folder.join(&file.name)).unwrap();
+                handle.set_len(file.size).unwrap();
             }
         }
     }
@@ -403,6 +411,28 @@ impl Harness {
             .unwrap();
         harness
     }
+}
+
+/// Every test that needs models goes through `install_models`, in parallel, so its cost is
+/// multiplied. The status check only reads sizes.
+#[cfg(unix)]
+#[test]
+fn fake_models_take_their_size_in_name_only() {
+    use std::os::unix::fs::MetadataExt;
+
+    let harness = Harness::new(GRANTED);
+    harness.install_models(Tier::High);
+
+    let mut stored = 0;
+    for model in harness.catalog.models_for_tier(Tier::High) {
+        let folder = harness.dir.path().join("data/models").join(&model.id);
+        for file in &model.files {
+            let metadata = fs::metadata(folder.join(&file.name)).unwrap();
+            assert_eq!(metadata.len(), file.size);
+            stored += metadata.blocks() * 512;
+        }
+    }
+    assert!(stored < 1024 * 1024, "{stored} bytes on disk");
 }
 
 #[test]
@@ -705,29 +735,58 @@ fn an_unplugged_models_folder_reads_as_in_settings_and_comes_back() {
     );
 }
 
-/// Serves `hello` for every request, as many times as asked, and says what was requested.
-fn serve_models(requests: usize) -> (u16, thread::JoinHandle<Vec<String>>) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let server = thread::spawn(move || {
-        let mut seen = Vec::new();
-        for _ in 0..requests {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0; 2048];
-            let read = stream.read(&mut request).unwrap();
-            let request = String::from_utf8_lossy(&request[..read]).into_owned();
-            let line = request.lines().next().unwrap_or_default().to_owned();
-            seen.push(line.split(' ').nth(1).unwrap_or_default().to_owned());
-            stream
-                .write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
-                )
-                .unwrap();
-        }
-        seen
-    });
-    (port, server)
+/// Answers every model request with `reply`, on a connection of its own: other programs on a
+/// shared machine probe new local ports, and may connect and then say nothing.
+struct ModelServer {
+    port: u16,
+    requested: Arc<Mutex<Vec<String>>>,
 }
+
+impl ModelServer {
+    fn start(reply: &'static [u8]) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let requested: Arc<Mutex<Vec<String>>> = Arc::default();
+        let seen = Arc::clone(&requested);
+        thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let seen = Arc::clone(&seen);
+                thread::spawn(move || Self::answer(stream, reply, &seen));
+            }
+        });
+        Self { port, requested }
+    }
+
+    fn answer(mut stream: TcpStream, reply: &[u8], seen: &Mutex<Vec<String>>) {
+        // All of it: closing with unread bytes resets the connection under the reply.
+        let mut request = Vec::new();
+        let mut chunk = [0; 1024];
+        while !request.windows(4).any(|end| end == b"\r\n\r\n") {
+            match stream.read(&mut chunk) {
+                Ok(0) | Err(_) => return,
+                Ok(read) => request.extend_from_slice(&chunk[..read]),
+            }
+        }
+        let request = String::from_utf8_lossy(&request);
+        if let Some(path) = request
+            .split(' ')
+            .nth(1)
+            .filter(|path| path.ends_with(".bin"))
+        {
+            seen.lock().unwrap().push(path.to_owned());
+            let _ = stream.write_all(reply);
+        }
+    }
+
+    fn requested(&self) -> Vec<String> {
+        let mut requested = self.requested.lock().unwrap().clone();
+        requested.sort();
+        requested
+    }
+}
+
+const HELLO: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello";
+const GONE: &[u8] = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
 /// Every tier runs on the same three tiny models, served from `port`.
 fn tiny_catalog(port: u16) -> Catalog {
@@ -780,7 +839,12 @@ sha256 = "{HELLO_SHA256}"
 fn pump_until(harness: &Harness, what: &str, mut done: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while !done() {
-        assert!(Instant::now() < deadline, "{what} didn't happen in time");
+        assert!(
+            Instant::now() < deadline,
+            "{what} didn't happen in time: {:?}, busy {}",
+            harness.prefs(|prefs| prefs.get_model_error()),
+            harness.prefs(|prefs| prefs.get_model_busy()),
+        );
         harness.prefs(|prefs| prefs.invoke_events_arrived());
         thread::sleep(Duration::from_millis(5));
     }
@@ -788,9 +852,9 @@ fn pump_until(harness: &Harness, what: &str, mut done: impl FnMut() -> bool) {
 
 #[test]
 fn download_all_fetches_the_tier_one_at_a_time_through_the_settings_machinery() {
-    let (port, server) = serve_models(3);
+    let server = ModelServer::start(HELLO);
     let dir = tempfile::tempdir().unwrap();
-    let harness = Harness::on(dir, GRANTED, tiny_catalog(port));
+    let harness = Harness::on(dir, GRANTED, tiny_catalog(server.port));
     harness.start();
     harness.microphones(&["USB mic"]);
     assert_eq!(harness.step(), Step::Models);
@@ -802,9 +866,7 @@ fn download_all_fetches_the_tier_one_at_a_time_through_the_settings_machinery() 
         harness
             .prefs(|prefs| prefs.get_models_in_use_summary().is_empty() && !prefs.get_model_busy())
     });
-    let mut requested = server.join().unwrap();
-    requested.sort();
-    assert_eq!(requested, ["/asr.bin", "/llm.bin", "/vad.bin"]);
+    assert_eq!(server.requested(), ["/asr.bin", "/llm.bin", "/vad.bin"]);
 
     harness.host.look();
     assert!(harness.can_continue(), "the step sees what landed on disk");
@@ -812,14 +874,9 @@ fn download_all_fetches_the_tier_one_at_a_time_through_the_settings_machinery() 
 
 #[test]
 fn a_failed_download_is_reported_and_stops_the_queue() {
-    // Nothing listens on this port.
-    let port = TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    let server = ModelServer::start(GONE);
     let dir = tempfile::tempdir().unwrap();
-    let harness = Harness::on(dir, GRANTED, tiny_catalog(port));
+    let harness = Harness::on(dir, GRANTED, tiny_catalog(server.port));
     harness.start();
     harness.microphones(&["USB mic"]);
 
@@ -828,6 +885,13 @@ fn a_failed_download_is_reported_and_stops_the_queue() {
     pump_until(&harness, "the failure", || {
         harness.prefs(|prefs| !prefs.get_model_error().is_empty() && !prefs.get_model_busy())
     });
+    assert_eq!(server.requested().len(), 1, "the others never started");
+    harness.host.look();
+    harness.host.look();
+    assert!(
+        harness.prefs(|prefs| !prefs.get_model_error().is_empty()),
+        "a re-check leaves the error up to be read"
+    );
     assert!(!harness.can_continue());
     assert!(!harness.prefs(|prefs| prefs.get_models_in_use_summary().is_empty()));
 }
@@ -1197,6 +1261,33 @@ fn a_chosen_model_gone_missing_brings_up_the_models_step_at_launch_only() {
 }
 
 #[test]
+fn a_re_check_with_nothing_new_rebuilds_nothing() {
+    let harness = Harness::new(GRANTED);
+    harness.start();
+    harness.microphones(&["USB mic"]);
+    assert_eq!(harness.step(), Step::Models);
+    let steps = harness.setup(|setup| setup.get_steps());
+    let rows = harness.prefs(|prefs| prefs.get_models());
+    let mut row = rows.row_data(0).unwrap();
+    row.status = "marked".into();
+    rows.set_row_data(0, row);
+
+    for _ in 0..1_000 {
+        harness.host.look();
+    }
+
+    assert!(
+        steps == harness.setup(|setup| setup.get_steps()),
+        "the sidebar was rebuilt"
+    );
+    assert_eq!(
+        rows.row_data(0).unwrap().status,
+        "marked",
+        "the rows were rebuilt"
+    );
+}
+
+#[test]
 fn the_window_is_freed_on_close() {
     let harness = Harness::new(NOT_ASKED);
     harness.start();
@@ -1206,6 +1297,19 @@ fn the_window_is_freed_on_close() {
     harness.host.close();
 
     assert!(weak.upgrade().is_none());
+}
+
+#[test]
+fn a_host_that_goes_away_takes_its_open_window_with_it() {
+    let harness = Harness::new(NOT_ASKED);
+    harness.start();
+    let weak = harness.with_window(ComponentHandle::as_weak);
+    // A window on screen is the backend's to hold, whoever else lets go.
+    harness.with_window(|window| window.hide().unwrap());
+
+    drop(harness);
+
+    assert!(weak.upgrade().is_none(), "something still holds the window");
 }
 
 #[test]

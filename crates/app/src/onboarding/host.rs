@@ -1,7 +1,7 @@
 //! Keeps the one open onboarding window, and watches for what would bring it back.
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::time::Duration;
 
 use slint::{CloseRequestResponse, ComponentHandle, PlatformError, Timer, TimerMode};
@@ -61,6 +61,10 @@ impl OnboardingHost {
         }
     }
 
+    fn weak(&self) -> Weak<Shared> {
+        Rc::downgrade(&self.shared)
+    }
+
     fn finished(&self) -> bool {
         self.shared.parts.store().get().onboarding.finished
     }
@@ -100,10 +104,14 @@ impl OnboardingHost {
         if !steps_to_show(self.finished(), &self.facts()).is_empty() {
             self.open(Opening::Foreground)?;
         }
-        let host = self.clone();
+        let host = self.weak();
         self.shared
             .timer
-            .start(TimerMode::Repeated, LOOK_IDLE, move || host.look());
+            .start(TimerMode::Repeated, LOOK_IDLE, move || {
+                if let Some(shared) = host.upgrade() {
+                    OnboardingHost { shared }.look();
+                }
+            });
         self.look();
         Ok(())
     }
@@ -128,11 +136,15 @@ impl OnboardingHost {
         if steps.contains(&Step::Models) {
             self.shared.parts.machine.close_settings();
         }
-        let host = self.clone();
+        let host = self.weak();
         let on_done: Rc<dyn Fn()> = Rc::new(move || {
             // Not from inside the window's own callback: closing drops the window.
             let host = host.clone();
-            Timer::single_shot(Duration::ZERO, move || host.close());
+            Timer::single_shot(Duration::ZERO, move || {
+                if let Some(shared) = host.upgrade() {
+                    OnboardingHost { shared }.close();
+                }
+            });
         });
         let controller = OnboardingController::new(
             self.shared.parts.clone(),
