@@ -1,0 +1,691 @@
+//! Fakes for every seam of the flow, and a [`Rig`] that runs the whole of it on them.
+
+#![allow(dead_code)]
+
+use std::collections::VecDeque;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
+
+use tempfile::TempDir;
+use wf_audio::CaptureEvent;
+use wf_core::audio::{AudioClip, FRAME_SAMPLES};
+use wf_core::pill::PillState;
+use wf_core::settings::{KeepModels, PipelineTier, Settings};
+use wf_core::shortcut::{Bindings, Key, KeyEvent, Platform};
+use wf_dictation::plan::{AsrModel, LlmModel};
+use wf_dictation::{
+    Clock, Dictation, Engines, Event, Insertion, MeetingRoom, MeetingTape, MicStream, Microphone,
+    Parts,
+};
+use wf_meetings::{MeetingEvent, MicClient};
+use wf_models::Catalog;
+use wf_pipeline::{Asr, AsrOptions, Llm, LlmPrompt, PipelineError, SpeechSegment, Transcript, Vad};
+use wf_platform::context::{AppIdentity, Context, ContextDepth, ContextSource, Focus, TextAround};
+use wf_platform::insert::{CopyReason, InsertError, InsertOutcome, PasteChord};
+use wf_platform::keys::KeySignal;
+
+pub const FN: Key = Key::Fn;
+const WAIT: Duration = Duration::from_secs(10);
+
+/// Reads a committed 16-bit mono WAV fixture from the pipeline crate.
+pub fn fixture(name: &str) -> AudioClip {
+    let path = format!(
+        "{}/../pipeline/tests/fixtures/{name}.wav",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let bytes = fs::read(&path).expect(&path);
+    let mut at = 12;
+    loop {
+        let size = u32::from_le_bytes(bytes[at + 4..at + 8].try_into().unwrap()) as usize;
+        if &bytes[at..at + 4] == b"data" {
+            let samples = bytes[at + 8..at + 8 + size]
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&pair| f32::from(i16::from_le_bytes(pair)) / 32_768.0)
+                .collect();
+            return AudioClip::new(samples);
+        }
+        at += 8 + size + size % 2;
+    }
+}
+
+#[derive(Default)]
+pub struct FakeClock(Mutex<Duration>);
+
+impl FakeClock {
+    pub fn advance(&self, by: Duration) {
+        *self.0.lock().unwrap() += by;
+    }
+}
+
+impl Clock for FakeClock {
+    fn now(&self) -> Duration {
+        *self.0.lock().unwrap()
+    }
+}
+
+#[derive(Default)]
+pub struct FakeMic {
+    feed: Mutex<Option<Sender<CaptureEvent>>>,
+    pub opened: AtomicUsize,
+    /// Opens a test has already waited for.
+    seen: AtomicUsize,
+    pub open_now: Arc<AtomicUsize>,
+    pub problem: Mutex<Option<String>>,
+    pub ranking: Mutex<Vec<String>>,
+}
+
+impl FakeMic {
+    pub fn send(&self, event: CaptureEvent) {
+        let feed = self.feed.lock().unwrap();
+        let _ = feed.as_ref().expect("the mic is open").send(event);
+    }
+
+    pub fn play(&self, clip: &AudioClip) {
+        for frame in clip.samples().chunks(FRAME_SAMPLES) {
+            let mut frame = frame.to_vec();
+            frame.resize(FRAME_SAMPLES, 0.0);
+            self.send(CaptureEvent::Frame(frame));
+        }
+    }
+
+    /// Waits for the next open.
+    pub fn wait_open(&self) {
+        let next = self.seen.fetch_add(1, Ordering::SeqCst) + 1;
+        wait_for("the mic to open", || {
+            self.opened.load(Ordering::SeqCst) >= next
+        });
+    }
+
+    pub fn wait_closed(&self) {
+        wait_for("the mic to close", || {
+            self.open_now.load(Ordering::SeqCst) == 0
+        });
+    }
+}
+
+struct FakeStream {
+    events: Receiver<CaptureEvent>,
+    open_now: Arc<AtomicUsize>,
+}
+
+impl MicStream for FakeStream {
+    fn events(&self) -> &Receiver<CaptureEvent> {
+        &self.events
+    }
+}
+
+impl Drop for FakeStream {
+    fn drop(&mut self) {
+        self.open_now.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+impl Microphone for FakeMic {
+    fn problem(&self) -> Option<String> {
+        self.problem.lock().unwrap().clone()
+    }
+
+    fn open(&self, ranking: Vec<String>) -> Result<Box<dyn MicStream>, String> {
+        let (feed, events) = mpsc::channel();
+        *self.feed.lock().unwrap() = Some(feed);
+        *self.ranking.lock().unwrap() = ranking;
+        self.opened.fetch_add(1, Ordering::SeqCst);
+        self.open_now.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::new(FakeStream {
+            events,
+            open_now: Arc::clone(&self.open_now),
+        }))
+    }
+}
+
+/// Calls frames speech by level, like a real detector but with no model. A segment closes after
+/// half a second of quiet.
+struct FakeVad {
+    probe: Arc<Probe>,
+    heard: usize,
+    open: Option<SpeechSegment>,
+    quiet: usize,
+}
+
+const QUIET_SAMPLES: usize = 8_000;
+const SPEECH_LEVEL: f32 = 0.01;
+
+impl Vad for FakeVad {
+    fn accept(&mut self, samples: &[f32]) -> Result<Vec<SpeechSegment>, PipelineError> {
+        let mut closed = Vec::new();
+        for window in samples.chunks(512) {
+            let start = self.heard;
+            self.heard += window.len();
+            let peak = window.iter().fold(0.0_f32, |peak, s| peak.max(s.abs()));
+            if peak >= SPEECH_LEVEL {
+                self.quiet = 0;
+                let open = self.open.get_or_insert(SpeechSegment { start, end: start });
+                open.end = self.heard;
+            } else if self.open.is_some() {
+                self.quiet += window.len();
+                if self.quiet >= QUIET_SAMPLES {
+                    closed.extend(self.open.take());
+                }
+            }
+        }
+        Ok(closed)
+    }
+
+    fn is_speaking(&self) -> bool {
+        self.open.is_some()
+    }
+
+    fn finish(&mut self) -> Result<Vec<SpeechSegment>, PipelineError> {
+        self.heard = 0;
+        self.quiet = 0;
+        Ok(self.open.take().into_iter().collect())
+    }
+}
+
+impl Drop for FakeVad {
+    fn drop(&mut self) {
+        self.probe.vad_alive.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Holds an engine in a call until [`Gate::open`] or an interrupt.
+#[derive(Default)]
+pub struct Gate {
+    closed: Mutex<bool>,
+    changed: Condvar,
+    pub entered: AtomicBool,
+}
+
+impl Gate {
+    pub fn close(&self) {
+        *self.closed.lock().unwrap() = true;
+    }
+
+    pub fn open(&self) {
+        *self.closed.lock().unwrap() = false;
+        self.changed.notify_all();
+    }
+
+    fn pass(&self) {
+        self.entered.store(true, Ordering::SeqCst);
+        let mut closed = self.closed.lock().unwrap();
+        while *closed {
+            closed = self.changed.wait(closed).unwrap();
+        }
+    }
+}
+
+/// What the fake engines saw.
+#[derive(Default)]
+pub struct Probe {
+    pub vad_loads: AtomicUsize,
+    pub asr_loads: AtomicUsize,
+    pub llm_loads: AtomicUsize,
+    pub vad_alive: AtomicUsize,
+    pub asr_alive: AtomicUsize,
+    pub llm_alive: AtomicUsize,
+    pub interrupts: AtomicUsize,
+    pub asr_model: Mutex<Option<AsrModel>>,
+    pub llm_model: Mutex<Option<LlmModel>>,
+    pub clips: Mutex<Vec<AudioClip>>,
+    pub asr_options: Mutex<Option<AsrOptions>>,
+    /// What ASR "hears", one reply per chunk, last one repeating.
+    pub transcripts: Mutex<VecDeque<String>>,
+    /// `None` makes the LLM fail.
+    pub llm_reply: Mutex<Option<String>>,
+    pub llm_prompts: Mutex<Vec<String>>,
+    pub asr_gate: Gate,
+    pub llm_gate: Gate,
+    pub fail_asr_load: AtomicBool,
+}
+
+impl Probe {
+    pub fn total_loads(&self) -> usize {
+        self.vad_loads.load(Ordering::SeqCst)
+            + self.asr_loads.load(Ordering::SeqCst)
+            + self.llm_loads.load(Ordering::SeqCst)
+    }
+
+    pub fn total_alive(&self) -> usize {
+        self.vad_alive.load(Ordering::SeqCst)
+            + self.asr_alive.load(Ordering::SeqCst)
+            + self.llm_alive.load(Ordering::SeqCst)
+    }
+
+    pub fn hears(&self, text: &str) {
+        *self.transcripts.lock().unwrap() = VecDeque::from([text.to_owned()]);
+    }
+
+    pub fn llm_says(&self, text: &str) {
+        *self.llm_reply.lock().unwrap() = Some(text.to_owned());
+    }
+
+    pub fn heard_samples(&self) -> usize {
+        let clips = self.clips.lock().unwrap();
+        clips.iter().map(|clip| clip.samples().len()).sum()
+    }
+}
+
+struct FakeAsr {
+    probe: Arc<Probe>,
+}
+
+impl Asr for FakeAsr {
+    fn transcribe(
+        &mut self,
+        clip: &AudioClip,
+        options: &AsrOptions,
+    ) -> Result<Transcript, PipelineError> {
+        self.probe.clips.lock().unwrap().push(clip.clone());
+        *self.probe.asr_options.lock().unwrap() = Some(options.clone());
+        self.probe.asr_gate.pass();
+        if self.probe.interrupts.load(Ordering::SeqCst) > 0 {
+            return Err(PipelineError::Engine("interrupted".into()));
+        }
+        let mut replies = self.probe.transcripts.lock().unwrap();
+        let text = if replies.len() > 1 {
+            replies.pop_front().unwrap()
+        } else {
+            replies.front().cloned().unwrap_or_default()
+        };
+        Ok(Transcript {
+            text,
+            language: Some("en".into()),
+        })
+    }
+}
+
+impl Drop for FakeAsr {
+    fn drop(&mut self) {
+        self.probe.asr_alive.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+struct FakeLlm {
+    probe: Arc<Probe>,
+}
+
+impl Llm for FakeLlm {
+    fn generate(
+        &mut self,
+        prompt: &LlmPrompt,
+        _on_token: &mut dyn FnMut(&str),
+    ) -> Result<String, PipelineError> {
+        self.probe
+            .llm_prompts
+            .lock()
+            .unwrap()
+            .push(prompt.user.clone());
+        self.probe.llm_gate.pass();
+        let reply = self.probe.llm_reply.lock().unwrap().clone();
+        reply.ok_or_else(|| PipelineError::Engine("the model fell over".into()))
+    }
+}
+
+impl Drop for FakeLlm {
+    fn drop(&mut self) {
+        self.probe.llm_alive.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+pub struct FakeEngines(pub Arc<Probe>);
+
+impl Engines for FakeEngines {
+    fn vad(&self, _model: &Path) -> Result<Box<dyn Vad>, PipelineError> {
+        self.0.vad_loads.fetch_add(1, Ordering::SeqCst);
+        self.0.vad_alive.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::new(FakeVad {
+            probe: Arc::clone(&self.0),
+            heard: 0,
+            open: None,
+            quiet: 0,
+        }))
+    }
+
+    fn asr(&self, model: &AsrModel) -> Result<Box<dyn Asr>, PipelineError> {
+        if self.0.fail_asr_load.load(Ordering::SeqCst) {
+            return Err(PipelineError::Engine("the model file is damaged".into()));
+        }
+        *self.0.asr_model.lock().unwrap() = Some(model.clone());
+        self.0.asr_loads.fetch_add(1, Ordering::SeqCst);
+        self.0.asr_alive.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::new(FakeAsr {
+            probe: Arc::clone(&self.0),
+        }))
+    }
+
+    fn llm(&self, model: &LlmModel) -> Result<Box<dyn Llm>, PipelineError> {
+        *self.0.llm_model.lock().unwrap() = Some(model.clone());
+        self.0.llm_loads.fetch_add(1, Ordering::SeqCst);
+        self.0.llm_alive.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::new(FakeLlm {
+            probe: Arc::clone(&self.0),
+        }))
+    }
+
+    fn interrupt(&self) {
+        self.0.interrupts.fetch_add(1, Ordering::SeqCst);
+        self.0.asr_gate.open();
+        self.0.llm_gate.open();
+    }
+}
+
+#[derive(Default)]
+pub struct InsertLog {
+    pub inserted: Mutex<Vec<String>>,
+    pub copied: Mutex<Vec<String>>,
+    pub enters: AtomicUsize,
+    /// The next insert finds no text field.
+    pub no_focus: AtomicBool,
+    pub refused: AtomicBool,
+}
+
+struct FakeInsertion(Arc<InsertLog>);
+
+impl Insertion for FakeInsertion {
+    fn insert(
+        &mut self,
+        text: &str,
+        on_pasted: &mut dyn FnMut(),
+    ) -> Result<InsertOutcome, InsertError> {
+        self.0.inserted.lock().unwrap().push(text.to_owned());
+        if self.0.no_focus.load(Ordering::SeqCst) {
+            return Ok(InsertOutcome::Copied {
+                reason: CopyReason::NoFocusedField,
+            });
+        }
+        if self.0.refused.load(Ordering::SeqCst) {
+            return Ok(InsertOutcome::Copied {
+                reason: CopyReason::PasteFailed("accessibility permission not granted".into()),
+            });
+        }
+        on_pasted();
+        Ok(InsertOutcome::Pasted {
+            chord: PasteChord::CmdV,
+            clipboard_restored: true,
+        })
+    }
+
+    fn press_enter(&mut self) -> Result<(), InsertError> {
+        self.0.enters.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn copy(&mut self, text: &str) -> Result<(), InsertError> {
+        self.0.copied.lock().unwrap().push(text.to_owned());
+        Ok(())
+    }
+}
+
+/// Keeps what a meeting would have recorded out of reach of the real devices.
+#[derive(Default)]
+pub struct FakeRoom {
+    pub started: AtomicUsize,
+    pub stopped: Arc<AtomicUsize>,
+    pub paths: Mutex<Vec<PathBuf>>,
+    pub refuse: AtomicBool,
+    pub clients: Mutex<Vec<MicClient>>,
+    pub playing: AtomicBool,
+    feed: Mutex<Option<Sender<MeetingEvent>>>,
+}
+
+impl FakeRoom {
+    pub fn send(&self, event: MeetingEvent) {
+        let feed = self.feed.lock().unwrap();
+        feed.as_ref().expect("a meeting is on").send(event).unwrap();
+    }
+}
+
+struct FakeTape {
+    events: Receiver<MeetingEvent>,
+    stopped: Arc<AtomicUsize>,
+}
+
+impl MeetingTape for FakeTape {
+    fn events(&self) -> &Receiver<MeetingEvent> {
+        &self.events
+    }
+
+    fn stop(self: Box<Self>) -> Result<(), String> {
+        self.stopped.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+impl MeetingRoom for FakeRoom {
+    fn record(&self, path: PathBuf, _ranking: Vec<String>) -> Result<Box<dyn MeetingTape>, String> {
+        if self.refuse.load(Ordering::SeqCst) {
+            return Err("the disk said no".into());
+        }
+        fs::write(&path, "pretend audio").unwrap();
+        self.paths.lock().unwrap().push(path);
+        self.started.fetch_add(1, Ordering::SeqCst);
+        let (feed, events) = mpsc::channel();
+        *self.feed.lock().unwrap() = Some(feed);
+        Ok(Box::new(FakeTape {
+            events,
+            stopped: Arc::clone(&self.stopped),
+        }))
+    }
+
+    fn mic_clients(&self) -> Vec<MicClient> {
+        self.clients.lock().unwrap().clone()
+    }
+
+    fn other_app_playing(&self) -> bool {
+        self.playing.load(Ordering::SeqCst)
+    }
+}
+
+pub struct FakeContext(pub Mutex<Context>);
+
+impl ContextSource for FakeContext {
+    fn read(&self, _depth: ContextDepth) -> Context {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+pub fn editor_context() -> Context {
+    Context {
+        app: Some(AppIdentity {
+            id: "com.example.Notes".into(),
+            name: None,
+            pid: None,
+        }),
+        window_title: None,
+        focus: Focus::Editable,
+        text: None,
+    }
+}
+
+/// Every id the catalog's tiers name, with placeholder files of the right size.
+pub fn install_models(root: &Path, catalog: &Catalog, ids: &[&str]) {
+    for id in ids {
+        let model = catalog.model(id).unwrap_or_else(|| panic!("no model {id}"));
+        let dir = root.join(id);
+        fs::create_dir_all(&dir).unwrap();
+        for file in &model.files {
+            let handle = fs::File::create(dir.join(&file.name)).unwrap();
+            handle.set_len(file.size).unwrap();
+        }
+    }
+}
+
+pub const PARAKEET: &str = "parakeet-tdt-0.6b-v3-int8";
+pub const WHISPER: &str = "whisper-small-q8_0";
+pub const SILERO: &str = "silero-vad-v5";
+pub const QWEN: &str = "qwen3-1.7b-q4_k_m";
+
+/// Rules only, on Parakeet with VAD, so most tests need no LLM.
+pub fn base_settings() -> Settings {
+    let mut settings = Settings {
+        shortcuts: Bindings::default_for(Platform::MacOs),
+        ..Settings::default()
+    };
+    settings.pipeline.tier = PipelineTier::Custom;
+    settings.pipeline.asr_model = Some(PARAKEET.to_owned());
+    settings.pipeline.vad_model = Some(SILERO.to_owned());
+    settings.pipeline.llm_model = None;
+    settings.pipeline.llm_cleanup = false;
+    settings.pipeline.keep_models_loaded = KeepModels::Always;
+    settings
+}
+
+/// One running flow, its fakes and everything it said.
+pub struct Rig {
+    pub dictation: Dictation,
+    pub mic: Arc<FakeMic>,
+    pub room: Arc<FakeRoom>,
+    pub probe: Arc<Probe>,
+    pub log: Arc<InsertLog>,
+    pub clock: Arc<FakeClock>,
+    pub context: Arc<FakeContext>,
+    pub events: Receiver<Event>,
+    pub data: TempDir,
+}
+
+impl Rig {
+    pub fn new(settings: Settings) -> Self {
+        Self::build(settings, &[PARAKEET, WHISPER, SILERO, QWEN])
+    }
+
+    pub fn build(settings: Settings, installed: &[&str]) -> Self {
+        let data = tempfile::tempdir().unwrap();
+        let models = data.path().join("models");
+        fs::create_dir_all(&models).unwrap();
+        let catalog = Arc::new(Catalog::bundled());
+        install_models(&models, &catalog, installed);
+        Self::with_models(settings, data, models)
+    }
+
+    pub fn with_models(settings: Settings, data: TempDir, models: PathBuf) -> Self {
+        let mic = Arc::new(FakeMic::default());
+        let room = Arc::new(FakeRoom::default());
+        let probe = Arc::new(Probe::default());
+        let log = Arc::new(InsertLog::default());
+        let clock = Arc::new(FakeClock::default());
+        let context = Arc::new(FakeContext(Mutex::new(editor_context())));
+        let (events_tx, events) = mpsc::channel();
+        let events_tx = Mutex::new(events_tx);
+        let insertion_log = Arc::clone(&log);
+        let dictation = Dictation::start(Parts {
+            settings,
+            catalog: Arc::new(Catalog::bundled()),
+            default_models: models,
+            history: data.path().join("history.sqlite3"),
+            meetings: data.path().join("meetings"),
+            microphone: Arc::clone(&mic) as Arc<dyn Microphone>,
+            meeting_room: Arc::clone(&room) as Arc<dyn MeetingRoom>,
+            engines: Arc::new(FakeEngines(Arc::clone(&probe))),
+            context: Arc::clone(&context) as Arc<dyn ContextSource + Send + Sync>,
+            insertion: Box::new(move || Box::new(FakeInsertion(insertion_log))),
+            clock: Arc::clone(&clock) as Arc<dyn Clock>,
+            on_event: Arc::new(move |event| {
+                let _ = events_tx.lock().unwrap().send(event);
+            }),
+        });
+        Self {
+            dictation,
+            mic,
+            room,
+            probe,
+            log,
+            clock,
+            context,
+            events,
+            data,
+        }
+    }
+
+    pub fn press(&self, key: Key) -> bool {
+        self.dictation.on_key(KeySignal::Key(KeyEvent::press(key)))
+    }
+
+    pub fn release(&self, key: Key) -> bool {
+        self.dictation
+            .on_key(KeySignal::Key(KeyEvent::release(key)))
+    }
+
+    /// Moves time on, as if the shortcut were held that long.
+    pub fn hold(&self, by: Duration) {
+        self.clock.advance(by);
+        self.dictation.poke();
+    }
+
+    /// Holds Fn, plays `clip`, and releases.
+    pub fn dictate(&self, clip: &AudioClip) {
+        self.press(FN);
+        self.mic.wait_open();
+        self.mic.play(clip);
+        self.clock.advance(clip.duration());
+        self.release(FN);
+    }
+
+    /// Waits for the event `pick` accepts, skipping the others.
+    pub fn wait_event<T>(&self, what: &str, mut pick: impl FnMut(Event) -> Option<T>) -> T {
+        let deadline = Instant::now() + WAIT;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let event = self
+                .events
+                .recv_timeout(left)
+                .unwrap_or_else(|_| panic!("no {what} in time"));
+            if let Some(found) = pick(event) {
+                return found;
+            }
+        }
+    }
+
+    pub fn wait_pill(&self, wanted: PillState) {
+        self.wait_event(&format!("pill {wanted:?}"), |event| {
+            (event == Event::Pill(wanted.clone())).then_some(())
+        });
+    }
+
+    pub fn wait_error(&self) -> String {
+        self.wait_event("an error", |event| match event {
+            Event::Pill(PillState::Error { reason }) => Some(reason),
+            _ => None,
+        })
+    }
+
+    pub fn wait_toast(&self) -> String {
+        self.wait_event("a toast", |event| match event {
+            Event::Toast(text) => Some(text),
+            _ => None,
+        })
+    }
+
+    pub fn wait_inserted(&self) {
+        self.wait_event("an insertion", |event| {
+            matches!(event, Event::Inserted(_)).then_some(())
+        });
+    }
+
+    pub fn inserted(&self) -> Vec<String> {
+        self.log.inserted.lock().unwrap().clone()
+    }
+
+    /// Lets everything queued so far run through the flow.
+    pub fn settle(&self) {
+        std::thread::sleep(Duration::from_millis(60));
+    }
+}
+
+pub fn wait_for(what: &str, mut condition: impl FnMut() -> bool) {
+    let deadline = Instant::now() + WAIT;
+    while !condition() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+pub fn around(before: &str) -> TextAround {
+    TextAround::new(before, "", "")
+}

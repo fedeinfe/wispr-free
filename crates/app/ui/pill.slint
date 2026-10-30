@@ -2,6 +2,32 @@
 // fits. All placement comes from wf_core::pill through the capsule-* properties, and the window
 // only catches the mouse while the cursor is over the capsule.
 
+component CardButton {
+    in property <string> label;
+    in property <brush> fill;
+    in property <brush> ink;
+    callback clicked();
+
+    height: 22px;
+
+    Rectangle {
+        border-radius: 6px;
+        background: touch.has-hover ? root.fill.brighter(25%) : root.fill;
+    }
+
+    Text {
+        text: root.label;
+        color: root.ink;
+        font-size: 11px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
 export enum PillLook { hidden, resting, ready, listening, locked, processing, error, meeting }
 
 component Bars {
@@ -64,13 +90,24 @@ export component PillWindow inherits Window {
     in property <string> tooltip;
     in property <[string]> recent-transcripts;
     in property <[string]> microphones;
+    // Device ids, in the order of `microphones`.
+    in property <[string]> microphone-ids;
     in property <[string]> languages;
     in property <[string]> pipeline-qualities;
+    in property <bool> card-shown;
+    in property <length> card-x;
+    in property <length> card-y;
+    in property <length> card-width;
+    in property <length> card-height;
+    // The meeting app the suggestion card names.
+    in property <string> card-app;
 
     callback pill-pressed();
     callback pill-released();
     callback cancel-clicked();
     callback stop-clicked();
+    callback take-notes();
+    callback decline-notes();
     callback paste-last();
     callback paste-recent(index: int);
     callback select-microphone(index: int);
@@ -79,6 +116,8 @@ export component PillWindow inherits Window {
     callback open-settings();
     callback hide-for-an-hour();
     callback quit();
+    // Other threads left something for the UI thread to collect.
+    callback events-arrived();
 
     title: "wispr-free pill";
     width: 320px;
@@ -222,6 +261,47 @@ export component PillWindow inherits Window {
             font-size: 12px;
             overflow: elide;
             vertical-alignment: center;
+        }
+    }
+
+    if root.card-shown: Rectangle {
+        x: root.card-x;
+        y: root.card-y;
+        width: root.card-width;
+        height: root.card-height;
+        border-radius: 10px;
+        background: #17161c;
+        border-width: 1px;
+        border-color: #ffffff33;
+
+        Text {
+            x: 10px;
+            y: 8px;
+            width: parent.width - 20px;
+            text: "Take notes for this \{root.card-app} meeting?";
+            color: #f4f1ea;
+            font-size: 12px;
+            overflow: elide;
+        }
+
+        take-notes-button := CardButton {
+            x: parent.width - self.width - 10px;
+            y: parent.height - self.height - 8px;
+            width: 76px;
+            label: "Take notes";
+            fill: #f4f1ea;
+            ink: #17161c;
+            clicked => { root.take-notes(); }
+        }
+
+        decline-notes-button := CardButton {
+            x: parent.width - self.width - 92px;
+            y: parent.height - self.height - 8px;
+            width: 62px;
+            label: "Not now";
+            fill: #ffffff24;
+            ink: #f4f1ea;
+            clicked => { root.decline-notes(); }
         }
     }
 }

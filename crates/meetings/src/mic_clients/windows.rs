@@ -15,6 +15,11 @@ use windows::core::{Interface, PWSTR, Result};
 
 use crate::MicClient;
 
+/// WASAPI loopback has no permission that could silence it.
+pub fn other_app_playing() -> bool {
+    false
+}
+
 pub fn mic_clients() -> Vec<MicClient> {
     match active_capture_sessions() {
         Ok(clients) => clients,

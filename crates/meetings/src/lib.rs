@@ -13,7 +13,7 @@ mod writer;
 
 pub use align::{Channel, StereoAligner, StereoFrame};
 pub use detect::{MeetingApp, MeetingDetector, MicClient, classify_client, parse_pw_dump};
-pub use mic_clients::mic_clients;
+pub use mic_clients::{mic_clients, other_app_playing};
 pub use reader::{MeetingAudio, read_meeting, repair_meeting};
 pub use recorder::{MeetingConfig, MeetingEvent, MeetingRecorder};
 pub use system_audio::SystemAudioBackend;

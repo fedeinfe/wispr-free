@@ -257,6 +257,9 @@ fn every_toggle_on_every_page_persists_across_a_restart() {
         (STYLE, "Add corrected words automatically", |s| {
             s.style.auto_add_corrections
         }),
+        (STYLE, "Say \"press enter\" to press Enter", |s| {
+            s.style.press_enter_command
+        }),
         (MEETINGS, "Suggest notes when a meeting starts", |s| {
             s.meetings.auto_detect
         }),

@@ -18,6 +18,15 @@ pub(crate) fn ydotool_args(chord: PasteChord) -> Vec<&'static str> {
     }
 }
 
+pub(crate) fn wtype_enter_args() -> Vec<&'static str> {
+    vec!["-k", "Return"]
+}
+
+/// KEY_ENTER 28.
+pub(crate) fn ydotool_enter_args() -> Vec<&'static str> {
+    vec!["key", "28:1", "28:0"]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -32,6 +41,12 @@ mod tests {
             wtype_args(PasteChord::ShiftInsert),
             ["-M", "shift", "-k", "Insert", "-m", "shift"]
         );
+    }
+
+    #[test]
+    fn enter_is_a_plain_key_press_on_both_tools() {
+        assert_eq!(wtype_enter_args(), ["-k", "Return"]);
+        assert_eq!(ydotool_enter_args(), ["key", "28:1", "28:0"]);
     }
 
     #[test]

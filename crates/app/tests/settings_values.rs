@@ -70,6 +70,7 @@ fn every_edited_setting_reaches_the_settings() {
     expected.style.email = Style::Casual;
     expected.style.other = Style::VeryCasual;
     expected.style.auto_add_corrections = false;
+    expected.style.press_enter_command = true;
     expected.meetings.auto_detect = true;
     expected.meetings.live_transcript = false;
     expected.meetings.refine_pass = false;

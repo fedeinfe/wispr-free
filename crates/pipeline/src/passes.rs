@@ -1,17 +1,9 @@
 //! Local passes (spec §3): the deterministic steps between cleanup and insertion. Each pass is a
 //! pure function, and [`local_passes`] runs them in order for one dictation.
 
-use crate::rules::capitalize;
+pub use wf_core::settings::{Replacement, Snippet, Style};
 
-/// Tone and punctuation preset for an app category. LLM cleanup applies a style by rewriting;
-/// [`apply_style`] does the mechanical part, so the style holds with the LLM off too.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Style {
-    Formal,
-    Casual,
-    VeryCasual,
-    Excited,
-}
+use crate::rules::capitalize;
 
 /// What the focused app is for, which picks its style (spec §3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,20 +12,6 @@ pub enum AppCategory {
     WorkMessages,
     Email,
     Other,
-}
-
-/// A user snippet: saying `trigger` writes `text`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Snippet {
-    pub trigger: String,
-    pub text: String,
-}
-
-/// A dictionary replacement: `wrong` is always written as `right`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Replacement {
-    pub wrong: String,
-    pub right: String,
 }
 
 /// Everything a dictation's local passes depend on.

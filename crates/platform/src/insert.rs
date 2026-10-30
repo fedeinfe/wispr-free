@@ -136,6 +136,8 @@ pub trait Clipboard {
 
 pub trait PasteKeys {
     fn send(&mut self, chord: PasteChord) -> Result<(), InsertError>;
+    /// Presses Enter, for the "press enter" voice command.
+    fn send_enter(&mut self) -> Result<(), InsertError>;
 }
 
 pub trait Sleep {
@@ -227,6 +229,16 @@ impl<C: Clipboard, K: PasteKeys, X: ContextSource, S: Sleep> Inserter<C, K, X, S
     }
 
     pub fn insert(&mut self, text: &str) -> Result<InsertOutcome, InsertError> {
+        self.insert_then(text, &mut || {})
+    }
+
+    /// [`Self::insert`], telling `on_pasted` the moment the keystroke is out, which is when the
+    /// user sees their text. The call itself goes on through the clipboard restore.
+    pub fn insert_then(
+        &mut self,
+        text: &str,
+        on_pasted: &mut dyn FnMut(),
+    ) -> Result<InsertOutcome, InsertError> {
         let context = self.context.read(ContextDepth::FocusOnly);
         if !accepts_paste(context.focus, context.app.as_ref()) {
             self.clipboard.write_text(text, false)?;
@@ -246,6 +258,7 @@ impl<C: Clipboard, K: PasteKeys, X: ContextSource, S: Sleep> Inserter<C, K, X, S
                 reason: CopyReason::PasteFailed(err.to_string()),
             });
         }
+        on_pasted();
         self.sleep.sleep(self.timings.restore_after);
         let clipboard_restored = match saved {
             Some(saved) if !self.clipboard.changed_since(mark) => {
@@ -257,6 +270,17 @@ impl<C: Clipboard, K: PasteKeys, X: ContextSource, S: Sleep> Inserter<C, K, X, S
             chord,
             clipboard_restored,
         })
+    }
+
+    /// Presses Enter in the focused app. Call it after [`Self::insert`], which returns once the
+    /// app has had time to read the clipboard, so the Enter can't overtake the paste.
+    pub fn press_enter(&mut self) -> Result<(), InsertError> {
+        self.keys.send_enter()
+    }
+
+    /// Leaves `text` on the clipboard for good, for copy last.
+    pub fn copy(&mut self, text: &str) -> Result<(), InsertError> {
+        self.clipboard.write_text(text, false).map(|_| ())
     }
 }
 

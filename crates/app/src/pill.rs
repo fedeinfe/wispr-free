@@ -29,8 +29,17 @@ const HIDDEN_POLL: Duration = Duration::from_millis(250);
 /// How often to re-read the screens and re-assert the stacking order.
 const DISPLAY_POLL: Duration = Duration::from_secs(1);
 const HIDE_DURATION: Duration = Duration::from_secs(60 * 60);
+const TOAST_DURATION: Duration = Duration::from_secs(4);
+/// How long a question stays up when nobody answers it.
+const CARD_SHOWN: Duration = Duration::from_secs(30);
+const MENU_LABEL_CHARS: usize = 48;
 
-const LANGUAGES: [&str; 3] = ["Auto-detect", "English", "Italiano"];
+/// The Language menu, with the code each entry stands for. Auto-detect has none.
+pub const LANGUAGES: [(&str, Option<&str>); 3] = [
+    ("Auto-detect", None),
+    ("English", Some("en")),
+    ("Italiano", Some("it")),
+];
 const PIPELINE_QUALITIES: [&str; 4] = ["Lite", "Balanced", "High", "Custom"];
 
 /// What the user asked for through the pill. Moving and hiding it are handled internally.
@@ -44,6 +53,7 @@ pub enum PillEvent {
     SelectMicrophone(usize),
     SelectLanguage(usize),
     SelectPipelineQuality(usize),
+    TakeNotes,
     OpenSettings,
     Quit,
 }
@@ -118,6 +128,8 @@ struct Core {
     pill: Pill,
     waveform: Waveform,
     prefs: Prefs,
+    toast: Option<(String, Instant)>,
+    card_until: Option<Instant>,
     displays: Vec<Display>,
     started: Instant,
     last_poll: Instant,
@@ -136,7 +148,7 @@ impl PillController {
 
         let bars = Rc::new(VecModel::from(vec![0.0; BARS]));
         ui.set_bars(ModelRc::from(bars.clone()));
-        ui.set_languages(string_model(LANGUAGES));
+        ui.set_languages(string_model(LANGUAGES.map(|(name, _)| name)));
         ui.set_pipeline_qualities(string_model(PIPELINE_QUALITIES));
 
         let now = Instant::now();
@@ -149,6 +161,8 @@ impl PillController {
                     pill: Pill::new(prefs.edge),
                     waveform: Waveform::new(),
                     prefs,
+                    toast: None,
+                    card_until: None,
                     displays: Vec::new(),
                     started: now,
                     last_poll: now,
@@ -202,13 +216,49 @@ impl PillController {
         self.inner.core.borrow_mut().prefs.sounds = sounds;
     }
 
-    /// The Show pill setting. A dictation in progress keeps its pill until the next one.
+    /// The Show pill setting.
     pub fn set_shown(&self, shown: bool) {
-        match self.state() {
-            PillState::Resting | PillState::Ready if !shown => self.set_state(PillState::Hidden),
-            PillState::Hidden if shown => self.set_state(PillState::Resting),
-            _ => {}
-        }
+        self.inner.core.borrow_mut().pill.set_turned_off(!shown);
+    }
+
+    /// A short message by the pill. It shows even with the pill hidden, because the text it is
+    /// about went somewhere the user can't see.
+    pub fn show_toast(&self, text: String) {
+        let until = Instant::now() + TOAST_DURATION;
+        self.inner.core.borrow_mut().toast = Some((text, until));
+    }
+
+    /// The Recent transcripts menu.
+    /// Asks whether to take notes for a meeting in `app`. The card goes away by itself.
+    pub fn suggest_meeting(&self, app: String) {
+        self.inner.ui.set_card_app(app.into());
+        let mut core = self.inner.core.borrow_mut();
+        core.pill.set_card(true);
+        core.card_until = Some(Instant::now() + CARD_SHOWN);
+    }
+
+    pub fn hide_card(&self) {
+        let mut core = self.inner.core.borrow_mut();
+        core.pill.set_card(false);
+        core.card_until = None;
+    }
+
+    pub fn set_recent(&self, transcripts: &[String]) {
+        let labels = transcripts.iter().map(|text| menu_label(text));
+        let labels: Vec<SharedString> = labels.collect();
+        let labels = ModelRc::from(Rc::new(VecModel::from(labels)));
+        self.inner.ui.set_recent_transcripts(labels);
+    }
+
+    /// The id of the device at `index` of the Microphone menu.
+    pub fn microphone_id(&self, index: usize) -> Option<String> {
+        let id = self.inner.ui.get_microphone_ids().row_data(index)?;
+        Some(id.to_string())
+    }
+
+    /// A weak handle other threads can use to reach the UI thread.
+    pub fn window(&self) -> slint::Weak<PillWindow> {
+        self.inner.ui.as_weak()
     }
 
     /// Latest level from the meter, 0.0..=1.0.
@@ -243,6 +293,13 @@ impl PillController {
         ui.on_hide_for_an_hour(move || this.inner.core.borrow_mut().pill.hide_for(HIDE_DURATION));
 
         ui.on_cancel_clicked(forward(PillEvent::Cancel));
+        let this = self.clone();
+        ui.on_take_notes(move || {
+            this.hide_card();
+            this.emit(PillEvent::TakeNotes);
+        });
+        let this = self.clone();
+        ui.on_decline_notes(move || this.hide_card());
         ui.on_stop_clicked(forward(PillEvent::Stop));
         ui.on_paste_last(forward(PillEvent::PasteLast));
         ui.on_open_settings(forward(PillEvent::OpenSettings));
@@ -253,19 +310,23 @@ impl PillController {
         ui.on_select_pipeline_quality(forward_index(PillEvent::SelectPipelineQuality));
     }
 
+    /// `handler` runs on the UI thread whenever another thread calls `invoke_events_arrived`.
+    pub fn on_events_arrived(&self, handler: impl FnMut() + 'static) {
+        self.inner.ui.on_events_arrived(handler);
+    }
+
     /// Fills the Microphone submenu without blocking the UI on device enumeration.
     fn load_microphones(&self) {
         let ui = self.inner.ui.as_weak();
         let spawned = std::thread::Builder::new()
             .name("pill-microphones".into())
             .spawn(move || {
-                let names: Vec<String> = CpalBackend::new()
-                    .devices()
-                    .into_iter()
-                    .map(|device| device.name)
-                    .collect();
+                let devices = CpalBackend::new().devices();
                 let _ = ui.upgrade_in_event_loop(move |ui| {
-                    ui.set_microphones(string_model(names.iter().map(String::as_str)));
+                    let names = devices.iter().map(|device| device.name.as_str());
+                    ui.set_microphones(string_model(names));
+                    let ids = devices.iter().map(|device| device.id.as_str());
+                    ui.set_microphone_ids(string_model(ids));
                 });
             });
         if let Err(err) = spawned {
@@ -352,7 +413,22 @@ impl PillController {
         ui.set_capsule_y(frame.capsule.y as f32);
         ui.set_capsule_width(frame.capsule.width as f32);
         ui.set_capsule_height(frame.capsule.height as f32);
-        ui.set_tooltip(frame.shown.tooltip().unwrap_or_default().into());
+        if core.card_until.is_some_and(|until| now >= until) {
+            core.card_until = None;
+            core.pill.set_card(false);
+        }
+        ui.set_card_shown(frame.card.is_some());
+        if let Some(card) = frame.card {
+            ui.set_card_x(card.x as f32);
+            ui.set_card_y(card.y as f32);
+            ui.set_card_width(card.width as f32);
+            ui.set_card_height(card.height as f32);
+        }
+        if core.toast.as_ref().is_some_and(|(_, until)| now >= *until) {
+            core.toast = None;
+        }
+        let toast = core.toast.as_ref().map(|(text, _)| text.as_str());
+        ui.set_tooltip(toast.or(frame.shown.tooltip()).unwrap_or_default().into());
         let bar_scale = frame.shown.bar_scale();
         if let Some(scale) = bar_scale {
             ui.set_bar_scale(scale);
@@ -362,7 +438,7 @@ impl PillController {
         }
 
         let poll = match frame.shown {
-            PillState::Hidden => HIDDEN_POLL,
+            PillState::Hidden if frame.card.is_none() => HIDDEN_POLL,
             _ if bar_scale.is_some() || frame.hit_test => FRAME_POLL,
             _ => CURSOR_POLL,
         };
@@ -401,6 +477,15 @@ fn look(state: &PillState) -> PillLook {
     }
 }
 
+/// One line of a transcript, short enough for a menu.
+fn menu_label(text: &str) -> SharedString {
+    let line = text.lines().next().unwrap_or_default();
+    match line.char_indices().nth(MENU_LABEL_CHARS) {
+        Some((end, _)) => format!("{}…", &line[..end]).into(),
+        None => line.into(),
+    }
+}
+
 fn string_model<'a>(items: impl IntoIterator<Item = &'a str>) -> ModelRc<SharedString> {
     let items: Vec<SharedString> = items.into_iter().map(SharedString::from).collect();
     ModelRc::from(Rc::new(VecModel::from(items)))
@@ -426,6 +511,11 @@ mod tests {
         ui.set_capsule_width(148.0);
         ui.set_capsule_height(32.0);
         ui.set_bars(ModelRc::from(Rc::new(VecModel::from(vec![0.5_f32; 10]))));
+        ui.set_card_shown(true);
+        ui.set_card_x(42.0);
+        ui.set_card_y(8.0);
+        ui.set_card_width(236.0);
+        ui.set_card_height(64.0);
 
         let fired = Rc::new(RefCell::new(Vec::new()));
         let log = |name: &'static str| {
@@ -436,6 +526,8 @@ mod tests {
         ui.on_pill_released(log("released"));
         ui.on_cancel_clicked(log("cancel"));
         ui.on_stop_clicked(log("stop"));
+        ui.on_take_notes(log("take notes"));
+        ui.on_decline_notes(log("not now"));
         (ui, fired)
     }
 
@@ -489,6 +581,14 @@ mod tests {
             ["cancel"]
         );
         assert_eq!(click(PillLook::Locked, "PillWindow::stop-button"), ["stop"]);
+        assert_eq!(
+            click(PillLook::Resting, "PillWindow::take-notes-button"),
+            ["take notes"]
+        );
+        assert_eq!(
+            click(PillLook::Resting, "PillWindow::decline-notes-button"),
+            ["not now"]
+        );
 
         let is_open = |look| {
             let (ui, fired) = right_press(look);

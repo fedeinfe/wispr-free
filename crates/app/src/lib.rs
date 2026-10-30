@@ -1,6 +1,7 @@
 //! The app: its windows and the wiring between them and the other crates.
 
 pub mod debug;
+pub mod dictation;
 pub mod memory;
 mod mic_levels;
 pub mod pill;

@@ -28,9 +28,13 @@ enum Event {
     Done(Result<String, PipelineError>),
 }
 
-struct Job {
-    prompt: LlmPrompt,
-    events: Sender<Event>,
+enum Job {
+    /// Load now, so the next generation doesn't pay for it.
+    WarmUp,
+    Generate {
+        prompt: LlmPrompt,
+        events: Sender<Event>,
+    },
 }
 
 /// A cheap, cloneable handle. The model lives until the idle timeout or the last handle drops.
@@ -50,6 +54,11 @@ impl LlmHost {
         thread::spawn(move || serve(queue, load, keep));
         Self { jobs }
     }
+
+    /// Starts loading the model and returns at once.
+    pub fn warm_up(&self) {
+        let _ = self.jobs.send(Job::WarmUp);
+    }
 }
 
 impl Llm for LlmHost {
@@ -59,7 +68,7 @@ impl Llm for LlmHost {
         on_token: &mut dyn FnMut(&str),
     ) -> Result<String, PipelineError> {
         let (events, replies) = mpsc::channel();
-        let job = Job {
+        let job = Job::Generate {
             prompt: prompt.clone(),
             events,
         };
@@ -92,6 +101,19 @@ fn stopped() -> PipelineError {
     PipelineError::Engine("the LLM host thread stopped".into())
 }
 
+fn load_once<'a, F>(
+    engine: &'a mut Option<Box<dyn Llm>>,
+    load: &mut F,
+) -> Result<&'a mut Box<dyn Llm>, PipelineError>
+where
+    F: FnMut() -> Result<Box<dyn Llm>, PipelineError>,
+{
+    match engine {
+        Some(loaded) => Ok(loaded),
+        None => Ok(engine.insert(load()?)),
+    }
+}
+
 fn serve<F>(queue: Receiver<Job>, mut load: F, keep: KeepLoaded)
 where
     F: FnMut() -> Result<Box<dyn Llm>, PipelineError>,
@@ -114,26 +136,31 @@ where
         };
 
         // Keep loading past a lapsed deadline: a slow load then serves the next caller.
-        if engine.is_none() {
-            match load() {
-                Ok(loaded) => engine = Some(loaded),
-                Err(error) => {
-                    let _ = job.events.send(Event::Done(Err(error)));
-                    continue;
+        let loaded = match load_once(&mut engine, &mut load) {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                if let Job::Generate { events, .. } = job {
+                    let _ = events.send(Event::Done(Err(error)));
                 }
+                continue;
             }
-        }
-        if job.prompt.deadline.is_some_and(|d| Instant::now() >= d) {
-            let _ = job.events.send(Event::Done(Err(PipelineError::Timeout)));
+        };
+        let Job::Generate { prompt, events } = job else {
+            continue;
+        };
+        if prompt.deadline.is_some_and(|d| Instant::now() >= d) {
+            let _ = events.send(Event::Done(Err(PipelineError::Timeout)));
             continue;
         }
-        if let Some(loaded) = &mut engine {
-            let events = &job.events;
-            let mut stream = |token: &str| {
-                let _ = events.send(Event::Token(token.to_owned()));
-            };
-            let result = loaded.generate(&job.prompt, &mut stream);
-            let _ = job.events.send(Event::Done(result));
+        let mut stream = |token: &str| {
+            let _ = events.send(Event::Token(token.to_owned()));
+        };
+        let result = loaded.generate(&prompt, &mut stream);
+        // An engine that died stays dead, so the next job loads a fresh one.
+        let keep_engine = !matches!(result, Err(PipelineError::Engine(_)));
+        let _ = events.send(Event::Done(result));
+        if !keep_engine {
+            engine = None;
         }
         if keep == KeepLoaded::UnloadAfterUse {
             engine = None;

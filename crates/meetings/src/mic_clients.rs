@@ -1,4 +1,5 @@
-//! Which processes are capturing from a microphone right now (spec §7).
+//! Which processes are capturing from a microphone right now (spec §7), and whether any other
+//! process is playing sound.
 
 use crate::MicClient;
 
@@ -6,6 +7,12 @@ use crate::MicClient;
 /// wouldn't say, so treat it only as "nothing to suggest".
 pub fn mic_clients() -> Vec<MicClient> {
     platform::mic_clients()
+}
+
+/// Whether another process is sending audio to an output. The macOS tap records silence without
+/// an error when its permission is denied, so silence is only suspicious while this is true.
+pub fn other_app_playing() -> bool {
+    platform::other_app_playing()
 }
 
 #[cfg(target_os = "macos")]
@@ -29,5 +36,10 @@ mod platform {
                 Vec::new()
             }
         }
+    }
+
+    /// PipeWire's monitor reports what it can, and a denied permission can't silence it.
+    pub fn other_app_playing() -> bool {
+        false
     }
 }

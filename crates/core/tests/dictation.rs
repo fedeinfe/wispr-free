@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use wf_core::dictation::{CancelReason, Command, DictationMachine, Mode};
-use wf_core::shortcut::{Bindings, Key, KeyEvent, Platform};
+use wf_core::shortcut::{Bindings, Combo, Key, KeyEvent, Platform};
 
 /// One scripted input at `t` milliseconds.
 #[derive(Clone, Copy)]
@@ -721,4 +721,74 @@ fn losing_the_key_stream_forgets_held_keys_and_ends_push_to_talk() {
         machine.on_pill(wf_core::dictation::PillInput::Stop, at(3_000)),
         [Command::StopAndInsert]
     );
+}
+
+fn machine() -> DictationMachine {
+    DictationMachine::new(Bindings::default_for(Platform::MacOs))
+}
+
+fn at(ms: u64) -> Duration {
+    Duration::from_millis(ms)
+}
+
+#[test]
+fn esc_cancels_processing_and_is_kept_from_the_focused_app() {
+    let mut machine = machine();
+    machine.on_key(KeyEvent::press(FN), at(0));
+    machine.on_key(KeyEvent::release(FN), at(800));
+    machine.set_processing(true);
+
+    let reaction = machine.on_key(KeyEvent::press(Key::Esc), at(900));
+
+    assert_eq!(reaction.commands, [Command::Cancel(CancelReason::User)]);
+    assert!(reaction.swallow);
+    assert!(machine.on_key(KeyEvent::release(Key::Esc), at(950)).swallow);
+}
+
+#[test]
+fn esc_passes_through_once_processing_is_over() {
+    let mut machine = machine();
+    machine.set_processing(true);
+    machine.set_processing(false);
+
+    let reaction = machine.on_key(KeyEvent::press(Key::Esc), at(0));
+
+    assert_eq!(reaction, Default::default());
+}
+
+#[test]
+fn a_new_dictation_can_start_while_the_last_one_is_processing() {
+    let mut machine = machine();
+    machine.set_processing(true);
+
+    let reaction = machine.on_key(KeyEvent::press(FN), at(0));
+
+    assert_eq!(reaction.commands, [Command::Start(Mode::PushToTalk)]);
+}
+
+#[test]
+fn new_bindings_apply_to_the_next_press() {
+    let mut machine = machine();
+    let mut bindings = Bindings::default_for(Platform::MacOs);
+    bindings.push_to_talk = Combo::new([Key::F(13)]);
+
+    machine.set_bindings(bindings);
+
+    assert_eq!(machine.on_key(KeyEvent::press(FN), at(0)).commands, []);
+    machine.on_key(KeyEvent::release(FN), at(10));
+    assert_eq!(
+        machine.on_key(KeyEvent::press(Key::F(13)), at(20)).commands,
+        [Command::Start(Mode::PushToTalk)]
+    );
+}
+
+#[test]
+fn abandon_ends_a_dictation_without_a_command() {
+    let mut machine = machine();
+    machine.on_key(KeyEvent::press(FN), at(0));
+
+    machine.abandon();
+
+    assert_eq!(machine.next_deadline(), None);
+    assert_eq!(machine.on_key(KeyEvent::release(FN), at(800)).commands, []);
 }

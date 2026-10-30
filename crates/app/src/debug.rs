@@ -1,20 +1,89 @@
-//! Lets every pill state be reached by hand until the dictation pipeline drives it: the tray's
-//! "Debug pill" menu (always in debug builds, with `--debug-pill` in release), `--pill-state`,
-//! and a stand-in for the dictation flow behind the pill's own buttons.
+//! Lets every pill state be reached by hand: the tray's "Debug pill" menu (always in debug builds,
+//! with `--debug-pill` in release) and `--pill-state`. `--probe-clip` runs the whole app on a
+//! recording instead of the mic and keyboard.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::io::{BufRead, stdin};
+use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use slint::{Timer, TimerMode};
+use wf_core::audio::AudioClip;
+use wf_core::dictation::PillInput;
 use wf_core::pill::{PillState, Sound};
+use wf_dictation::probe::{ClipMicrophone, NoContext, TextLog, read_wav};
+use wf_dictation::{Dictation, Parts};
 
 use crate::mic_levels::MicLevels;
-use crate::pill::{PillController, PillEvent};
+use crate::pill::PillController;
 use crate::{PillLook, Tray};
 
 const LEVEL_POLL: Duration = Duration::from_millis(150);
-const PROCESSING_TIME: Duration = Duration::from_millis(1500);
+const PROBE_POLL: Duration = Duration::from_millis(5);
+
+/// The app with a recording for a mic and a log for the focused app, so it can be measured beside
+/// someone working: it opens no device, watches no keys and pastes nowhere. Each `dictate` on stdin
+/// dictates the recording once and prints the text. `quit` or the end of stdin quits.
+pub struct ClipRun {
+    clip: AudioClip,
+    microphone: Arc<ClipMicrophone>,
+    log: TextLog,
+}
+
+impl ClipRun {
+    /// Parses `--probe-clip=<16 kHz mono WAV>`.
+    pub fn from_args(args: &[String]) -> Option<Self> {
+        let path = args
+            .iter()
+            .find_map(|arg| arg.strip_prefix("--probe-clip="))?;
+        let clip = read_wav(Path::new(path)).expect("the probe clip is readable");
+        Some(Self {
+            microphone: Arc::new(ClipMicrophone::new(clip.clone(), true)),
+            clip,
+            log: TextLog::default(),
+        })
+    }
+
+    pub fn fit(&self, parts: &mut Parts) {
+        let log = self.log.clone();
+        parts.microphone = Arc::clone(&self.microphone) as _;
+        parts.context = Arc::new(NoContext);
+        parts.insertion = Box::new(move || Box::new(log));
+    }
+
+    pub fn drive(self, flow: Dictation) {
+        thread::spawn(move || {
+            println!("ready");
+            for line in stdin().lock().lines().map_while(Result::ok) {
+                match line.as_str() {
+                    "dictate" => println!("inserted: {}", self.dictate(&flow)),
+                    "quit" => break,
+                    _ => {}
+                }
+            }
+            let _ = slint::quit_event_loop();
+        });
+    }
+
+    fn dictate(&self, flow: &Dictation) -> String {
+        let before = self.log.texts().len();
+        self.microphone.set_clip(self.clip.clone());
+        flow.on_pill(PillInput::Click);
+        while !self.microphone.played() {
+            thread::sleep(PROBE_POLL);
+        }
+        flow.on_pill(PillInput::Stop);
+        loop {
+            if let Some(text) = self.log.texts().get(before) {
+                return text.clone();
+            }
+            thread::sleep(PROBE_POLL);
+        }
+    }
+}
 
 /// Parses `--pill-state=<name>`.
 pub fn state_from_args(args: impl Iterator<Item = String>) -> Option<PillState> {
@@ -54,13 +123,18 @@ fn state_for(look: PillLook) -> PillState {
     }
 }
 
-/// Connects the tray's debug menu and starts feeding the waveform a made-up level, or the real
-/// one once "Use real mic level" is chosen.
+/// Connects the tray's debug menu. Once a state is picked by hand the waveform gets a made-up
+/// level, or the real one once "Use real mic level" is chosen.
 pub fn install(tray: &Tray, pill: &PillController) {
     tray.set_debug_menu(true);
 
     let controller = pill.clone();
-    tray.on_debug_state(move |look| controller.set_state(state_for(look)));
+    let driving = Rc::new(Cell::new(false));
+    let picked = driving.clone();
+    tray.on_debug_state(move |look| {
+        picked.set(true);
+        controller.set_state(state_for(look));
+    });
 
     let controller = pill.clone();
     tray.on_debug_sound(move |name| {
@@ -83,6 +157,9 @@ pub fn install(tray: &Tray, pill: &PillController) {
     let started = Instant::now();
     let levels = Timer::default();
     levels.start(TimerMode::Repeated, LEVEL_POLL, move || {
+        if !driving.get() {
+            return;
+        }
         let level = mic.borrow().as_ref().map_or_else(
             || made_up_level(started.elapsed().as_secs_f32()),
             MicLevels::level,
@@ -98,32 +175,6 @@ fn made_up_level(seconds: f32) -> f32 {
     let phrase = (seconds * 1.3).sin().abs();
     let syllables = 0.6 + 0.4 * (seconds * 7.0).sin();
     phrase * syllables
-}
-
-/// Plays the part of the dictation pipeline, which does not exist yet.
-pub fn handle_event(pill: &PillController, event: PillEvent) {
-    match event {
-        PillEvent::ToggleHandsFree => pill.set_state(PillState::ListeningHandsFree),
-        PillEvent::Cancel => pill.set_state(PillState::Resting),
-        PillEvent::Stop => {
-            pill.set_state(PillState::Processing);
-            let pill = pill.clone();
-            Timer::single_shot(PROCESSING_TIME, move || {
-                if pill.state() == PillState::Processing {
-                    pill.set_state(PillState::Resting);
-                }
-            });
-        }
-        PillEvent::Quit => {
-            let _ = slint::quit_event_loop();
-        }
-        PillEvent::PasteLast
-        | PillEvent::PasteRecent(_)
-        | PillEvent::SelectMicrophone(_)
-        | PillEvent::SelectLanguage(_)
-        | PillEvent::SelectPipelineQuality(_)
-        | PillEvent::OpenSettings => eprintln!("pill menu: {event:?} is not wired up yet"),
-    }
 }
 
 #[cfg(test)]

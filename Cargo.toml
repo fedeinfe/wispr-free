@@ -21,6 +21,7 @@ wf-pipeline = { path = "crates/pipeline" }
 wf-platform = { path = "crates/platform" }
 wf-models = { path = "crates/models" }
 wf-history = { path = "crates/history" }
+wf-dictation = { path = "crates/dictation" }
 wf-meetings = { path = "crates/meetings" }
 
 # UI

@@ -16,6 +16,7 @@ enum Event {
     Snapshot,
     Write { text: String, transient: bool },
     Paste(PasteChord),
+    Enter,
     Sleep(Duration),
     Restore(ClipboardSnapshot),
 }
@@ -73,6 +74,13 @@ impl PasteKeys for FakeKeys {
             return Err(InsertError::PermissionDenied);
         }
         self.log.borrow_mut().push(Event::Paste(chord));
+        Ok(())
+    }
+    fn send_enter(&mut self) -> Result<(), InsertError> {
+        if self.denied {
+            return Err(InsertError::PermissionDenied);
+        }
+        self.log.borrow_mut().push(Event::Enter);
         Ok(())
     }
 }
@@ -368,4 +376,43 @@ fn the_system_inserter_can_move_to_a_worker_thread() {
     fn assert_send<T: Send>() {}
 
     assert_send::<SystemInserter>();
+}
+
+#[test]
+fn enter_follows_the_paste_once_insert_has_returned() {
+    let (mut inserter, log) = inserter(Os::MacOs, "com.apple.TextEdit", Focus::Editable);
+
+    inserter.insert("hello").unwrap();
+    inserter.press_enter().unwrap();
+
+    assert_eq!(log.borrow().last(), Some(&Event::Enter));
+}
+
+#[test]
+fn enter_reports_a_refused_keystroke() {
+    let faults = Faults {
+        keys_denied: true,
+        ..Faults::default()
+    };
+    let (mut inserter, ..) = build(Os::MacOs, "com.apple.TextEdit", Focus::Editable, faults);
+
+    assert!(matches!(
+        inserter.press_enter(),
+        Err(InsertError::PermissionDenied)
+    ));
+}
+
+#[test]
+fn copy_leaves_the_text_for_clipboard_managers_to_see() {
+    let (mut inserter, log) = inserter(Os::MacOs, "com.apple.TextEdit", Focus::Nothing);
+
+    inserter.copy("hello").unwrap();
+
+    assert_eq!(
+        *log.borrow(),
+        [Event::Write {
+            text: "hello".into(),
+            transient: false,
+        }]
+    );
 }

@@ -111,6 +111,7 @@ pub enum PipelineTier {
     Custom,
 }
 
+/// How far LLM cleanup may depart from the spoken words.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CleanupStrength {
@@ -142,6 +143,8 @@ pub struct StyleSettings {
     pub replacements: Vec<Replacement>,
     pub snippets: Vec<Snippet>,
     pub auto_add_corrections: bool,
+    /// Saying "press enter" at the end of a dictation presses Enter.
+    pub press_enter_command: bool,
 }
 
 impl Default for StyleSettings {
@@ -155,10 +158,13 @@ impl Default for StyleSettings {
             replacements: Vec::new(),
             snippets: Vec::new(),
             auto_add_corrections: true,
+            press_enter_command: false,
         }
     }
 }
 
+/// Tone and punctuation preset for an app category. LLM cleanup applies a style by rewriting;
+/// `wf_pipeline::passes::apply_style` does the mechanical part, so it holds with the LLM off too.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Style {
@@ -168,12 +174,14 @@ pub enum Style {
     Excited,
 }
 
+/// A dictionary replacement: `wrong` is always written as `right`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Replacement {
     pub wrong: String,
     pub right: String,
 }
 
+/// A user snippet: saying `trigger` writes `text`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snippet {
     pub trigger: String,
@@ -254,7 +262,9 @@ impl Default for Privacy {
 pub enum HistoryRetention {
     #[default]
     Keep,
+    /// Entries are deleted once they are 24 hours old.
     Delete24h,
+    /// Nothing reaches the disk.
     Never,
 }
 

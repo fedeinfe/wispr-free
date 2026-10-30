@@ -4,7 +4,7 @@ use std::mem::size_of;
 
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
-    KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_INSERT, VK_SHIFT, VK_V,
+    KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_INSERT, VK_RETURN, VK_SHIFT, VK_V,
 };
 
 use super::{InsertError, PasteChord, PasteKeys};
@@ -24,15 +24,26 @@ impl PasteKeys for SystemPasteKeys {
             key_input(key, extended | KEYEVENTF_KEYUP),
             key_input(modifier, KEYEVENTF_KEYUP),
         ];
-        let sent = unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
-        if sent as usize == inputs.len() {
-            Ok(())
-        } else {
-            Err(InsertError::Keystroke(format!(
-                "SendInput sent {sent} of {} events",
-                inputs.len()
-            )))
-        }
+        send_inputs(&inputs)
+    }
+
+    fn send_enter(&mut self) -> Result<(), InsertError> {
+        send_inputs(&[
+            key_input(VK_RETURN, KEYBD_EVENT_FLAGS(0)),
+            key_input(VK_RETURN, KEYEVENTF_KEYUP),
+        ])
+    }
+}
+
+fn send_inputs(inputs: &[INPUT]) -> Result<(), InsertError> {
+    let sent = unsafe { SendInput(inputs, size_of::<INPUT>() as i32) };
+    if sent as usize == inputs.len() {
+        Ok(())
+    } else {
+        Err(InsertError::Keystroke(format!(
+            "SendInput sent {sent} of {} events",
+            inputs.len()
+        )))
     }
 }
 

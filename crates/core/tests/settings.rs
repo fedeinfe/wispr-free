@@ -64,6 +64,7 @@ fn every_setting_changed() -> Settings {
         text: "Via Roma 1\nMilano".into(),
     }];
     style.auto_add_corrections = false;
+    style.press_enter_command = true;
 
     let meetings = &mut settings.meetings;
     meetings.auto_detect = true;

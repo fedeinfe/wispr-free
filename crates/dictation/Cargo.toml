@@ -1,0 +1,27 @@
+[package]
+name = "wf-dictation"
+description = "The dictation flow, from shortcut to inserted text. No UI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+wf-core.workspace = true
+wf-audio.workspace = true
+wf-pipeline = { workspace = true, features = ["silero", "whisper", "sherpa", "llama"] }
+wf-platform.workspace = true
+wf-models.workspace = true
+wf-history.workspace = true
+wf-meetings.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# Whisper needs this for the GPU. Windows and Linux stay on the CPU until they get a Vulkan build.
+[target.'cfg(target_os = "macos")'.dependencies]
+wf-pipeline = { workspace = true, features = ["metal"] }
+
+[dev-dependencies]
+tempfile.workspace = true

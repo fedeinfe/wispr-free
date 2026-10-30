@@ -4,21 +4,13 @@
 
 use std::time::{Duration, Instant};
 
+pub use wf_core::settings::CleanupStrength;
+
 use crate::passes::Style;
 use crate::{Llm, LlmPrompt, PipelineError, rules};
 
 /// The middle of the spec's 2–3 s window.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_millis(2500);
-
-/// How far LLM cleanup may depart from the spoken words.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CleanupStrength {
-    None,
-    #[default]
-    Light,
-    Medium,
-    High,
-}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CleanupRequest<'a> {

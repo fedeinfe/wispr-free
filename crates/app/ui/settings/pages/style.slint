@@ -87,6 +87,12 @@ export component StylePage inherits Page {
             label: "Add corrected words automatically";
             checked <=> Prefs.values.auto-add-corrections;
         }
+
+        ToggleRow {
+            label: "Say \"press enter\" to press Enter";
+            hint: "At the end of a dictation.";
+            checked <=> Prefs.values.press-enter-command;
+        }
     }
 
     Card {

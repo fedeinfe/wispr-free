@@ -1,8 +1,10 @@
 import { PillLook } from "pill.slint";
 
-// The always-present tray icon. Later tickets add Meetings and pill toggles here.
+// The always-present tray icon. Later tickets add pill toggles here.
 export component Tray inherits SystemTrayIcon {
     in property <bool> debug-menu;
+    in property <bool> in-meeting;
+    callback toggle-meeting();
     callback open-settings();
     callback quit();
     callback debug-state(PillLook);
@@ -15,6 +17,10 @@ export component Tray inherits SystemTrayIcon {
     tooltip: "wispr-free";
 
     Menu {
+        MenuItem {
+            title: root.in-meeting ? "Stop meeting notes" : "Start meeting notes";
+            activated => { root.toggle-meeting(); }
+        }
         if root.debug-menu: Menu {
             title: "Debug pill";
             MenuItem {

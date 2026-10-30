@@ -23,6 +23,7 @@ export struct SettingsValues {
     style-email: int,
     style-other: int,
     auto-add-corrections: bool,
+    press-enter-command: bool,
     meeting-auto-detect: bool,
     meeting-live-transcript: bool,
     meeting-refine-pass: bool,
@@ -81,6 +82,8 @@ export struct ModelRow {
 }
 
 export global Prefs {
+    // The ASR engine needs VAD, so the setting doesn't apply.
+    in property <bool> vad-forced;
     in-out property <SettingsValues> values;
     // Saves `values`. Every control that edits them calls this.
     callback commit();

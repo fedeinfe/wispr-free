@@ -43,4 +43,4 @@ Refinements made while verifying:
 | llama.cpp shared | works | links, llama.cpp aborts | not tested |
 | llama.cpp shared + `.cargo/config.toml` | **works** | **works** | not tested |
 
-"Works" means real inference through whisper.cpp, llama.cpp and sherpa-onnx in one process, in both orders, with text output checked. Windows is the open risk: `ggml.lib` would exist both as a static library and as an import library, so check it the first time Windows builds both engines. If the shared library ever stops being enough, the fallback is running llama.cpp in a helper process.
+"Works" means real inference through whisper.cpp, llama.cpp and sherpa-onnx in one process, in both orders, with text output checked. Windows is the open risk: `ggml.lib` would exist both as a static library and as an import library, so check it the first time Windows builds both engines. If the shared library ever stops being enough, the fallback is running llama.cpp in a helper process. ADR-0005 later put every engine in its own process at run time, for memory reasons, but they still link into one binary.

@@ -342,6 +342,83 @@ fn a_dictation_during_hide_for_stays_hidden_but_keeps_its_state() {
 }
 
 #[test]
+fn with_the_pill_turned_off_a_dictation_stays_hidden_and_keeps_its_cues() {
+    let mut h = Harness::new(Edge::Bottom);
+    h.away();
+    h.pill.set_turned_off(true);
+
+    assert_eq!(
+        h.pill.set_state(PillState::ListeningPtt),
+        Some(Sound::Start)
+    );
+    assert_eq!(h.away().shown, PillState::Hidden);
+    assert_eq!(h.pill.state(), &PillState::ListeningPtt);
+
+    h.pill.set_turned_off(false);
+    assert_eq!(h.away().shown, PillState::ListeningPtt);
+}
+
+#[test]
+fn with_the_pill_turned_off_an_error_still_shows() {
+    let mut h = Harness::new(Edge::Bottom);
+    h.away();
+    h.pill.set_turned_off(true);
+    let error = PillState::Error {
+        reason: "No microphone found".into(),
+    };
+
+    h.pill.set_state(error.clone());
+
+    assert_eq!(h.away().shown, error);
+}
+
+#[test]
+fn the_suggestion_card_fits_the_window_on_every_edge_and_clears_the_capsule() {
+    for edge in [Edge::Bottom, Edge::Left, Edge::Right] {
+        let mut h = Harness::new(edge);
+        h.pill.set_state(PillState::Meeting);
+        h.pill.set_card(true);
+
+        let frame = h.away();
+
+        let card = frame.card.expect("the card is up");
+        assert!(card.x >= 0.0 && card.y >= 0.0, "{edge:?}");
+        assert!(card.x + card.width <= WINDOW_SIZE.width, "{edge:?}");
+        assert!(card.y + card.height <= WINDOW_SIZE.height, "{edge:?}");
+        let capsule = frame.capsule;
+        let apart = card.x + card.width <= capsule.x
+            || capsule.x + capsule.width <= card.x
+            || card.y + card.height <= capsule.y
+            || capsule.y + capsule.height <= card.y;
+        assert!(apart, "{edge:?}");
+    }
+}
+
+#[test]
+fn the_card_catches_the_mouse_only_while_it_is_up() {
+    let mut h = Harness::new(Edge::Bottom);
+    h.away();
+    h.pill.set_card(true);
+    let card = h.away().card.unwrap();
+    let origin = h.pill.origin();
+    let over = (origin.x + card.x + 5.0, origin.y + card.y + 5.0);
+
+    assert!(h.cursor(over.0, over.1).hit_test);
+
+    h.pill.set_card(false);
+    assert!(!h.cursor(over.0, over.1).hit_test);
+}
+
+#[test]
+fn the_card_shows_with_the_pill_turned_off() {
+    let mut h = Harness::new(Edge::Bottom);
+    h.pill.set_turned_off(true);
+    h.pill.set_card(true);
+
+    assert!(h.away().card.is_some());
+}
+
+#[test]
 fn capsules_grow_from_resting_to_hands_free() {
     let width = |state: PillState| state.capsule_size(Edge::Bottom).width;
     assert!(width(PillState::Resting) < width(PillState::Ready));

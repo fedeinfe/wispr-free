@@ -214,6 +214,19 @@ const CASES: &[(Option<&str>, &str, &str)] = &[
     // Regional tags pick the base language; no or an unknown language uses every list.
     (Some("en-US"), "uh yes", "Yes."),
     (None, "um ehm the the plan works", "The plan works."),
+    // Whisper writes a spoken "uh" as "ah", so it goes when set off by punctuation, and stays as
+    // a word ("ah ha", "the ah of it"). An opening "Ah," is set off too, a cost worth paying.
+    (
+        Some("en"),
+        "so I think we should, ah, ship it",
+        "So I think we should ship it.",
+    ),
+    (
+        Some("en"),
+        "ah, I see what you mean",
+        "I see what you mean.",
+    ),
+    (Some("en"), "the ah moment", "The ah moment."),
     (Some("de"), "Ehm, das das ist gut.", "Das ist gut."),
     // Empty and whitespace-only input stays empty.
     (Some("en"), "", ""),
