@@ -5573,6 +5573,13 @@ dependencies = [
 [[package]]
 name = "wf-core"
 version = "0.1.0"
+dependencies = [
+ "directories",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml",
+]
 
 [[package]]
 name = "wf-meetings"
