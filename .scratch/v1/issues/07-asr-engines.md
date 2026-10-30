@@ -41,7 +41,7 @@ Needs a decision:
 Not verified / needs human verification:
 - **Real microphone audio.** Everything ran on recordings. The Parakeet penalty and the silence filter are tuned on LibriVox speech and synthetic room tone; real rooms are the likely place for them to be wrong. The margin is narrow: at 4.5 Parakeet invents text on room tone.
 - **Windows**: nothing has run there, and whether the shared-library fix links is unknown (`ggml.lib` would exist both as a static and an import library). Linux x86_64, CUDA and Vulkan were never built.
-- CI doesn't build any engine feature, so a break in them won't show up there. Adding `--features whisper,sherpa` would also download models' native libraries at build time, so that was left for a human to decide.
+- CI doesn't build any engine feature, so a break in them won't show up there. Adding `--features whisper,sherpa` would compile whisper.cpp and fetch sherpa-onnx's prebuilt libraries on every run, so that was left for a human to decide.
 - Accuracy numbers use Whisper as the reference, not a human transcript, so they are relative. Ticket 14 should measure real WER.
 - `blank_penalty` can add a stray word or two at the end of a clip (`speech_en.wav` ends "… M. D., by the"). Whisper is unaffected.
 - Mixed-language speech within one chunk loses text on both engines. Tested only on an artificial clip.
