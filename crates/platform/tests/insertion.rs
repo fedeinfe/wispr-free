@@ -8,7 +8,7 @@ use std::time::Duration;
 use wf_platform::context::{AppIdentity, Context, ContextDepth, ContextSource, Focus};
 use wf_platform::insert::{
     ChangeMark, Clipboard, ClipboardItem, ClipboardSnapshot, CopyReason, InsertError,
-    InsertOutcome, Inserter, Os, PasteChord, PasteKeys, Sleep, Timings,
+    InsertOutcome, Inserter, Os, PasteChord, PasteKeys, Sleep, SystemInserter, Timings,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -48,7 +48,7 @@ impl Clipboard for FakeClipboard {
         self.changes += 1;
         Ok(ChangeMark(self.changes))
     }
-    fn changed_since(&self, mark: ChangeMark) -> bool {
+    fn changed_since(&mut self, mark: ChangeMark) -> bool {
         self.user_copied.get() || self.changes != mark.0
     }
     fn restore(&mut self, snapshot: ClipboardSnapshot) -> Result<(), InsertError> {
@@ -361,4 +361,11 @@ fn a_failed_restore_still_reports_the_paste() {
             clipboard_restored: false
         }
     );
+}
+
+#[test]
+fn the_system_inserter_can_move_to_a_worker_thread() {
+    fn assert_send<T: Send>() {}
+
+    assert_send::<SystemInserter>();
 }

@@ -5,6 +5,10 @@ use std::ops::Range;
 
 #[cfg(any(target_os = "macos", test))]
 mod ax_role;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::{SystemContext, accessibility_trusted};
 
 /// Who has keyboard focus. `id` is the bundle id (macOS), executable name (Windows) or
 /// WM_CLASS / app name (Linux).

@@ -3,7 +3,16 @@
 
 use std::time::Duration;
 
-use crate::context::{AppIdentity, ContextDepth, ContextSource, Focus};
+use crate::context::{AppIdentity, ContextDepth, ContextSource, Focus, SystemContext};
+
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::{SystemClipboard, SystemPasteKeys};
+
+/// Tags the synthetic paste keystroke so the global key capture (ticket 03) can ignore it:
+/// `kCGEventSourceUserData` on macOS, `dwExtraInfo` on Windows.
+pub const SYNTHETIC_EVENT_MARKER: i64 = 0x7766_7073; // "wfps"
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Os {
@@ -111,7 +120,7 @@ pub trait Clipboard {
     /// Writes plain text; `transient` flags it so clipboard managers skip it.
     fn write_text(&mut self, text: &str, transient: bool) -> Result<ChangeMark, InsertError>;
     /// True when something else was copied after the write that returned `mark`.
-    fn changed_since(&self, mark: ChangeMark) -> bool;
+    fn changed_since(&mut self, mark: ChangeMark) -> bool;
     fn restore(&mut self, snapshot: ClipboardSnapshot) -> Result<(), InsertError>;
 }
 
@@ -156,6 +165,33 @@ fn accepts_paste(focus: Focus, app: Option<&AppIdentity>) -> bool {
         Focus::Editable | Focus::Secure | Focus::Unknown => true,
         Focus::NotEditable => app.is_some_and(is_terminal),
         Focus::Nothing => false,
+    }
+}
+
+/// The real clock.
+pub struct ThreadSleep;
+
+impl Sleep for ThreadSleep {
+    fn sleep(&mut self, duration: Duration) {
+        std::thread::sleep(duration);
+    }
+}
+
+impl Os {
+    #[cfg(target_os = "macos")]
+    pub const CURRENT: Os = Os::MacOs;
+    #[cfg(target_os = "windows")]
+    pub const CURRENT: Os = Os::Windows;
+    #[cfg(target_os = "linux")]
+    pub const CURRENT: Os = Os::Linux;
+}
+
+impl Default for Timings {
+    fn default() -> Self {
+        Self {
+            settle: Duration::from_millis(20),
+            restore_after: Duration::from_millis(500),
+        }
     }
 }
 
@@ -211,5 +247,22 @@ impl<C: Clipboard, K: PasteKeys, X: ContextSource, S: Sleep> Inserter<C, K, X, S
             chord,
             clipboard_restored,
         })
+    }
+}
+
+/// The real thing. [`Inserter::insert`] blocks through the restore delay, so call it from a
+/// worker thread, not the UI thread.
+pub type SystemInserter = Inserter<SystemClipboard, SystemPasteKeys, SystemContext, ThreadSleep>;
+
+impl SystemInserter {
+    pub fn system() -> Self {
+        Self::new(
+            SystemClipboard,
+            SystemPasteKeys,
+            SystemContext,
+            ThreadSleep,
+            Os::CURRENT,
+            Timings::default(),
+        )
     }
 }

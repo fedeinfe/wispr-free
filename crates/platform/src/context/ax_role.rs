@@ -81,7 +81,14 @@ mod tests {
 
     #[test]
     fn plain_controls_are_not_editable() {
-        for role in ["AXButton", "AXList", "AXTable", "AXOutline", "AXCheckBox", "AXLink"] {
+        for role in [
+            "AXButton",
+            "AXList",
+            "AXTable",
+            "AXOutline",
+            "AXCheckBox",
+            "AXLink",
+        ] {
             assert_eq!(focus(role, None, false), Focus::NotEditable, "{role}");
         }
     }
@@ -89,7 +96,13 @@ mod tests {
     #[test]
     fn containers_that_may_host_custom_text_views_stay_unknown() {
         // Electron/Chromium content and terminals often report these; they still get the paste.
-        for role in ["AXWebArea", "AXGroup", "AXScrollArea", "AXWindow", "AXUnknown"] {
+        for role in [
+            "AXWebArea",
+            "AXGroup",
+            "AXScrollArea",
+            "AXWindow",
+            "AXUnknown",
+        ] {
             assert_eq!(focus(role, None, false), Focus::Unknown, "{role}");
         }
     }
