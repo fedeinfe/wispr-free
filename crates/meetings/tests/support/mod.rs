@@ -105,10 +105,12 @@ impl Diarizer for BrokenDiarizer {
     }
 }
 
+type Reply = Box<dyn FnMut(&LlmPrompt) -> Result<String, PipelineError> + Send>;
+
 /// Replies through a function and keeps every prompt it was given.
 #[derive(Clone)]
 pub struct ScriptedLlm {
-    reply: Arc<Mutex<Box<dyn FnMut(&LlmPrompt) -> Result<String, PipelineError> + Send>>>,
+    reply: Arc<Mutex<Reply>>,
     pub prompts: Arc<Mutex<Vec<LlmPrompt>>>,
 }
 

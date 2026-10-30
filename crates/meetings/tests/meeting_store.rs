@@ -323,7 +323,7 @@ fn recovery_finishes_an_interrupted_recording() {
 
     let recovered = store.recover().unwrap();
 
-    assert_eq!(recovered, [id.clone()]);
+    assert_eq!(recovered, std::slice::from_ref(&id));
     let meeting = store.open(&id).unwrap();
     assert!(!meeting.is_recording());
     assert!(meeting.length() >= Duration::from_secs(3));
