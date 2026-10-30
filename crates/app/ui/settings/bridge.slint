@@ -1,0 +1,151 @@
+// What Rust and the Settings pages share. Rust fills these and handles the callbacks.
+
+// Every setting edited in place. Choices are indexes into the option lists Rust provides.
+export struct SettingsValues {
+    app-language: int,
+    theme: int,
+    launch-at-login: bool,
+    show-pill: bool,
+    show-in-dock: bool,
+    tier: int,
+    denoise: bool,
+    vad: bool,
+    llm-cleanup: bool,
+    cleanup-strength: int,
+    vad-auto-stop: bool,
+    vad-auto-stop-seconds: int,
+    asr-model: int,
+    vad-model: int,
+    llm-model: int,
+    keep-models-loaded: int,
+    style-personal: int,
+    style-work: int,
+    style-email: int,
+    style-other: int,
+    auto-add-corrections: bool,
+    meeting-auto-detect: bool,
+    meeting-live-transcript: bool,
+    meeting-refine-pass: bool,
+    meeting-diarization: bool,
+    meeting-keep-audio: bool,
+    meeting-max-length-minutes: int,
+    meeting-summary-template: string,
+    sounds: bool,
+    media-while-dictating: int,
+    context-awareness: bool,
+    history-retention: int,
+}
+
+export struct ShortcutRow {
+    action: string,
+    combo: string,
+}
+
+export struct MicrophoneRow {
+    name: string,
+    connected: bool,
+}
+
+export struct LanguageRow {
+    name: string,
+    selected: bool,
+}
+
+export struct ReplacementRow {
+    wrong: string,
+    right: string,
+}
+
+export struct SnippetRow {
+    trigger: string,
+    text: string,
+}
+
+export struct ModelRow {
+    name: string,
+    detail: string,
+    status: string,
+    installed: bool,
+    // Started but not finished, so Download resumes it.
+    partial: bool,
+    // This row is downloading or verifying.
+    busy: bool,
+    downloading: bool,
+    // 0..1 while downloading.
+    progress: float,
+}
+
+export global Prefs {
+    in-out property <SettingsValues> values;
+    // Saves `values`. Every control that edits them calls this.
+    callback commit();
+    // Rust's worker threads left something to pick up on the UI thread.
+    callback events-arrived();
+
+    // Facts the pages need to show the right controls.
+    in property <bool> is-macos;
+    in property <string> version;
+    in property <string> notice;
+    in property <[string]> asr-options;
+    in property <[string]> vad-options;
+    in property <[string]> llm-options;
+
+    // General: shortcuts
+    in property <[ShortcutRow]> shortcuts;
+    in property <int> recording-action: -1;
+    in property <string> recording-keys;
+    in property <string> shortcut-error;
+    callback record-shortcut(int);
+    callback stop-recording();
+    callback reset-shortcut(int);
+
+    // General: microphone
+    in-out property <bool> microphone-auto: true;
+    in property <[MicrophoneRow]> microphones;
+    in property <bool> microphone-testing;
+    in property <float> microphone-level;
+    in property <string> microphone-error;
+    callback set-microphone-auto(bool);
+    callback move-microphone(int, int);
+    callback toggle-microphone-test();
+
+    // General: languages
+    in-out property <bool> languages-auto: true;
+    in property <[LanguageRow]> languages;
+    callback set-languages-auto(bool);
+    callback toggle-language(int);
+
+    // Models
+    in property <string> hardware-summary: "Detecting hardware…";
+    in property <string> recommended-tier;
+    in property <[ModelRow]> models;
+    in property <bool> model-busy;
+    in property <string> model-error;
+    callback download-model(int);
+    callback cancel-download();
+    callback delete-model(int);
+    callback verify-model(int);
+
+    // Style & dictionary
+    in property <[string]> dictionary;
+    in property <[ReplacementRow]> replacements;
+    in property <[SnippetRow]> snippets;
+    callback add-word(string);
+    callback remove-word(int);
+    callback add-replacement();
+    callback edit-replacement(int, ReplacementRow);
+    callback remove-replacement(int);
+    callback add-snippet();
+    callback edit-snippet(int, SnippetRow);
+    callback remove-snippet(int);
+
+    // Privacy & data
+    in property <string> data-folder;
+    in property <string> data-status;
+    callback open-data-folder();
+    callback export-all();
+    callback delete-all();
+
+    // About
+    callback check-for-updates();
+}

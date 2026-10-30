@@ -25,6 +25,10 @@ wf-meetings = { path = "crates/meetings" }
 # UI
 slint = "1.18.1"
 slint-build = "1.18.1"
+i-slint-backend-testing = "1.18.1"
+
+# Allocator that hands freed pages back, so closing a window shrinks the process (ticket 12)
+mimalloc = { version = "0.1.52", default-features = false }
 
 # Audio
 cpal = "0.18.2"

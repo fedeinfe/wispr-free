@@ -1,5 +1,6 @@
-// The always-present tray icon. Later tickets add Settings, Meetings and pill toggles here.
+// The always-present tray icon. Later tickets add Meetings and pill toggles here.
 export component Tray inherits SystemTrayIcon {
+    callback open-settings();
     callback quit();
 
     // Neutral gray reads on light and dark bars. Slint 1.18 exposes neither template images
@@ -8,6 +9,10 @@ export component Tray inherits SystemTrayIcon {
     tooltip: "wispr-free";
 
     Menu {
+        MenuItem {
+            title: "Settings…";
+            activated => { root.open-settings(); }
+        }
         MenuItem {
             title: "Quit wispr-free";
             activated => { root.quit(); }

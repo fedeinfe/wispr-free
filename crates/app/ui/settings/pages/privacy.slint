@@ -1,0 +1,92 @@
+import { Prefs } from "../bridge.slint";
+import { Theme } from "../theme.slint";
+import { Btn, Card, Hint, Label, Page, SelectRow, ToggleRow } from "../controls.slint";
+
+export component PrivacyPage inherits Page {
+    property <bool> confirming-delete;
+
+    Card {
+        ToggleRow {
+            label: "Context awareness";
+            hint: "Reads the focused app and nearby text to match style and spelling. Nothing is stored beyond the history entry.";
+            checked <=> Prefs.values.context-awareness;
+        }
+
+        SelectRow {
+            label: "History";
+            options: ["Keep", "Delete after 24 hours", "Never store"];
+            current <=> Prefs.values.history-retention;
+        }
+    }
+
+    Card {
+        title: "Your data";
+        hint: "Everything stays on this computer.";
+
+        HorizontalLayout {
+            spacing: 12px;
+
+            Hint {
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+                text: Prefs.data-folder;
+            }
+
+            Btn {
+                width: 100px;
+                text: "Open folder";
+                clicked => {
+                    Prefs.open-data-folder();
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+
+            Btn {
+                width: 90px;
+                text: "Export all";
+                clicked => {
+                    Prefs.export-all();
+                }
+            }
+
+            if !root.confirming-delete: Btn {
+                width: 110px;
+                text: "Delete all data";
+                danger: true;
+                clicked => {
+                    root.confirming-delete = true;
+                }
+            }
+
+            if root.confirming-delete: Btn {
+                width: 190px;
+                text: "Yes, delete everything";
+                primary: true;
+                clicked => {
+                    root.confirming-delete = false;
+                    Prefs.delete-all();
+                }
+            }
+
+            if root.confirming-delete: Btn {
+                width: 70px;
+                text: "Keep it";
+                clicked => {
+                    root.confirming-delete = false;
+                }
+            }
+        }
+
+        if root.confirming-delete: Hint {
+            text: "This removes your settings, models, history and meetings. It can't be undone.";
+        }
+
+        if Prefs.data-status != "": Label {
+            text: Prefs.data-status;
+        }
+    }
+}

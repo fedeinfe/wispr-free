@@ -16,6 +16,13 @@ wf-platform.workspace = true
 wf-models.workspace = true
 wf-meetings.workspace = true
 slint.workspace = true
+mimalloc.workspace = true
+directories.workspace = true
+
+[dev-dependencies]
+i-slint-backend-testing.workspace = true
+tempfile.workspace = true
+toml.workspace = true
 
 [build-dependencies]
 slint-build.workspace = true

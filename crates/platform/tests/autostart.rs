@@ -43,7 +43,10 @@ fn the_launch_agent_escapes_the_path_and_starts_the_app_once_at_login() {
         .unwrap();
 
     let text = fs::read_to_string(&entry).unwrap();
-    assert!(text.contains("<string>/Users/a&amp;b/&lt;app&gt;</string>"), "{text}");
+    assert!(
+        text.contains("<string>/Users/a&amp;b/&lt;app&gt;</string>"),
+        "{text}"
+    );
     assert!(text.contains("<key>RunAtLoad</key>"));
     assert!(text.contains("<key>Label</key>"));
     assert!(!text.contains("KeepAlive"), "quitting must stay quit");
