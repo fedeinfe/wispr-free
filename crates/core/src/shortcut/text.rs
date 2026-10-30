@@ -26,13 +26,6 @@ const NAMED_KEYS: [(Key, &str); 17] = [
     (Key::Insert, "Insert"),
 ];
 
-const MODIFIERS: [(&str, fn(Side) -> Key); 4] = [
-    ("Ctrl", Key::Ctrl),
-    ("Shift", Key::Shift),
-    ("Alt", Key::Alt),
-    ("Meta", Key::Meta),
-];
-
 /// The settings-file name of a key.
 impl fmt::Display for Key {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -82,14 +75,17 @@ fn parse(name: &str) -> Option<Key> {
     if name == "PrintScreen" {
         return Some(Key::PrintScreen);
     }
-    for (modifier, key) in MODIFIERS {
-        let side = match name.strip_suffix(modifier) {
-            Some("") => Side::Either,
-            Some("Left") => Side::Left,
-            Some("Right") => Side::Right,
-            _ => continue,
-        };
-        return Some(key(side));
+    let (side, modifier) = match (name.strip_prefix("Left"), name.strip_prefix("Right")) {
+        (Some(rest), _) => (Side::Left, rest),
+        (_, Some(rest)) => (Side::Right, rest),
+        _ => (Side::Either, name),
+    };
+    match modifier {
+        "Ctrl" => return Some(Key::Ctrl(side)),
+        "Shift" => return Some(Key::Shift(side)),
+        "Alt" => return Some(Key::Alt(side)),
+        "Meta" => return Some(Key::Meta(side)),
+        _ => {}
     }
     let mut chars = name.chars();
     if let (Some(c), None) = (chars.next(), chars.next()) {

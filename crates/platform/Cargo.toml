@@ -12,6 +12,7 @@ publish.workspace = true
 [dependencies]
 wf-core.workspace = true
 thiserror.workspace = true
+directories.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { workspace = true, features = [
@@ -23,3 +24,6 @@ windows-sys = { workspace = true, features = [
 
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
