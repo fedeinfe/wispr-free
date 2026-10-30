@@ -116,13 +116,15 @@ fn a_resumed_recording_continues_the_clock() {
 #[test]
 fn segments_are_announced_as_they_arrive() {
     let (_dir, meeting, part) = new_meeting();
-    let live = LiveTranscript::start(
-        &meeting,
-        &part,
-        engines(Box::new(LengthAsr)),
-        LiveOptions::default(),
-    )
-    .unwrap();
+    let options = LiveOptions {
+        asr: AsrOptions {
+            language: Some("en".to_owned()),
+            ..AsrOptions::default()
+        },
+        ..LiveOptions::default()
+    };
+    let live =
+        LiveTranscript::start(&meeting, &part, engines(Box::new(LengthAsr)), options).unwrap();
 
     play(&live, 0, TWO_SPEAKERS);
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -134,6 +136,60 @@ fn segments_are_announced_as_they_arrive() {
     }
     assert_eq!(segments, 2);
 
+    live.finish().unwrap();
+}
+
+/// Answers "it" when it hears enough to tell and "pl" otherwise, and keeps what it was asked.
+struct GuessingAsr(Sender<(Duration, Option<String>)>);
+
+impl Asr for GuessingAsr {
+    fn transcribe(
+        &mut self,
+        clip: &AudioClip,
+        options: &AsrOptions,
+    ) -> Result<Transcript, PipelineError> {
+        let length = clip.duration();
+        let asked = options.language.clone();
+        self.0.send((length, asked.clone())).unwrap();
+        let guess = if length >= Duration::from_secs(8) {
+            "it"
+        } else {
+            "pl"
+        };
+        Ok(Transcript {
+            text: "words".to_owned(),
+            language: asked.or(Some(guess.to_owned())),
+        })
+    }
+}
+
+#[test]
+fn the_first_chunks_wait_for_enough_speech_and_all_come_out_in_its_language() {
+    let (_dir, meeting, part) = new_meeting();
+    let (asked, calls) = channel();
+    let live = LiveTranscript::start(
+        &meeting,
+        &part,
+        engines(Box::new(GuessingAsr(asked))),
+        LiveOptions::default(),
+    )
+    .unwrap();
+
+    // 3 s of speech and a pause, three times over. Nothing can be said after the first two.
+    let turn: &[(u64, f32, f32)] = &[(75, 0.0, 0.5), (75, 0.0, 0.0)];
+    let index = play(&live, 0, turn);
+    let index = play(&live, index, turn);
+    let waited = calls.recv_timeout(Duration::from_millis(300));
+    assert!(waited.is_err(), "the model was asked too soon: {waited:?}");
+    play(&live, index, turn);
+
+    let (speech, detected) = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(speech >= Duration::from_secs(8), "{speech:?}");
+    assert_eq!(detected, None);
+    for _ in 0..3 {
+        let (_, language) = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(language.as_deref(), Some("it"));
+    }
     live.finish().unwrap();
 }
 

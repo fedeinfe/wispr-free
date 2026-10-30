@@ -68,9 +68,9 @@ fn silence() -> AudioClip {
     AudioClip::new(vec![0.0; speech().samples().len()])
 }
 
-/// Long enough for the live transcript to show it as soon as the pause comes.
+/// Long enough to tell the language from, so the live transcript shows it at the pause.
 fn long_speech() -> AudioClip {
-    let mut samples: Vec<f32> = (0..112_000)
+    let mut samples: Vec<f32> = (0..144_000)
         .map(|i| (i as f32 * 0.05).sin() * 0.2)
         .collect();
     samples.extend(vec![0.0; 16_000]);
@@ -928,6 +928,27 @@ fn sound_on_the_system_channel_clears_any_suspicion() {
         .try_iter()
         .filter(|event| matches!(event, Event::Pill(PillState::Error { .. })));
     assert_eq!(errors.count(), 0);
+}
+
+#[test]
+fn the_bars_follow_the_others_when_the_mic_is_quiet() {
+    let rig = Rig::new(base_settings());
+    rig.dictation.toggle_meeting();
+    wait_meeting(&rig, true);
+
+    for level in [0.001, 0.3] {
+        for _ in 0..8 {
+            rig.room.send(MeetingEvent::Frame {
+                channel: Channel::Others,
+                samples: vec![level; FRAME_SAMPLES],
+            });
+        }
+    }
+
+    rig.wait_event("the others' level", |event| match event {
+        Event::Level(level) if level > 0.5 => Some(()),
+        _ => None,
+    });
 }
 
 #[test]

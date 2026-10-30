@@ -4,7 +4,12 @@ use std::ptr::{self, NonNull};
 
 use objc2_app_kit::{NSRunningApplication, NSWorkspace};
 use objc2_application_services::{AXError, AXIsProcessTrusted, AXUIElement, AXValue, AXValueType};
-use objc2_core_foundation::{CFBoolean, CFNumber, CFRange, CFRetained, CFString, CFType};
+use objc2_core_foundation::{
+    CFBoolean, CFDictionary, CFNumber, CFRange, CFRetained, CFString, CFType,
+};
+use objc2_core_graphics::{
+    CGWindowListCopyWindowInfo, CGWindowListOption, kCGWindowLayer, kCGWindowOwnerPID,
+};
 
 use super::ax_role::{AxElementInfo, classify};
 use super::{AppIdentity, Context, ContextDepth, ContextSource, Focus, TextAround, Utf16Window};
@@ -31,7 +36,12 @@ impl ContextSource for SystemContext {
 
         let app_element = match element_attribute(&system, "AXFocusedApplication") {
             Ok(element) => element,
-            Err(AXError::NoValue) => return without_ax(None, Focus::Nothing),
+            // Chromium apps often don't answer here until their accessibility tree is on, which
+            // is done below, so the app in front is the one to ask.
+            Err(AXError::NoValue) => match frontmost_app().and_then(|app| app.pid) {
+                Some(pid) => unsafe { AXUIElement::new_application(pid as i32) },
+                None => return without_ax(None, Focus::Nothing),
+            },
             Err(_) => return without_ax(frontmost_app(), Focus::Unknown),
         };
         // Electron only builds its accessibility tree when asked; other apps ignore this.
@@ -41,12 +51,14 @@ impl ContextSource for SystemContext {
                 .set_attribute_value(&CFString::from_static_str("AXManualAccessibility"), enable)
         };
 
+        let app = app_of(&app_element);
+        let app_has_window = app.as_ref().and_then(|app| app.pid).is_none_or(has_window);
         let window = element_attribute(&app_element, "AXFocusedWindow").ok();
         let (focus, focused) = match element_attribute(&app_element, "AXFocusedUIElement") {
             Ok(element) => (focus_of(&element), Some(element)),
             // No element and no window: an app with nothing open. With a window, the app may
             // just not expose its content, so it stays Unknown and still gets the paste.
-            Err(AXError::NoValue) if window.is_none() => (Focus::Nothing, None),
+            Err(AXError::NoValue) if window.is_none() && !app_has_window => (Focus::Nothing, None),
             Err(_) => (Focus::Unknown, None),
         };
         let text = match (depth, focus, &focused) {
@@ -55,7 +67,7 @@ impl ContextSource for SystemContext {
             _ => None,
         };
         Context {
-            app: app_of(&app_element),
+            app,
             window_title: window.and_then(|window| string_attribute(&window, "AXTitle")),
             focus,
             text,
@@ -70,6 +82,28 @@ fn without_ax(app: Option<AppIdentity>, focus: Focus) -> Context {
         focus,
         text: None,
     }
+}
+
+/// Whether `pid` has an ordinary window on screen, counting when it can't be told. This asks the
+/// window server, so it holds for an app whose accessibility tree isn't built yet.
+fn has_window(pid: u32) -> bool {
+    let options =
+        CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements;
+    let Some(windows) = CGWindowListCopyWindowInfo(options, 0) else {
+        return true;
+    };
+    // Every entry the window server returns is a dictionary.
+    let windows = unsafe { windows.cast_unchecked::<CFDictionary<CFString, CFType>>() };
+    let number = |window: &CFDictionary<CFString, CFType>, key: &CFString| {
+        window.get(key)?.downcast_ref::<CFNumber>()?.as_i64()
+    };
+    let (owner_key, layer_key) = unsafe { (kCGWindowOwnerPID, kCGWindowLayer) };
+    (0..windows.len())
+        .filter_map(|index| windows.get(index))
+        .any(|window| {
+            number(&window, owner_key) == Some(i64::from(pid))
+                && number(&window, layer_key) == Some(0)
+        })
 }
 
 fn focus_of(element: &AXUIElement) -> Focus {

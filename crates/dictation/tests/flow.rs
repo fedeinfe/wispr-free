@@ -931,14 +931,19 @@ fn press_enter_is_plain_text_while_the_setting_is_off() {
 }
 
 #[test]
-fn no_text_field_shows_the_paste_shortcut_and_keeps_the_text() {
+fn no_text_field_asks_before_copying_and_keeps_the_text() {
     let rig = Rig::new(base_settings());
     rig.log.no_focus.store(true, Ordering::SeqCst);
     rig.probe.hears("nowhere to go");
 
     rig.dictate(&speech());
 
-    assert_eq!(rig.wait_toast(), "Copied — paste with Ctrl+Cmd+V");
+    let text = rig.wait_no_text_field();
+    assert_eq!(text, "Nowhere to go.");
+    assert!(rig.log.copied.lock().unwrap().is_empty(), "nobody said yes");
+    rig.dictation.copy_text(text);
+    assert_eq!(rig.wait_toast(), "Copied");
+    assert_eq!(*rig.log.copied.lock().unwrap(), ["Nowhere to go."]);
     rig.log.no_focus.store(false, Ordering::SeqCst);
     rig.dictation.paste_last();
     wait_for("paste last", || rig.inserted().len() == 2);

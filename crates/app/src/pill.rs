@@ -42,6 +42,14 @@ pub const LANGUAGES: [(&str, Option<&str>); 3] = [
 ];
 const PIPELINE_QUALITIES: [&str; 4] = ["Lite", "Balanced", "High", "Custom"];
 
+/// What the card is asking, kept to answer it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Question {
+    TakeNotes,
+    /// A finished dictation with nowhere to go.
+    CopyText(String),
+}
+
 /// What the user asked for through the pill, which is also where a word they fixed arrives, on
 /// its way to the settings. Moving and hiding the pill are handled internally.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +63,7 @@ pub enum PillEvent {
     SelectLanguage(usize),
     SelectPipelineQuality(usize),
     TakeNotes,
+    CopyText(String),
     OpenMeetings,
     OpenSettings,
     Quit,
@@ -133,6 +142,7 @@ struct Core {
     prefs: Prefs,
     toast: Option<(String, Instant)>,
     card_until: Option<Instant>,
+    question: Option<Question>,
     displays: Vec<Display>,
     started: Instant,
     last_poll: Instant,
@@ -166,6 +176,7 @@ impl PillController {
                     prefs,
                     toast: None,
                     card_until: None,
+                    question: None,
                     displays: Vec::new(),
                     started: now,
                     last_poll: now,
@@ -234,16 +245,45 @@ impl PillController {
     /// The Recent transcripts menu.
     /// Asks whether to take notes for a meeting in `app`. The card goes away by itself.
     pub fn suggest_meeting(&self, app: String) {
-        self.inner.ui.set_card_app(app.into());
+        let text = format!("Take notes for this {app} meeting?");
+        self.ask(Question::TakeNotes, &text, "Take notes", "Not now");
+    }
+
+    /// Asks whether to copy a dictation that had no text field to go to.
+    pub fn offer_copy(&self, text: String) {
+        self.ask(
+            Question::CopyText(text),
+            "No text field here. Copy your text?",
+            "Copy",
+            "Dismiss",
+        );
+    }
+
+    fn ask(&self, question: Question, text: &str, accept: &str, decline: &str) {
+        let ui = &self.inner.ui;
+        ui.set_card_text(text.into());
+        ui.set_card_accept(accept.into());
+        ui.set_card_decline(decline.into());
         let mut core = self.inner.core.borrow_mut();
+        core.question = Some(question);
         core.pill.set_card(true);
         core.card_until = Some(Instant::now() + CARD_SHOWN);
     }
 
-    pub fn hide_card(&self) {
+    /// Takes down the meeting question, which is out of date once a meeting records. A question
+    /// about the user's text stays.
+    pub fn hide_meeting_card(&self) {
+        let asked = self.inner.core.borrow().question.clone();
+        if asked == Some(Question::TakeNotes) {
+            self.take_question();
+        }
+    }
+
+    fn take_question(&self) -> Option<Question> {
         let mut core = self.inner.core.borrow_mut();
         core.pill.set_card(false);
         core.card_until = None;
+        core.question.take()
     }
 
     pub fn set_recent(&self, transcripts: &[String]) {
@@ -297,12 +337,15 @@ impl PillController {
 
         ui.on_cancel_clicked(forward(PillEvent::Cancel));
         let this = self.clone();
-        ui.on_take_notes(move || {
-            this.hide_card();
-            this.emit(PillEvent::TakeNotes);
+        ui.on_card_accepted(move || match this.take_question() {
+            Some(Question::TakeNotes) => this.emit(PillEvent::TakeNotes),
+            Some(Question::CopyText(text)) => this.emit(PillEvent::CopyText(text)),
+            None => {}
         });
         let this = self.clone();
-        ui.on_decline_notes(move || this.hide_card());
+        ui.on_card_declined(move || {
+            this.take_question();
+        });
         ui.on_stop_clicked(forward(PillEvent::Stop));
         ui.on_paste_last(forward(PillEvent::PasteLast));
         ui.on_open_meetings(forward(PillEvent::OpenMeetings));
@@ -424,6 +467,7 @@ impl PillController {
         ui.set_capsule_height(frame.capsule.height as f32);
         if core.card_until.is_some_and(|until| now >= until) {
             core.card_until = None;
+            core.question = None;
             core.pill.set_card(false);
         }
         ui.set_card_shown(frame.card.is_some());
@@ -509,6 +553,8 @@ mod tests {
     use slint::platform::{PointerEventButton, WindowEvent};
     use slint::{ComponentHandle, LogicalPosition, ModelRc, VecModel};
 
+    use super::{PillController, PillEvent};
+    use crate::prefs::Prefs;
     use crate::{PillLook, PillWindow};
 
     /// A window showing `look`, with a log of what fired.
@@ -535,8 +581,8 @@ mod tests {
         ui.on_pill_released(log("released"));
         ui.on_cancel_clicked(log("cancel"));
         ui.on_stop_clicked(log("stop"));
-        ui.on_take_notes(log("take notes"));
-        ui.on_decline_notes(log("not now"));
+        ui.on_card_accepted(log("accepted"));
+        ui.on_card_declined(log("declined"));
         (ui, fired)
     }
 
@@ -591,12 +637,12 @@ mod tests {
         );
         assert_eq!(click(PillLook::Locked, "PillWindow::stop-button"), ["stop"]);
         assert_eq!(
-            click(PillLook::Resting, "PillWindow::take-notes-button"),
-            ["take notes"]
+            click(PillLook::Resting, "PillWindow::card-accept-button"),
+            ["accepted"]
         );
         assert_eq!(
-            click(PillLook::Resting, "PillWindow::decline-notes-button"),
-            ["not now"]
+            click(PillLook::Resting, "PillWindow::card-decline-button"),
+            ["declined"]
         );
 
         let is_open = |look| {
@@ -609,5 +655,27 @@ mod tests {
             "right-click opens the menu when ready"
         );
         assert!(!is_open(PillLook::Processing), "the menu is only for Ready");
+
+        // The card's answer depends on what it asked.
+        let pill = PillController::new(Prefs::default(), None).unwrap();
+        let emitted = Rc::new(RefCell::new(Vec::new()));
+        let log = emitted.clone();
+        pill.on_event(move |event| log.borrow_mut().push(event));
+        pill.offer_copy("hello".to_owned());
+        assert_eq!(pill.inner.ui.get_card_accept(), "Copy");
+        pill.hide_meeting_card();
+        pill.inner.ui.invoke_card_accepted();
+        assert_eq!(*emitted.borrow(), [PillEvent::CopyText("hello".to_owned())]);
+
+        pill.suggest_meeting("Zoom".to_owned());
+        assert_eq!(pill.inner.ui.get_card_accept(), "Take notes");
+        pill.hide_meeting_card();
+        pill.inner.ui.invoke_card_accepted();
+        assert_eq!(emitted.borrow().len(), 1, "that question is gone");
+
+        pill.suggest_meeting("Zoom".to_owned());
+        pill.inner.ui.invoke_card_declined();
+        pill.inner.ui.invoke_card_accepted();
+        assert_eq!(emitted.borrow().len(), 1, "that one was answered");
     }
 }

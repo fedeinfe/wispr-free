@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use wf_platform::context::{AppIdentity, Context, ContextDepth, ContextSource, Focus};
 use wf_platform::insert::{
-    ChangeMark, Clipboard, ClipboardItem, ClipboardSnapshot, CopyReason, InsertError,
-    InsertOutcome, Inserter, Os, PasteChord, PasteKeys, Sleep, SystemInserter, Timings,
+    ChangeMark, Clipboard, ClipboardItem, ClipboardSnapshot, InsertError, InsertOutcome, Inserter,
+    Os, PasteChord, PasteKeys, Sleep, SystemInserter, Timings,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -256,27 +256,14 @@ fn leaves_the_clipboard_alone_when_the_user_copied_something_meanwhile() {
 }
 
 #[test]
-fn without_a_focused_text_field_the_text_is_left_on_the_clipboard() {
+fn without_a_focused_text_field_nothing_is_pasted_and_the_clipboard_is_left_alone() {
     for focus in [Focus::Nothing, Focus::NotEditable] {
         let (mut inserter, log) = inserter(Os::MacOs, "com.apple.finder", focus);
 
         let outcome = inserter.insert("hello").unwrap();
 
-        assert_eq!(
-            outcome,
-            InsertOutcome::Copied {
-                reason: CopyReason::NoFocusedField
-            },
-            "{focus:?}"
-        );
-        assert_eq!(
-            *log.borrow(),
-            vec![Event::Write {
-                text: "hello".into(),
-                transient: false
-            }],
-            "{focus:?}"
-        );
+        assert_eq!(outcome, InsertOutcome::NoTextField, "{focus:?}");
+        assert!(log.borrow().is_empty(), "{focus:?}");
     }
 }
 
@@ -316,8 +303,8 @@ fn when_the_keystroke_cannot_be_sent_the_text_stays_on_the_clipboard() {
 
     assert_eq!(
         outcome,
-        InsertOutcome::Copied {
-            reason: CopyReason::PasteFailed("accessibility permission not granted".into())
+        InsertOutcome::PasteFailed {
+            error: "accessibility permission not granted".into()
         }
     );
     let log = log.borrow();

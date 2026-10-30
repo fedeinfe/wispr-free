@@ -99,15 +99,17 @@ export component PillWindow inherits Window {
     in property <length> card-y;
     in property <length> card-width;
     in property <length> card-height;
-    // The meeting app the suggestion card names.
-    in property <string> card-app;
+    // What the card asks, and its two answers.
+    in property <string> card-text;
+    in property <string> card-accept;
+    in property <string> card-decline;
 
     callback pill-pressed();
     callback pill-released();
     callback cancel-clicked();
     callback stop-clicked();
-    callback take-notes();
-    callback decline-notes();
+    callback card-accepted();
+    callback card-declined();
     callback paste-last();
     callback paste-recent(index: int);
     callback select-microphone(index: int);
@@ -227,8 +229,8 @@ export component PillWindow inherits Window {
 
         if root.look == PillLook.listening || root.look == PillLook.locked
             || root.look == PillLook.meeting: Bars {
-            height: parent.height - 6px;
-            y: 3px;
+            height: parent.height - 8px;
+            y: 4px;
             heights: root.bars;
             bar-scale: root.bar-scale;
         }
@@ -283,30 +285,30 @@ export component PillWindow inherits Window {
             x: 10px;
             y: 8px;
             width: parent.width - 20px;
-            text: "Take notes for this \{root.card-app} meeting?";
+            text: root.card-text;
             color: #f4f1ea;
             font-size: 12px;
             overflow: elide;
         }
 
-        take-notes-button := CardButton {
+        card-accept-button := CardButton {
             x: parent.width - self.width - 10px;
             y: parent.height - self.height - 8px;
             width: 76px;
-            label: "Take notes";
+            label: root.card-accept;
             fill: #f4f1ea;
             ink: #17161c;
-            clicked => { root.take-notes(); }
+            clicked => { root.card-accepted(); }
         }
 
-        decline-notes-button := CardButton {
+        card-decline-button := CardButton {
             x: parent.width - self.width - 92px;
             y: parent.height - self.height - 8px;
             width: 62px;
-            label: "Not now";
+            label: root.card-decline;
             fill: #ffffff24;
             ink: #f4f1ea;
-            clicked => { root.decline-notes(); }
+            clicked => { root.card-declined(); }
         }
     }
 }

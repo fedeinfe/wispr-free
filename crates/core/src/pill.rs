@@ -15,8 +15,10 @@ pub const WINDOW_SIZE: Size = Size {
     height: 120.0,
 };
 
-/// Gap between the capsule and the docked edge, in points.
+/// Gap between the capsule and a side edge, in points.
 const EDGE_MARGIN: f64 = 8.0;
+/// Gap between the capsule and the bottom edge, in points. The card above it just fits.
+const BOTTOM_MARGIN: f64 = 24.0;
 /// Extra hover area around the capsule, in points. The resting capsule alone is a thin target.
 const HOVER_SLOP: f64 = 6.0;
 /// Cursor travel that turns a press into a drag, in points.
@@ -28,7 +30,7 @@ const CARD_SIZE: Size = Size {
 };
 const CARD_GAP: f64 = 8.0;
 /// Bar height in the Meeting capsule relative to the Listening one.
-const MEETING_BAR_SCALE: f32 = 0.6;
+const MEETING_BAR_SCALE: f32 = 0.85;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum PillState {
@@ -89,7 +91,7 @@ impl PillState {
         let (x, y) = match edge {
             Edge::Bottom => (
                 (WINDOW_SIZE.width - width) / 2.0,
-                WINDOW_SIZE.height - EDGE_MARGIN - height,
+                WINDOW_SIZE.height - BOTTOM_MARGIN - height,
             ),
             Edge::Left => (EDGE_MARGIN, (WINDOW_SIZE.height - height) / 2.0),
             Edge::Right => (

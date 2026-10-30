@@ -158,16 +158,11 @@ pub enum InsertOutcome {
         chord: PasteChord,
         clipboard_restored: bool,
     },
-    /// The text was left on the clipboard instead; the UI shows the "Copied — paste with …"
-    /// toast and keeps it as the last transcript.
-    Copied { reason: CopyReason },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CopyReason {
-    NoFocusedField,
-    /// The keystroke couldn't be sent (usually missing Accessibility permission).
-    PasteFailed(String),
+    /// There's nowhere to paste. The clipboard wasn't touched: copying is the user's call.
+    NoTextField,
+    /// The keystroke couldn't be sent (usually missing Accessibility permission), so the text was
+    /// left on the clipboard; the UI shows the "Copied — paste with …" toast.
+    PasteFailed { error: String },
 }
 
 /// Paste unless there's clearly no text field. Terminals draw their own text view, which
@@ -241,10 +236,7 @@ impl<C: Clipboard, K: PasteKeys, X: ContextSource, S: Sleep> Inserter<C, K, X, S
     ) -> Result<InsertOutcome, InsertError> {
         let context = self.context.read(ContextDepth::FocusOnly);
         if !accepts_paste(context.focus, context.app.as_ref()) {
-            self.clipboard.write_text(text, false)?;
-            return Ok(InsertOutcome::Copied {
-                reason: CopyReason::NoFocusedField,
-            });
+            return Ok(InsertOutcome::NoTextField);
         }
         // An unreadable clipboard (e.g. lazily promised data) must not block dictation.
         let saved = self.clipboard.snapshot().ok();
@@ -254,8 +246,8 @@ impl<C: Clipboard, K: PasteKeys, X: ContextSource, S: Sleep> Inserter<C, K, X, S
         if let Err(err) = self.keys.send(chord) {
             // Keep the dictated text rather than the old clipboard: the user can still paste it.
             self.clipboard.write_text(text, false)?;
-            return Ok(InsertOutcome::Copied {
-                reason: CopyReason::PasteFailed(err.to_string()),
+            return Ok(InsertOutcome::PasteFailed {
+                error: err.to_string(),
             });
         }
         on_pasted();
@@ -278,7 +270,8 @@ impl<C: Clipboard, K: PasteKeys, X: ContextSource, S: Sleep> Inserter<C, K, X, S
         self.keys.send_enter()
     }
 
-    /// Leaves `text` on the clipboard for good, for copy last.
+    /// Leaves `text` on the clipboard for good, for copy last and the question about a dictation
+    /// with no text field.
     pub fn copy(&mut self, text: &str) -> Result<(), InsertError> {
         self.clipboard.write_text(text, false).map(|_| ())
     }

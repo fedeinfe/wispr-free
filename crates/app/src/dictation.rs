@@ -101,12 +101,13 @@ fn show(pill: &PillController, tray: &Weak<Tray>, board: &MeetingsBoard, event: 
         Event::Recent(transcripts) => pill.set_recent(&transcripts),
         Event::Unloaded => memory::release_freed(),
         Event::Meeting(active) => {
-            pill.hide_card();
+            pill.hide_meeting_card();
             if let Some(tray) = tray.upgrade() {
                 tray.set_in_meeting(active);
             }
         }
         Event::SuggestMeeting(app) => pill.suggest_meeting(app),
+        Event::NoTextField(text) => pill.offer_copy(text),
         Event::Meetings(news) => board.post(news),
         Event::Trial(_) | Event::TrialFailed { .. } | Event::Inserted(_) => {}
     }
@@ -225,6 +226,7 @@ impl PillActions {
                 }
             }
             PillEvent::TakeNotes => self.dictation.toggle_meeting(),
+            PillEvent::CopyText(text) => self.dictation.copy_text(text),
             PillEvent::OpenMeetings => {
                 if let Err(error) = self.meetings.open() {
                     eprintln!("could not open meetings: {error}");

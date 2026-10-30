@@ -323,11 +323,30 @@ impl Meetings {
     }
 }
 
+/// What the pill's bars follow in a meeting: whoever is louder, so they move when the others talk.
+#[derive(Default)]
+struct CallLevels {
+    you: (LevelMeter, f32),
+    others: (LevelMeter, f32),
+}
+
+impl CallLevels {
+    fn you(&mut self, samples: &[f32]) -> Option<f32> {
+        self.you.1 = self.you.0.push(samples)?;
+        Some(self.you.1.max(self.others.1))
+    }
+
+    fn others(&mut self, samples: &[f32]) -> Option<f32> {
+        self.others.1 = self.others.0.push(samples)?;
+        Some(self.you.1.max(self.others.1))
+    }
+}
+
 struct Recording {
     tape: Box<dyn MeetingTape>,
     meeting: Meeting,
     live: Option<LiveTranscript>,
-    meter: LevelMeter,
+    levels: CallLevels,
     silent_frames: u32,
     heard_system_audio: bool,
     warned: bool,
@@ -450,7 +469,7 @@ impl Desk {
                     tape,
                     meeting,
                     live,
-                    meter: LevelMeter::new(),
+                    levels: CallLevels::default(),
                     silent_frames: 0,
                     heard_system_audio: false,
                     warned: false,
@@ -586,7 +605,7 @@ impl Desk {
                     channel: Channel::You,
                     samples,
                 } => {
-                    if let Some(level) = recording.meter.push(&samples) {
+                    if let Some(level) = recording.levels.you(&samples) {
                         (self.office.on_event)(Event::Level(level));
                     }
                 }
@@ -594,6 +613,9 @@ impl Desk {
                     channel: Channel::Others,
                     samples,
                 } => {
+                    if let Some(level) = recording.levels.others(&samples) {
+                        (self.office.on_event)(Event::Level(level));
+                    }
                     if samples.iter().any(|&sample| sample != 0.0) {
                         recording.heard_system_audio = true;
                     } else if !recording.heard_system_audio {

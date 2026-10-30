@@ -434,7 +434,7 @@ fn the_resting_capsule_lies_along_a_side_edge() {
 }
 
 #[test]
-fn the_capsule_sits_against_the_docked_edge_of_the_window() {
+fn the_capsule_sits_near_the_docked_edge_of_the_window() {
     let capsule = |edge| {
         let mut h = Harness::new(edge);
         h.pill.set_state(PillState::ListeningPtt);
@@ -442,7 +442,7 @@ fn the_capsule_sits_against_the_docked_edge_of_the_window() {
     };
     let bottom = capsule(Edge::Bottom);
     assert_eq!(bottom.x + bottom.width / 2.0, WINDOW_SIZE.width / 2.0);
-    assert!(bottom.y + bottom.height > WINDOW_SIZE.height - 16.0);
+    assert!(bottom.y + bottom.height > WINDOW_SIZE.height - 32.0);
 
     let left = capsule(Edge::Left);
     assert!(left.x < 16.0);

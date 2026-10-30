@@ -10,7 +10,7 @@ use std::time::{Duration, Instant, SystemTime};
 use wf_core::settings::{HistoryRetention, Settings};
 use wf_core::shortcut::Platform;
 use wf_history::{Dictation, History, Timings};
-use wf_platform::insert::{CopyReason, InsertError, InsertOutcome};
+use wf_platform::insert::{InsertError, InsertOutcome};
 
 use crate::coordinator::Input;
 use crate::{Event, Insertion, Report};
@@ -22,10 +22,12 @@ const NOTHING_YET: &str = "Nothing to paste yet";
 
 pub(crate) enum Job {
     Insert(Box<Insert>),
-    /// With the text of the paste hint, for when no field has focus.
+    /// With the text of the toast, for when the keystroke can't be sent.
     PasteLast(String),
     PasteRecent(usize),
     CopyLast,
+    /// The user said yes to copying a dictation that had no text field.
+    Copy(String),
     SetRetention(HistoryRetention),
     Prune,
     Forget(Sender<()>),
@@ -105,6 +107,10 @@ impl Worker {
                 Ok(None) => self.toast(NOTHING_YET),
                 Err(error) => self.toast(&format!("Couldn't read history: {error}")),
             },
+            Job::Copy(text) => match self.insertion.copy(&text) {
+                Ok(()) => self.toast("Copied"),
+                Err(error) => self.toast(&format!("Couldn't copy: {error}")),
+            },
             Job::SetRetention(retention) => {
                 if let Err(error) = self.history.set_retention(retention, SystemTime::now()) {
                     self.toast(&format!("Couldn't open history: {error}"));
@@ -160,13 +166,13 @@ impl Worker {
                     problem = Some(enter_problem(&error));
                 }
             }
-            Some(Ok(InsertOutcome::Copied { reason })) => match reason {
-                CopyReason::NoFocusedField => self.toast(&insert.paste_hint),
-                CopyReason::PasteFailed(error) => {
-                    self.toast(&insert.paste_hint);
-                    problem = Some(format!("Couldn't paste: {error}"));
-                }
-            },
+            Some(Ok(InsertOutcome::NoTextField)) => {
+                (self.on_event)(Event::NoTextField(insert.text.clone()));
+            }
+            Some(Ok(InsertOutcome::PasteFailed { error })) => {
+                self.toast(&insert.paste_hint);
+                problem = Some(format!("Couldn't paste: {error}"));
+            }
             Some(Err(error)) => problem = Some(format!("Couldn't insert: {error}")),
         }
 
@@ -208,7 +214,10 @@ impl Worker {
     fn paste(&mut self, text: &str, hint: &str) {
         match self.insertion.insert(text, &mut || {}) {
             Ok(InsertOutcome::Pasted { .. }) => {}
-            Ok(InsertOutcome::Copied { .. }) => self.toast(hint),
+            Ok(InsertOutcome::NoTextField) => {
+                (self.on_event)(Event::NoTextField(text.to_owned()));
+            }
+            Ok(InsertOutcome::PasteFailed { .. }) => self.toast(hint),
             Err(error) => self.toast(&format!("Couldn't paste: {error}")),
         }
     }

@@ -366,7 +366,8 @@ fn a_chunk_the_refine_pass_loses_keeps_its_live_text() {
         asr: Box::new(|| {
             Ok(Box::new(FailsOnce {
                 calls: 0,
-                fail_on: 1,
+                // The first call only decides the language.
+                fail_on: 2,
             }))
         }),
         ..Engines::default()
@@ -378,6 +379,59 @@ fn a_chunk_the_refine_pass_loses_keeps_its_live_text() {
     assert!(found.contains(&"live you".to_owned()), "{found:?}");
     assert!(found.iter().any(|t| t.starts_with("heard")), "{found:?}");
     assert!(meeting.record().stages.refine.is_done());
+}
+
+/// How long a clip was, and the language the model was told to use.
+type AsrCall = (Duration, Option<String>);
+
+/// Answers "it" when it hears enough to tell and "pl" otherwise, and keeps what it was asked.
+#[derive(Clone, Default)]
+struct GuessingAsr(Arc<Mutex<Vec<AsrCall>>>);
+
+impl Asr for GuessingAsr {
+    fn transcribe(
+        &mut self,
+        clip: &AudioClip,
+        options: &AsrOptions,
+    ) -> Result<Transcript, PipelineError> {
+        let length = clip.duration();
+        let asked = options.language.clone();
+        self.0.lock().unwrap().push((length, asked.clone()));
+        let guess = if length >= Duration::from_secs(6) {
+            "it"
+        } else {
+            "pl"
+        };
+        Ok(Transcript {
+            text: "words".to_owned(),
+            language: asked.or(Some(guess.to_owned())),
+        })
+    }
+}
+
+#[test]
+fn the_refine_pass_decides_the_language_from_the_speech_and_holds_every_chunk_to_it() {
+    let (_dir, mut meeting) = record_meeting();
+    let asr = GuessingAsr::default();
+    let calls = Arc::clone(&asr.0);
+    let mut engines = Engines {
+        asr: Box::new(move || Ok(Box::new(asr.clone()))),
+        ..Engines::default()
+    };
+
+    run(&mut meeting, BALANCED, &mut engines).unwrap();
+
+    let calls = calls.lock().unwrap();
+    let ((speech, detected), chunks) = calls.split_first().unwrap();
+    assert!(*speech >= Duration::from_secs(6), "{calls:?}");
+    assert_eq!(*detected, None);
+    assert!(chunks.len() >= 2, "{calls:?}");
+    assert!(
+        chunks
+            .iter()
+            .all(|(_, asked)| asked.as_deref() == Some("it")),
+        "{calls:?}"
+    );
 }
 
 #[test]

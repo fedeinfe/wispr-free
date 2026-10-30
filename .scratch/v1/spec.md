@@ -139,7 +139,7 @@ Cleanup strength: None / Light (default) / Medium / High. Light = the rules abov
 3. Send the paste keystroke for the current layout (Cmd+V / Ctrl+V; Shift+Insert fallback in terminals).
 4. Restore the clipboard after ~500 ms.
 
-If no text field is focused, keep the text as "last transcript" and show a toast ("Copied — paste with …").
+If no text field is focused, keep the text as "last transcript", leave the clipboard alone, and ask on the pill whether to copy it.
 
 **Context (optional, on by default).** Through the accessibility APIs, read the focused app identity, window title and up to 500 characters before and after the cursor, plus selected text. These are used for style category, ASR biasing and casing. Nothing is stored beyond the history entry.
 

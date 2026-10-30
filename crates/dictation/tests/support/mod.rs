@@ -28,7 +28,7 @@ use wf_pipeline::{
     Transcript, Vad,
 };
 use wf_platform::context::{AppIdentity, Context, ContextDepth, ContextSource, Focus, TextAround};
-use wf_platform::insert::{CopyReason, InsertError, InsertOutcome, PasteChord};
+use wf_platform::insert::{InsertError, InsertOutcome, PasteChord};
 use wf_platform::keys::KeySignal;
 use wf_platform::media::{MediaControl, MediaError, Output};
 
@@ -469,13 +469,11 @@ impl Insertion for FakeInsertion {
     ) -> Result<InsertOutcome, InsertError> {
         self.0.inserted.lock().unwrap().push(text.to_owned());
         if self.0.no_focus.load(Ordering::SeqCst) {
-            return Ok(InsertOutcome::Copied {
-                reason: CopyReason::NoFocusedField,
-            });
+            return Ok(InsertOutcome::NoTextField);
         }
         if self.0.refused.load(Ordering::SeqCst) {
-            return Ok(InsertOutcome::Copied {
-                reason: CopyReason::PasteFailed("accessibility permission not granted".into()),
+            return Ok(InsertOutcome::PasteFailed {
+                error: "accessibility permission not granted".into(),
             });
         }
         on_pasted();
@@ -923,6 +921,13 @@ impl Rig {
     pub fn wait_toast(&self) -> String {
         self.wait_event("a toast", |event| match event {
             Event::Toast(text) => Some(text),
+            _ => None,
+        })
+    }
+
+    pub fn wait_no_text_field(&self) -> String {
+        self.wait_event("the copy question", |event| match event {
+            Event::NoTextField(text) => Some(text),
             _ => None,
         })
     }

@@ -8,8 +8,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use wf_core::audio::SAMPLE_RATE_HZ;
+use wf_core::audio::{AudioClip, SAMPLE_RATE_HZ};
 
+use crate::language::SteadyLanguage;
 use crate::vad::LiveChunk;
 use crate::{Asr, AsrOptions, PipelineError, Transcript};
 
@@ -34,10 +35,15 @@ type ChunkResult<S> = Result<ChunkTranscript<S>, PipelineError>;
 /// The results no poll took, and the engine, ready for the next recording.
 type Finished<S> = (Vec<ChunkResult<S>>, Box<dyn Asr>);
 
+enum Job<S> {
+    Chunk(S, LiveChunk),
+    SettleLanguage(AudioClip),
+}
+
 /// Owns an engine for one recording. Chunks run one at a time, in the order submitted. Chunks
 /// with no words produce no result; a failed chunk produces an error and the next one still runs.
 pub struct AsrWorker<S> {
-    jobs: Sender<(S, LiveChunk)>,
+    jobs: Sender<Job<S>>,
     results: Receiver<ChunkResult<S>>,
     failed: Receiver<FailedChunk<S>>,
     /// Samples submitted and not finished yet.
@@ -48,7 +54,7 @@ pub struct AsrWorker<S> {
 
 impl<S: Send + 'static> AsrWorker<S> {
     pub fn spawn(mut asr: Box<dyn Asr>, options: AsrOptions) -> Self {
-        let (jobs, queue) = mpsc::channel::<(S, LiveChunk)>();
+        let (jobs, queue) = mpsc::channel::<Job<S>>();
         let (publish, results) = mpsc::channel();
         let (report_failure, failed) = mpsc::channel();
         let backlog = Arc::new(AtomicU64::new(0));
@@ -56,13 +62,22 @@ impl<S: Send + 'static> AsrWorker<S> {
         let cancelled = Arc::new(AtomicBool::new(false));
         let stop = Arc::clone(&cancelled);
         let thread = thread::spawn(move || {
-            for (source, chunk) in queue {
+            let mut language = SteadyLanguage::default();
+            for job in queue {
                 if stop.load(Ordering::Relaxed) {
                     break;
                 }
+                let (source, chunk) = match job {
+                    Job::Chunk(source, chunk) => (source, chunk),
+                    // A failure leaves the chunks to detect for themselves, and they'll report it.
+                    Job::SettleLanguage(speech) => {
+                        let _ = language.settle(&mut *asr, &speech, &options);
+                        continue;
+                    }
+                };
                 let samples = chunk.clip.samples().len() as u64;
                 let end = chunk.start + chunk.clip.duration();
-                let transcribed = asr.transcribe(&chunk.clip, &options);
+                let transcribed = language.transcribe(&mut *asr, &chunk.clip, &options);
                 let result = match transcribed {
                     Ok(transcript) if transcript.text.trim().is_empty() => {
                         remaining.fetch_sub(samples, Ordering::Relaxed);
@@ -105,7 +120,16 @@ impl<S: Send + 'static> AsrWorker<S> {
     pub fn submit(&self, source: S, chunk: LiveChunk) -> Result<(), PipelineError> {
         let samples = chunk.clip.samples().len() as u64;
         self.backlog.fetch_add(samples, Ordering::Relaxed);
-        self.jobs.send((source, chunk)).map_err(|_| stopped())
+        self.jobs
+            .send(Job::Chunk(source, chunk))
+            .map_err(|_| stopped())
+    }
+
+    /// Has the chunks after this one use the language of `speech`. Returns at once.
+    pub fn settle_language(&self, speech: AudioClip) -> Result<(), PipelineError> {
+        self.jobs
+            .send(Job::SettleLanguage(speech))
+            .map_err(|_| stopped())
     }
 
     /// The chunks finished since the last poll. Never waits.

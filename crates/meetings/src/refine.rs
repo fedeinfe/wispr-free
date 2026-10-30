@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use wf_core::audio::{AudioClip, FRAME_SAMPLES, SAMPLE_RATE_HZ};
+use wf_pipeline::language::SteadyLanguage;
 use wf_pipeline::vad::{LiveVad, VadOptions};
 use wf_pipeline::{Asr, AsrOptions, PipelineError, Vad};
 
@@ -17,9 +18,8 @@ use crate::{Channel, Error};
 
 /// Shorter than live: citations get a finer place to land, and nobody is waiting on a pause.
 const MIN_CHUNK: Duration = Duration::from_secs(4);
-/// Language detection is unreliable on less audio than this, so a chunk this short uses the
-/// language of the last longer one. A bilingual meeting still switches per chunk.
-const MIN_DETECT: Duration = Duration::from_secs(3);
+/// How much of the meeting's speech decides its language. Whisper reads no further than this.
+const LANGUAGE_SPEECH: Duration = Duration::from_secs(30);
 /// A pause this long ends a chunk however short it is. Without it one person's turns would join
 /// up across whatever happened in between, and the text would land at the wrong time.
 const CHUNK_PAUSE: Duration = Duration::from_secs(1);
@@ -81,7 +81,8 @@ pub fn refine_transcript(
     let mut transcript = Transcript::default();
     let mut failure = None;
     let mut failed = 0;
-    let mut language = None;
+    let mut language = SteadyLanguage::default();
+    settle_language(audio, &jobs, asr, options, &mut language);
     let job_count = jobs.len();
     for job in jobs {
         if cancel.load(Ordering::Relaxed) {
@@ -125,7 +126,7 @@ pub fn fill_gaps(
     let mut transcript = live.clone();
     if let Some((asr, vad)) = engines {
         transcript.gaps.clear();
-        let mut language = None;
+        let mut language = SteadyLanguage::default();
         for gap in &live.gaps {
             let clip = match gap.channel {
                 Channel::You => &audio.you,
@@ -133,6 +134,7 @@ pub fn fill_gaps(
             };
             let part = slice(clip, gap.start_ms, gap.end_ms);
             let jobs = speech_jobs(&part, gap.start_ms, gap.channel, turns, vad, options)?;
+            settle_language(audio, &jobs, asr, options, &mut language);
             for job in jobs {
                 if cancel.load(Ordering::Relaxed) {
                     return Err(Error::Cancelled);
@@ -198,30 +200,48 @@ fn speech_jobs(
     Ok(jobs)
 }
 
+/// Decides the language from the opening speech, so the first chunks don't have to guess. Failing
+/// here leaves them to detect it themselves, and they'll report what's wrong.
+fn settle_language(
+    audio: &MeetingAudio,
+    jobs: &[Job],
+    asr: &mut dyn Asr,
+    options: &RefineOptions,
+    language: &mut SteadyLanguage,
+) {
+    let limit = (LANGUAGE_SPEECH.as_secs_f64() * f64::from(SAMPLE_RATE_HZ)) as usize;
+    let mut speech = Vec::new();
+    for job in jobs {
+        if speech.len() >= limit {
+            break;
+        }
+        speech.extend_from_slice(job_clip(audio, *job).samples());
+    }
+    speech.truncate(limit);
+    if speech.is_empty() {
+        return;
+    }
+    if let Err(error) = language.settle(asr, &AudioClip::new(speech), &options.asr) {
+        tracing::warn!("couldn't tell the meeting's language: {error}");
+    }
+}
+
+fn job_clip(audio: &MeetingAudio, job: Job) -> AudioClip {
+    let clip = match job.channel {
+        Channel::You => &audio.you,
+        Channel::Others => &audio.others,
+    };
+    slice(clip, job.start_ms, job.end_ms)
+}
+
 fn transcribe(
     audio: &MeetingAudio,
     job: Job,
     asr: &mut dyn Asr,
     options: &RefineOptions,
-    language: &mut Option<String>,
+    language: &mut SteadyLanguage,
 ) -> Result<Option<Segment>, PipelineError> {
-    let clip = match job.channel {
-        Channel::You => slice(&audio.you, job.start_ms, job.end_ms),
-        Channel::Others => slice(&audio.others, job.start_ms, job.end_ms),
-    };
-    let short = clip.duration() < MIN_DETECT;
-    let transcript = if short && options.asr.language.is_none() {
-        let pinned = AsrOptions {
-            language: language.clone(),
-            ..options.asr.clone()
-        };
-        asr.transcribe(&clip, &pinned)?
-    } else {
-        asr.transcribe(&clip, &options.asr)?
-    };
-    if !short && transcript.language.is_some() {
-        language.clone_from(&transcript.language);
-    }
+    let transcript = language.transcribe(asr, &job_clip(audio, job), &options.asr)?;
     let text = transcript.text.trim();
     Ok((!text.is_empty()).then(|| Segment {
         channel: job.channel,

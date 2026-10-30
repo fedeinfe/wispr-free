@@ -8,7 +8,8 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use wf_core::audio::{FRAME_MS, FRAME_SAMPLES};
+use wf_core::audio::{AudioClip, FRAME_MS, FRAME_SAMPLES};
+use wf_pipeline::language::SETTLING_SPEECH;
 use wf_pipeline::vad::{LiveChunk, LiveVad, VadOptions};
 use wf_pipeline::worker::{AsrWorker, ChunkTranscript};
 use wf_pipeline::{Asr, AsrOptions, PipelineError, Vad};
@@ -157,6 +158,7 @@ fn run(
         events,
         offset,
     };
+    let mut gate = LanguageGate::new(&options.asr);
     let worker = AsrWorker::spawn(asr, options.asr);
     let silence = vec![0.0; FRAME_SAMPLES];
     let mut next_index = 0;
@@ -189,7 +191,7 @@ fn run(
         ];
         for (channel, chunks) in closed {
             for chunk in chunks {
-                submit(&worker, channel, chunk, options.max_backlog, &mut output)?;
+                gate.submit(&worker, channel, chunk, options.max_backlog, &mut output)?;
             }
         }
         output.collect(&worker);
@@ -201,9 +203,10 @@ fn run(
     ];
     for (channel, chunks) in closed {
         for chunk in chunks {
-            submit(&worker, channel, chunk, options.max_backlog, &mut output)?;
+            gate.submit(&worker, channel, chunk, options.max_backlog, &mut output)?;
         }
     }
+    gate.release(&worker, options.max_backlog, &mut output)?;
     // `AsrWorker::finish` drops the failure list, so wait for it to empty first.
     while worker.backlog() > Duration::ZERO && worker.is_running() {
         output.collect(&worker);
@@ -248,6 +251,64 @@ fn submit(
         return Ok(());
     }
     Ok(worker.submit(channel, chunk)?)
+}
+
+/// Holds the first chunks back until there's enough speech to tell the language from. Their text
+/// shows a little late, which beats showing it in the wrong language. Both channels count, since a
+/// call has one language far more often than two.
+struct LanguageGate {
+    held: Vec<(Channel, LiveChunk)>,
+    speech: Duration,
+    open: bool,
+}
+
+impl LanguageGate {
+    fn new(options: &AsrOptions) -> Self {
+        Self {
+            held: Vec::new(),
+            speech: Duration::ZERO,
+            open: options.language.is_some(),
+        }
+    }
+
+    fn submit(
+        &mut self,
+        worker: &Worker,
+        channel: Channel,
+        chunk: LiveChunk,
+        max_backlog: Duration,
+        output: &mut Output,
+    ) -> Result<(), Error> {
+        if self.open {
+            return submit(worker, channel, chunk, max_backlog, output);
+        }
+        self.speech += chunk.clip.duration();
+        self.held.push((channel, chunk));
+        if self.speech >= SETTLING_SPEECH {
+            self.release(worker, max_backlog, output)?;
+        }
+        Ok(())
+    }
+
+    /// Lets everything through. The end of the audio calls this too, however little was said.
+    fn release(
+        &mut self,
+        worker: &Worker,
+        max_backlog: Duration,
+        output: &mut Output,
+    ) -> Result<(), Error> {
+        self.open = true;
+        let held = std::mem::take(&mut self.held);
+        if held.is_empty() {
+            return Ok(());
+        }
+        let speech = held.iter().flat_map(|(_, chunk)| chunk.clip.samples());
+        worker.settle_language(AudioClip::new(speech.copied().collect()))?;
+        for (channel, chunk) in held {
+            submit(worker, channel, chunk, max_backlog, output)?;
+        }
+        Ok(())
+    }
 }
 
 /// Where results go: the log first, then whoever is watching.

@@ -144,7 +144,8 @@ impl Insertion for SystemInserter {
 pub enum Event {
     /// What the pill should show. Hidden and Ready are the pill's own business.
     Pill(PillState),
-    /// Mic level, 0.0..=1.0, about every 150 ms while recording.
+    /// Level of the mic, or of a meeting's louder side, 0.0..=1.0, about every 150 ms while
+    /// recording.
     Level(f32),
     /// A short message for the pill, such as "Copied — paste with Ctrl+Cmd+V".
     Toast(String),
@@ -166,6 +167,9 @@ pub enum Event {
     /// A meeting app started using the mic. Offer to take notes, naming this app. Only the
     /// user's answer, through [`Dictation::toggle_meeting`], starts anything.
     SuggestMeeting(String),
+    /// A dictation finished with no text field to go to, and the clipboard wasn't touched. Ask the
+    /// user, and pass a yes to [`Dictation::copy_text`].
+    NoTextField(String),
     /// Something the Meetings window shows.
     Meetings(MeetingNews),
 }
@@ -336,6 +340,11 @@ impl Dictation {
 
     pub fn paste_last(&self) {
         self.send(Input::PasteLast);
+    }
+
+    /// Leaves `text` on the clipboard, as the answer to [`Event::NoTextField`].
+    pub fn copy_text(&self, text: String) {
+        self.send(Input::CopyText(text));
     }
 
     /// Pastes an entry of the last [`Event::Recent`] list.

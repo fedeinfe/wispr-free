@@ -10,6 +10,7 @@ use wf_core::audio::AudioClip;
 pub mod cleanup;
 #[cfg(feature = "diarization")]
 pub mod diarization;
+pub mod language;
 pub mod lists;
 #[cfg(feature = "llama")]
 pub mod llama;
