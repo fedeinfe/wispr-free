@@ -145,7 +145,7 @@ pub struct TranscriptChunk {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SummaryOptions {
-    /// The meeting's language, when known. `None` tells the model to follow the transcript.
+    /// The meeting's language, when known. `None` guesses it from the transcript.
     pub language: Option<String>,
     /// The Settings "summary template": extra wishes for the final step.
     pub instructions: String,

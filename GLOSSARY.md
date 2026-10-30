@@ -38,6 +38,14 @@
 
 **Refine pass**: the post-meeting re-transcription with a larger model plus diarization.
 
+**Live transcript**: what's transcribed during the recording, one line per VAD chunk per channel. It never holds up the recording, and the refine pass replaces it.
+
+**Gap**: a stretch of a meeting with no live text, marked with why (ASR behind, ASR failed, app stopped). The refine pass fills gaps.
+
+**Speaker**: a voice in the Others channel, numbered by diarization ("Speaker 2"). The number is stable within a meeting. Names are stored apart, so a rename survives refine and regeneration.
+
+**Meeting record**: a meeting's folder: its audio, live log, refined transcript, summary, notes and how each stage went.
+
 **Summary**: the AI-generated meeting notes (TL;DR, key points, decisions, action items). Distinct from the user's own **Notes**.
 
 **Meeting chat**: Q&A grounded in a meeting's transcript, notes and summary, citing timestamps.
