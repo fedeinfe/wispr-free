@@ -273,15 +273,15 @@ fn apply_pipeline(
     );
 
     let tier = pick(&TIERS, values.tier, &pipeline.tier);
-    if tier != pipeline.tier {
-        if let Some(preset) = preset_tier(tier).map(|tier| catalog.preset(tier)) {
-            pipeline.tier = tier;
-            pipeline.denoise = preset.denoise;
-            pipeline.vad = preset.vad;
-            pipeline.llm_cleanup = preset.llm_cleanup;
-            [pipeline.asr_model, pipeline.vad_model, pipeline.llm_model] = [None, None, None];
-            return;
-        }
+    if tier != pipeline.tier
+        && let Some(preset) = preset_tier(tier).map(|tier| catalog.preset(tier))
+    {
+        pipeline.tier = tier;
+        pipeline.denoise = preset.denoise;
+        pipeline.vad = preset.vad;
+        pipeline.llm_cleanup = preset.llm_cleanup;
+        [pipeline.asr_model, pipeline.vad_model, pipeline.llm_model] = [None, None, None];
+        return;
     }
 
     let stages_changed = pipeline.denoise != values.denoise

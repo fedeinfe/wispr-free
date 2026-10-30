@@ -14,6 +14,7 @@ export component PrivacyPage inherits Page {
 
         SelectRow {
             label: "History";
+            hint: "Never store also erases the history kept so far.";
             options: ["Keep", "Delete after 24 hours", "Never store"];
             current <=> Prefs.values.history-retention;
         }

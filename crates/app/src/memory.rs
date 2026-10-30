@@ -1,5 +1,5 @@
 //! Process memory. The system allocators keep freed pages, so a closed window would stay in the
-//! footprint. mimalloc hands them back on request (measured in `examples/settings_memory.rs`).
+//! footprint. mimalloc hands them back on request (measured by `examples/settings_probe.rs`).
 
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
