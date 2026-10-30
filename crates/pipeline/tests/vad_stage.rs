@@ -195,6 +195,35 @@ fn the_toggle_is_an_optional_boxed_engine() {
     assert_eq!(whole.unwrap(), vec![recording]);
 }
 
+/// A meeting's `[mm:ss]` comes from here.
+#[test]
+fn live_chunks_know_where_they_start_in_the_recording() {
+    let mut vad = LoudIsSpeech::default();
+    let options = VadOptions {
+        min_chunk: Duration::from_secs(1),
+        ..VadOptions::default()
+    };
+    let recording = audio(&[
+        (QUIET, 3_000),
+        (VOICE, 2_000),
+        (QUIET, 4_000),
+        (VOICE, 2_000),
+    ]);
+    let mut live = LiveVad::new(&mut vad, options);
+
+    let mut chunks = Vec::new();
+    for frame in recording.chunks(FRAME_SAMPLES) {
+        chunks.extend(live.push(frame).unwrap().chunks);
+    }
+    chunks.extend(live.finish().unwrap());
+
+    let starts: Vec<_> = chunks.iter().map(|chunk| chunk.start).collect();
+    assert_eq!(
+        starts,
+        [Duration::from_millis(2_800), Duration::from_millis(8_800)]
+    );
+}
+
 #[test]
 fn a_boxed_engine_serves_one_live_dictation_after_another() {
     let mut engine: Box<dyn Vad> = Box::new(LoudIsSpeech::default());
@@ -297,14 +326,18 @@ fn run_live(vad: &mut dyn Vad, audio: &[f32], options: VadOptions) -> LiveRun {
         let now_ms = (index + 1) * FRAME_MS as usize;
         let update = live.push(frame).unwrap();
         run.chunks
-            .extend(update.chunks.into_iter().map(|chunk| (now_ms, chunk)));
+            .extend(update.chunks.into_iter().map(|chunk| (now_ms, chunk.clip)));
         if update.auto_stop && run.auto_stop_at_ms.is_none() {
             run.auto_stop_at_ms = Some(now_ms);
         }
     }
     let end_ms = audio.len() * 1_000 / SAMPLE_RATE_HZ as usize;
-    run.chunks
-        .extend(live.finish().unwrap().into_iter().map(|c| (end_ms, c)));
+    run.chunks.extend(
+        live.finish()
+            .unwrap()
+            .into_iter()
+            .map(|chunk| (end_ms, chunk.clip)),
+    );
     run
 }
 

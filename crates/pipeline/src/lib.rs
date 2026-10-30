@@ -5,9 +5,21 @@
 use wf_core::audio::AudioClip;
 
 pub mod rules;
+#[cfg(feature = "sherpa")]
+pub mod sherpa;
 #[cfg(feature = "silero")]
 pub mod silero;
 pub mod vad;
+#[cfg(feature = "whisper")]
+pub mod whisper;
+pub mod worker;
+
+/// CPU threads for an ASR engine. Speed stops improving much past this (measured on 150 s of
+/// speech); ticket 14 checks it on real tiers.
+#[cfg(any(feature = "whisper", feature = "sherpa"))]
+fn inference_threads() -> usize {
+    std::thread::available_parallelism().map_or(4, |cores| cores.get().min(8))
+}
 
 /// Engine failures that the pill's Error state and the fallbacks need to tell apart.
 #[derive(Debug, thiserror::Error)]

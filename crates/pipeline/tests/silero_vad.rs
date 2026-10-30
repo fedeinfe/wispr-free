@@ -277,7 +277,7 @@ fn a_silent_hands_free_dictation_auto_stops_with_nothing_to_transcribe() {
         stopped |= update.auto_stop;
     }
     let mut asr = CountingAsr::default();
-    let chunks = live.finish().unwrap();
+    let chunks = live.finish().unwrap().into_iter().map(|chunk| chunk.clip);
     let transcript = transcribe_speech(chunks, &mut asr, &AsrOptions::default()).unwrap();
 
     assert!(stopped);

@@ -70,11 +70,18 @@ pub struct LiveVad<'a> {
     last_speech: usize,
 }
 
+/// A chunk of a running recording. `start` is where it begins, so a meeting can timestamp it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LiveChunk {
+    pub start: Duration,
+    pub clip: AudioClip,
+}
+
 /// What one [`LiveVad::push`] produced.
 #[derive(Debug, Default, PartialEq)]
 pub struct LiveUpdate {
     /// Chunks ready for ASR, in order.
-    pub chunks: Vec<AudioClip>,
+    pub chunks: Vec<LiveChunk>,
     /// The silence reached [`VadOptions::auto_stop`]. Stays set until speech resumes.
     pub auto_stop: bool,
 }
@@ -115,7 +122,7 @@ impl<'a> LiveVad<'a> {
     }
 
     /// Ends the recording and returns the chunks still to transcribe.
-    pub fn finish(mut self) -> Result<Vec<AudioClip>, PipelineError> {
+    pub fn finish(mut self) -> Result<Vec<LiveChunk>, PipelineError> {
         let mut chunks = Vec::new();
         for segment in self.vad.finish()? {
             if let Some(range) = self.chunker.add(segment, self.received) {
@@ -128,13 +135,16 @@ impl<'a> LiveVad<'a> {
         Ok(chunks)
     }
 
-    fn take(&mut self, range: Range<usize>) -> AudioClip {
+    fn take(&mut self, range: Range<usize>) -> LiveChunk {
         let start = range.start - self.pending_start;
         let end = range.end - self.pending_start;
-        let chunk = AudioClip::new(self.pending[start..end].to_vec());
+        let clip = AudioClip::new(self.pending[start..end].to_vec());
         self.pending.drain(..end);
         self.pending_start = range.end;
-        chunk
+        LiveChunk {
+            start: Duration::from_secs_f64(range.start as f64 / f64::from(SAMPLE_RATE_HZ)),
+            clip,
+        }
     }
 }
 

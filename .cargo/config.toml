@@ -1,0 +1,9 @@
+# ADR-0003: llama.cpp is a shared library so its ggml stays apart from whisper.cpp's. Binaries
+# look for it next to themselves.
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-Wl,-rpath,@executable_path"]
+
+# An executable exports static symbols that a shared library also uses, so without
+# --exclude-libs libllama binds to whisper.cpp's older ggml and aborts.
+[target.'cfg(target_os = "linux")']
+rustflags = ["-C", "link-arg=-Wl,--exclude-libs,ALL", "-C", "link-arg=-Wl,-rpath,$ORIGIN"]

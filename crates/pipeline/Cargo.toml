@@ -13,6 +13,20 @@ publish.workspace = true
 wf-core.workspace = true
 thiserror.workspace = true
 sherpa-onnx = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
+whisper-rs = { workspace = true, optional = true }
 
 [features]
 silero = ["dep:sherpa-onnx"]
+sherpa = ["dep:sherpa-onnx", "dep:tempfile"]
+whisper = ["dep:whisper-rs"]
+metal = ["whisper-rs?/metal"]
+cuda = ["whisper-rs?/cuda"]
+vulkan = ["whisper-rs?/vulkan"]
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[example]]
+name = "asr"
+required-features = ["whisper", "sherpa", "silero"]

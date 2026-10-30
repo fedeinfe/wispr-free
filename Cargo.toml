@@ -32,9 +32,10 @@ rubato = "5.0.1"
 nnnoiseless = "0.5.2"
 
 # Inference (ADR-0003). GPU backends are features: whisper-rs/llama-cpp-2 `metal`, `cuda`, `vulkan`.
+# llama.cpp must stay `dynamic-link`: its ggml can't share a binary with whisper.cpp's.
 sherpa-onnx = "2.0.1"
 whisper-rs = "0.16.0"
-llama-cpp-2 = { version = "0.1.160", default-features = false }
+llama-cpp-2 = { version = "0.1.160", default-features = false, features = ["dynamic-link"] }
 
 # Storage
 rusqlite = { version = "0.41.1", features = ["bundled"] }
