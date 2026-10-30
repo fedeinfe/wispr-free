@@ -7066,7 +7066,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "serde",
+ "serde_json",
  "toml",
+ "wf-core",
+ "wf-meetings",
+ "wf-models",
  "wf-pipeline",
 ]
 

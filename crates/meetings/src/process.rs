@@ -193,7 +193,6 @@ fn refine(
         };
     }
 
-    let reason = "off";
     let filled = if live.gaps.is_empty() {
         fill_gaps(audio, &turns, &live, None, &options.refine, cancel)
     } else {
@@ -216,12 +215,12 @@ fn refine(
     if filled.transcript != live {
         meeting.save_refined(&filled)?;
     }
-    meeting.set_stage(Stage::Refine, skipped(reason))
+    meeting.set_stage(Stage::Refine, skipped("off"))
 }
 
-fn load_for_refine(
-    engines: &mut dyn MeetingEngines,
-) -> Result<(Box<dyn Asr>, Box<dyn Vad>), PipelineError> {
+type RefineEngines = (Box<dyn Asr>, Box<dyn Vad>);
+
+fn load_for_refine(engines: &mut dyn MeetingEngines) -> Result<RefineEngines, PipelineError> {
     Ok((engines.asr()?, engines.vad()?))
 }
 

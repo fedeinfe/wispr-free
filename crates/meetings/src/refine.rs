@@ -5,7 +5,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use wf_core::audio::{AudioClip, SAMPLE_RATE_HZ};
+use wf_core::audio::{AudioClip, FRAME_SAMPLES, SAMPLE_RATE_HZ};
 use wf_pipeline::vad::{LiveVad, VadOptions};
 use wf_pipeline::{Asr, AsrOptions, PipelineError, Vad};
 
@@ -20,9 +20,9 @@ const MIN_CHUNK: Duration = Duration::from_secs(4);
 /// Language detection is unreliable on less audio than this, so a chunk this short uses the
 /// language of the last longer one. A bilingual meeting still switches per chunk.
 const MIN_DETECT: Duration = Duration::from_secs(3);
-/// VAD reads the recording in blocks of this many samples: 10 s. In one go, sherpa would hold
-/// every segment it closed until the end.
-const VAD_BLOCK: usize = 160_000;
+/// A pause this long ends a chunk however short it is. Without it one person's turns would join
+/// up across whatever happened in between, and the text would land at the wrong time.
+const CHUNK_PAUSE: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RefineOptions {
@@ -35,6 +35,8 @@ impl Default for RefineOptions {
         Self {
             vad: VadOptions {
                 min_chunk: MIN_CHUNK,
+                // Here this doesn't stop anything: it's the signal to close the chunk.
+                auto_stop: Some(CHUNK_PAUSE),
                 ..VadOptions::default()
             },
             asr: AsrOptions::default(),
@@ -171,8 +173,12 @@ fn speech_jobs(
 ) -> Result<Vec<Job>, PipelineError> {
     let mut live = LiveVad::new(vad, options.vad.clone());
     let mut chunks = Vec::new();
-    for block in clip.samples().chunks(VAD_BLOCK) {
-        chunks.extend(live.push(block)?.chunks);
+    for frame in clip.samples().chunks(FRAME_SAMPLES) {
+        let update = live.push(frame)?;
+        chunks.extend(update.chunks);
+        if update.auto_stop {
+            chunks.extend(live.flush());
+        }
     }
     chunks.extend(live.finish()?);
 

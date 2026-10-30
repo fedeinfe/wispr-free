@@ -14,8 +14,11 @@ use wf_core::audio::{AudioClip, SAMPLE_RATE_HZ};
 
 use crate::{Diarizer, PipelineError, SpeakerTurn};
 
-/// Cosine distance under which two turns are the same voice.
-const CLUSTER_THRESHOLD: f32 = 0.5;
+/// Cosine distance under which two turns are the same voice. Measured on ERes2Net with three
+/// voices over 30 minutes: 0.5 finds 26 speakers, 0.7 finds 12, 0.9 finds 5, 1.1 finds the 3.
+const CLUSTER_THRESHOLD: f32 = 1.1;
+/// How far each 10 s window moves, as a fraction of the window.
+const WINDOW_SHIFT: f32 = 0.1;
 /// Turns shorter than this are dropped: too little audio to tell a voice from.
 const MIN_TURN_SECONDS: f32 = 0.3;
 /// A pause shorter than this doesn't end a turn.
@@ -26,8 +29,10 @@ const MIN_PAUSE_SECONDS: f32 = 0.5;
 pub struct DiarizationConfig {
     pub segmentation: PathBuf,
     pub embedding: PathBuf,
-    /// How far each 10 s window moves, as a fraction of the window. Bigger is faster and coarser.
+    /// Bigger is faster and coarser.
     pub window_shift: f32,
+    /// Bigger merges more voices.
+    pub cluster_threshold: f32,
 }
 
 impl DiarizationConfig {
@@ -35,7 +40,8 @@ impl DiarizationConfig {
         Self {
             segmentation: segmentation.into(),
             embedding: embedding.into(),
-            window_shift: 0.1,
+            window_shift: WINDOW_SHIFT,
+            cluster_threshold: CLUSTER_THRESHOLD,
         }
     }
 }
@@ -62,7 +68,7 @@ impl SherpaDiarizer {
                 ..SpeakerEmbeddingExtractorConfig::default()
             },
             clustering: FastClusteringConfig {
-                threshold: CLUSTER_THRESHOLD,
+                threshold: config.cluster_threshold,
                 ..FastClusteringConfig::default()
             },
             min_duration_on: MIN_TURN_SECONDS,
