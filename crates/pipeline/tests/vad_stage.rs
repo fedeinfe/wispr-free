@@ -182,6 +182,38 @@ fn with_vad_off_an_empty_recording_still_has_no_chunks() {
     assert!(chunks.is_empty());
 }
 
+#[test]
+fn the_toggle_is_an_optional_boxed_engine() {
+    let recording = clip(&[(QUIET, 1_000), (VOICE, 1_000), (QUIET, 1_000)]);
+    let mut engine: Option<Box<dyn Vad>> = Some(Box::new(LoudIsSpeech::default()));
+
+    let trimmed = speech_chunks(&recording, engine.as_deref_mut(), &VadOptions::default());
+    engine = None;
+    let whole = speech_chunks(&recording, engine.as_deref_mut(), &VadOptions::default());
+
+    assert_eq!(duration_ms(&trimmed.unwrap()[0]), 1_400);
+    assert_eq!(whole.unwrap(), vec![recording]);
+}
+
+#[test]
+fn a_boxed_engine_serves_one_live_dictation_after_another() {
+    let mut engine: Box<dyn Vad> = Box::new(LoudIsSpeech::default());
+
+    let first = run_live(
+        engine.as_mut(),
+        &audio(&[(VOICE, 1_000)]),
+        VadOptions::default(),
+    );
+    let second = run_live(
+        engine.as_mut(),
+        &audio(&[(VOICE, 2_000)]),
+        VadOptions::default(),
+    );
+
+    assert_eq!(duration_ms(&first.chunks[0].1), 1_000);
+    assert_eq!(duration_ms(&second.chunks[0].1), 2_000);
+}
+
 /// Replies with one canned text per call and counts the calls.
 struct ScriptedAsr {
     replies: Vec<&'static str>,

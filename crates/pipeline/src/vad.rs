@@ -34,7 +34,7 @@ impl Default for VadOptions {
 /// `None` is VAD switched off: the whole recording goes through.
 pub fn speech_chunks(
     clip: &AudioClip,
-    vad: Option<&mut dyn Vad>,
+    vad: Option<&mut (dyn Vad + '_)>,
     options: &VadOptions,
 ) -> Result<Vec<AudioClip>, PipelineError> {
     let samples = clip.samples();
