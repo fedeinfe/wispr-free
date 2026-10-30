@@ -137,7 +137,7 @@ impl ModelStore {
         self.root.join(id)
     }
 
-    pub fn status(&self, model: &ModelEntry) -> ModelStatus {
+    pub fn status<K>(&self, model: &ModelEntry<K>) -> ModelStatus {
         let dir = self.model_dir(&model.id);
         let mut complete = 0;
         let mut downloaded = 0;
@@ -160,7 +160,7 @@ impl ModelStore {
 
     /// Re-hashes every installed file against the manifest. `false` when a file is missing or
     /// corrupt; downloading again replaces only what's missing, so delete a corrupt model first.
-    pub fn verify(&self, model: &ModelEntry) -> io::Result<bool> {
+    pub fn verify<K>(&self, model: &ModelEntry<K>) -> io::Result<bool> {
         let dir = self.model_dir(&model.id);
         for file in &model.files {
             let path = dir.join(&file.name);
@@ -177,7 +177,7 @@ impl ModelStore {
     }
 
     /// Removes the model's folder, including partial downloads.
-    pub fn delete(&self, model: &ModelEntry) -> io::Result<()> {
+    pub fn delete<K>(&self, model: &ModelEntry<K>) -> io::Result<()> {
         match fs::remove_dir_all(self.model_dir(&model.id)) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
             other => other,
@@ -186,9 +186,9 @@ impl ModelStore {
 
     /// Downloads whatever is missing. Blocking: run it on a worker thread. Setting `cancel`
     /// stops between chunks and keeps the partial file for a later resume.
-    pub fn download(
+    pub fn download<K>(
         &self,
-        model: &ModelEntry,
+        model: &ModelEntry<K>,
         cancel: &AtomicBool,
         on_progress: &mut dyn FnMut(Progress),
     ) -> Result<(), DownloadError> {
@@ -226,16 +226,26 @@ impl ModelStore {
         on_progress: &mut dyn FnMut(Progress),
     ) -> Result<(), DownloadError> {
         let models = catalog.models_for_tier(tier);
-        let total = models.iter().map(|m| m.download_size()).sum();
+        let speaker_models = catalog.speaker_models_for_tier(tier);
+        let total = models.iter().map(|m| m.download_size()).sum::<u64>()
+            + speaker_models.iter().map(|m| m.download_size()).sum::<u64>();
         let mut done = 0;
+        let mut track = |n: u64, finished: bool| {
+            on_progress(Progress {
+                downloaded: done + n,
+                total,
+            });
+            if finished {
+                done += n;
+            }
+        };
         for model in models {
-            self.download(model, cancel, &mut |p| {
-                on_progress(Progress {
-                    downloaded: done + p.downloaded,
-                    total,
-                })
-            })?;
-            done += model.download_size();
+            self.download(model, cancel, &mut |p| track(p.downloaded, false))?;
+            track(model.download_size(), true);
+        }
+        for model in speaker_models {
+            self.download(model, cancel, &mut |p| track(p.downloaded, false))?;
+            track(model.download_size(), true);
         }
         Ok(())
     }
