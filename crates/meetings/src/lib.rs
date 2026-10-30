@@ -2,10 +2,14 @@
 //! crash-safe incremental writer (ticket 15), live transcript, refine pass, diarization and
 //! summary (16), and meeting chat (17).
 
+mod align;
+mod detect;
 mod ogg;
 mod reader;
 mod writer;
 
+pub use align::{Channel, StereoAligner, StereoFrame};
+pub use detect::{MeetingApp, MeetingDetector, MicClient, classify_client, parse_pw_dump};
 pub use reader::{MeetingAudio, read_meeting, repair_meeting};
 pub use writer::MeetingWriter;
 

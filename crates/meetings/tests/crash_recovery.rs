@@ -132,7 +132,10 @@ fn a_flipped_byte_keeps_everything_before_the_damaged_page() {
 
     assert_same_start(&audio, &whole);
     let kept = audio.you.samples().len();
-    assert!(kept > 4 * PAGE_SAMPLES && kept <= 5 * PAGE_SAMPLES, "{kept}");
+    assert!(
+        kept > 4 * PAGE_SAMPLES && kept <= 5 * PAGE_SAMPLES,
+        "{kept}"
+    );
 }
 
 #[test]
