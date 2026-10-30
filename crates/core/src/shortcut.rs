@@ -121,7 +121,7 @@ impl Combo {
         &self.0
     }
 
-    /// Whether `pressed` holds exactly this combo: every key matched, nothing extra.
+    /// Whether `held` is exactly this combo: every key matched, nothing extra.
     pub fn is_held_exactly(&self, held: &[Key]) -> bool {
         held.len() == self.0.len() && self.is_held_within(held)
     }
