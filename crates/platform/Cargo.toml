@@ -11,3 +11,4 @@ publish.workspace = true
 # under [target.'cfg(...)'.dependencies].
 [dependencies]
 wf-core.workspace = true
+thiserror.workspace = true
