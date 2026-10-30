@@ -48,28 +48,38 @@ impl AudioBackend for CpalBackend {
         let device_id = DeviceId::from_str(id).map_err(|_| unavailable())?;
         let device = self.host.device_by_id(&device_id).ok_or_else(unavailable)?;
         let supported = device.default_input_config().map_err(backend)?;
-        let format = StreamFormat {
-            sample_rate: supported.sample_rate(),
-            channels: supported.channels(),
-        };
-        let config = supported.config();
-        let stream = match supported.sample_format() {
-            SampleFormat::F32 => build::<f32>(&device, &config, sink),
-            SampleFormat::I16 => build::<i16>(&device, &config, sink),
-            SampleFormat::I32 => build::<i32>(&device, &config, sink),
-            SampleFormat::U16 => build::<u16>(&device, &config, sink),
-            SampleFormat::I8 => build::<i8>(&device, &config, sink),
-            SampleFormat::U8 => build::<u8>(&device, &config, sink),
-            SampleFormat::F64 => build::<f64>(&device, &config, sink),
-            other => {
-                return Err(Error::Backend(format!(
-                    "unsupported sample format {other:?}"
-                )));
-            }
-        }?;
-        stream.play().map_err(backend)?;
-        Ok((stream, format))
+        open_stream(&device, &supported, sink)
     }
+}
+
+/// Starts capturing from `device` in `supported` format. Loopback uses this directly because an
+/// output device has no default *input* config.
+pub fn open_stream(
+    device: &cpal::Device,
+    supported: &cpal::SupportedStreamConfig,
+    sink: StreamSink,
+) -> Result<(cpal::Stream, StreamFormat), Error> {
+    let format = StreamFormat {
+        sample_rate: supported.sample_rate(),
+        channels: supported.channels(),
+    };
+    let config = supported.config();
+    let stream = match supported.sample_format() {
+        SampleFormat::F32 => build::<f32>(device, &config, sink),
+        SampleFormat::I16 => build::<i16>(device, &config, sink),
+        SampleFormat::I32 => build::<i32>(device, &config, sink),
+        SampleFormat::U16 => build::<u16>(device, &config, sink),
+        SampleFormat::I8 => build::<i8>(device, &config, sink),
+        SampleFormat::U8 => build::<u8>(device, &config, sink),
+        SampleFormat::F64 => build::<f64>(device, &config, sink),
+        other => {
+            return Err(Error::Backend(format!(
+                "unsupported sample format {other:?}"
+            )));
+        }
+    }?;
+    stream.play().map_err(backend)?;
+    Ok((stream, format))
 }
 
 fn describe(device: &cpal::Device) -> Option<InputDevice> {
