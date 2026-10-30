@@ -33,7 +33,7 @@ fn a_silent_system_channel_does_not_hold_the_mic_back() {
     let written: Vec<StereoFrame> = (0..100).flat_map(|_| mic(&mut aligner, 0.5)).collect();
 
     let delayed = 100 - written.len();
-    assert!(delayed * 40 <= 400, "mic held back by {} ms", delayed * 40);
+    assert!(delayed * 40 <= 200, "mic held back by {} ms", delayed * 40);
     assert!(written.iter().all(|f| f.others.iter().all(|&s| s == 0.0)));
     assert!(written.iter().all(|f| f.you.iter().all(|&s| s == 0.5)));
 }
@@ -44,7 +44,7 @@ fn a_missing_mic_does_not_hold_system_audio_back() {
 
     let written: Vec<StereoFrame> = (0..100).flat_map(|_| system(&mut aligner, 0.5)).collect();
 
-    assert!(written.len() >= 90);
+    assert!(written.len() >= 94);
     assert!(written.iter().all(|f| f.you.iter().all(|&s| s == 0.0)));
 }
 
@@ -88,7 +88,7 @@ fn a_slow_clock_stays_within_the_skew_limit_for_an_hour() {
     }
 
     let behind = frames_per_hour - written;
-    assert!(behind * 40 <= 400, "{} ms behind", behind * 40);
+    assert!(behind * 40 <= 200, "{} ms behind", behind * 40);
 }
 
 #[test]

@@ -6,8 +6,9 @@ use std::collections::VecDeque;
 use wf_core::audio::FRAME_SAMPLES;
 
 /// One side may run this far ahead before the other is padded. Long enough to ride out normal
-/// jitter, and it adds to what a crash can lose.
-const MAX_SKEW_FRAMES: usize = 10;
+/// jitter, short enough that the channels stay close together after a gap. It also adds to what
+/// a crash can lose.
+const MAX_SKEW_FRAMES: usize = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Channel {
