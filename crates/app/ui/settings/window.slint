@@ -1,8 +1,8 @@
 // The Settings window (spec §5). Rust creates it on open and drops it on close.
-import { ScrollView, Palette } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 import { Prefs, SettingsValues, ShortcutRow, MicrophoneRow, LanguageRow, ReplacementRow, SnippetRow, ModelRow } from "bridge.slint";
 import { Theme } from "theme.slint";
-import { ErrorText } from "controls.slint";
+import { ErrorText, SidebarItem, ThemedWindow } from "controls.slint";
 import { GeneralPage } from "pages/general.slint";
 import { ModelsPage } from "pages/models.slint";
 import { PipelinePage } from "pages/pipeline.slint";
@@ -14,53 +14,8 @@ import { AboutPage } from "pages/about.slint";
 
 export { Prefs, SettingsValues, ShortcutRow, MicrophoneRow, LanguageRow, ReplacementRow, SnippetRow, ModelRow }
 
-component SidebarItem inherits Rectangle {
-    in property <string> label;
-    in property <image> icon;
-    in property <bool> selected;
-    callback clicked();
-
-    height: 32px;
-    border-radius: 6px;
-    background: selected ? Theme.surface : touch.has-hover ? Theme.hover : transparent;
-    accessible-role: tab;
-    accessible-label: label;
-    accessible-item-selected: selected;
-    accessible-action-default => {
-        clicked();
-    }
-
-    HorizontalLayout {
-        padding-left: 10px;
-        padding-right: 10px;
-        spacing: 10px;
-
-        Image {
-            width: 16px;
-            source: root.icon;
-            colorize: root.selected ? Theme.accent : Theme.muted;
-            image-fit: contain;
-        }
-
-        Text {
-            text: root.label;
-            color: root.selected ? Theme.text : Theme.muted;
-            font-size: Theme.body-text;
-            vertical-alignment: center;
-        }
-    }
-
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => {
-            root.clicked();
-        }
-    }
-}
-
-export component SettingsWindow inherits Window {
+export component SettingsWindow inherits ThemedWindow {
     in-out property <int> page;
-    property <int> theme: Prefs.values.theme;
     property <[{ label: string, icon: image }]> pages: [
         { label: "General", icon: @image-url("../icons/settings/general.svg") },
         { label: "Models", icon: @image-url("../icons/settings/models.svg") },
@@ -72,28 +27,11 @@ export component SettingsWindow inherits Window {
         { label: "About", icon: @image-url("../icons/settings/about.svg") },
     ];
 
-    function apply-theme() {
-        Palette.color-scheme = Prefs.values.theme == 1 ? ColorScheme.light : Prefs.values.theme == 2 ? ColorScheme.dark : ColorScheme.unknown;
-    }
-
     title: "wispr-free settings";
-    icon: @image-url("../icons/tray.svg");
     preferred-width: 880px;
     preferred-height: 640px;
     min-width: 760px;
     min-height: 480px;
-    background: Theme.background;
-
-    init => {
-        Theme.system-dark = Palette.color-scheme == ColorScheme.dark;
-        if Prefs.values.theme != 0 {
-            root.apply-theme();
-        }
-    }
-
-    changed theme => {
-        root.apply-theme();
-    }
 
     changed page => {
         scroller.content-y = 0;

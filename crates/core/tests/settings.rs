@@ -83,6 +83,8 @@ fn every_setting_changed() -> Settings {
     privacy.context_awareness = false;
     privacy.history_retention = HistoryRetention::Never;
 
+    settings.onboarding.finished = true;
+
     settings
 }
 
@@ -147,6 +149,10 @@ fn defaults_follow_the_spec() {
     assert_eq!(settings.media.while_dictating, MediaWhileDictating::Nothing);
     assert!(settings.privacy.context_awareness);
     assert_eq!(settings.privacy.history_retention, HistoryRetention::Keep);
+    assert!(
+        !settings.onboarding.finished,
+        "a first run shows onboarding"
+    );
 }
 
 #[test]

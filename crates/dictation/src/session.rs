@@ -25,7 +25,7 @@ use crate::coordinator::Input;
 use crate::engines::{Engines, Loaded, Ready};
 use crate::plan::Plan;
 use crate::worker::{Insert, Job};
-use crate::{Event, Microphone};
+use crate::{Event, Microphone, TrialPart};
 
 /// How often the pump looks at its stop flag while the mic is quiet.
 const STOP_POLL: Duration = Duration::from_millis(10);
@@ -36,6 +36,17 @@ const MAX_CONTEXT_WORDS: usize = 40;
 
 const NO_MIC: &str = "No microphone found";
 const SILENT_MIC: &str = "The microphone sends only silence. Check its permission and mute switch";
+pub(crate) const NOTHING_HEARD: &str = "No speech heard. Speak up, or check the microphone";
+
+/// Which part a problem reported on a dictation points at. Everything past the mic is the engines,
+/// which is to say the models they run.
+pub(crate) fn part_at_fault(problem: &str) -> TrialPart {
+    if [NO_MIC, SILENT_MIC, NOTHING_HEARD].contains(&problem) {
+        TrialPart::Microphone
+    } else {
+        TrialPart::Models
+    }
+}
 
 /// What the threads of a dictation share with the coordinator.
 pub(crate) struct SessionShared {
@@ -83,7 +94,9 @@ impl Pump {
         thread::Builder::new()
             .name("wf-mic-pump".into())
             .spawn(move || {
-                if let Err(problem) = pump.run(microphone.as_ref(), ranking, audio, &shared) {
+                // Before `audio` goes: the session takes a closed channel for a cancel, and a
+                // trial must report this first.
+                if let Err(problem) = pump.run(microphone.as_ref(), ranking, &audio, &shared) {
                     shared.finished(id, Some(problem));
                 }
             })
@@ -104,7 +117,7 @@ impl Pump {
         &self,
         microphone: &dyn Microphone,
         ranking: Vec<String>,
-        audio: Sender<Audio>,
+        audio: &Sender<Audio>,
         shared: &SessionShared,
     ) -> Result<(), String> {
         let opened = Instant::now();
@@ -216,7 +229,12 @@ impl Session {
             Ok(Some(insert)) => {
                 let _ = self.shared.jobs.send(Job::Insert(Box::new(insert)));
             }
-            Ok(None) => self.shared.finished(self.id, None),
+            Ok(None) => {
+                if self.trial && !self.cancelled() {
+                    let _ = self.shared.inbox.send(Input::HeardNothing(self.id));
+                }
+                self.shared.finished(self.id, None);
+            }
             Err(problem) => self.shared.finished(self.id, Some(problem)),
         }
     }

@@ -85,6 +85,10 @@ impl Desktop for SystemDesktop {
         self.dictation.forget_history();
     }
 
+    fn look_for_microphones(&self, mailbox: &Mailbox) {
+        look_for_microphones(mailbox);
+    }
+
     fn test_microphone(
         &self,
         ranking: Vec<String>,
@@ -154,12 +158,20 @@ pub fn start_probes(mailbox: &Mailbox) {
             recommended: format!("{:?}", hardware.recommended_tier()),
         });
     });
-    let microphones_mailbox = mailbox.clone();
+    look_for_microphones(mailbox);
+}
+
+/// One at a time: onboarding looks every second, and a slow audio system mustn't pile threads up.
+fn look_for_microphones(mailbox: &Mailbox) {
+    static LOOKING: AtomicBool = AtomicBool::new(false);
+    if LOOKING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let mailbox = mailbox.clone();
     thread::spawn(move || {
         let backend = CpalBackend::new();
-        microphones_mailbox.post(Event::Microphones {
-            devices: backend.devices(),
-            default: backend.default_device(),
-        });
+        let (devices, default) = (backend.devices(), backend.default_device());
+        LOOKING.store(false, Ordering::SeqCst);
+        mailbox.post(Event::Microphones { devices, default });
     });
 }

@@ -24,10 +24,14 @@ const WINDOW_TEARDOWN: Duration = Duration::from_millis(600);
 /// Builds what a window needs, each time one opens.
 pub type MakeParts = Rc<dyn Fn() -> SettingsParts>;
 
+/// Asked before the window opens. True means something else took the request.
+pub type Redirect = Rc<RefCell<Option<Box<dyn Fn() -> bool>>>>;
+
 #[derive(Clone)]
 pub struct SettingsHost {
     make_parts: MakeParts,
     open: Rc<RefCell<Option<SettingsController>>>,
+    redirect: Redirect,
 }
 
 impl SettingsHost {
@@ -35,7 +39,14 @@ impl SettingsHost {
         Self {
             make_parts,
             open: Rc::default(),
+            redirect: Rc::default(),
         }
+    }
+
+    /// Onboarding shares the models folder with this window, and downloads don't lock their
+    /// files, so while it's open it comes forward in this window's place.
+    pub fn redirect_with(&self, redirect: impl Fn() -> bool + 'static) {
+        *self.redirect.borrow_mut() = Some(Box::new(redirect));
     }
 
     /// The host of the running app, on the real OS and data folder.
@@ -65,6 +76,9 @@ impl SettingsHost {
 
     /// Opens the window, or brings it forward if it's open already.
     pub fn open(&self) -> Result<(), PlatformError> {
+        if self.redirect.borrow().as_ref().is_some_and(|taken| taken()) {
+            return Ok(());
+        }
         if let Some(controller) = &*self.open.borrow() {
             controller.window().show()?;
             controller.bring_to_front();
@@ -94,7 +108,8 @@ impl SettingsHost {
     }
 }
 
-fn system_parts(
+/// What a window on the real machine is built from.
+pub fn system_parts(
     store: Arc<SettingsStore>,
     on_change: OnChange,
     dictation: Dictation,

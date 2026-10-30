@@ -1,6 +1,77 @@
 // Our own controls, so that every part of the window uses the palette in theme.slint.
+import { Palette } from "std-widgets.slint";
 import { Prefs } from "bridge.slint";
 import { Theme } from "theme.slint";
+
+// A window that follows the theme setting.
+export component ThemedWindow inherits Window {
+    property <int> theme: Prefs.values.theme;
+
+    function apply-theme() {
+        Palette.color-scheme = Prefs.values.theme == 1 ? ColorScheme.light : Prefs.values.theme == 2 ? ColorScheme.dark : ColorScheme.unknown;
+    }
+
+    background: Theme.background;
+    icon: @image-url("../icons/tray.svg");
+
+    init => {
+        Theme.system-dark = Palette.color-scheme == ColorScheme.dark;
+        if Prefs.values.theme != 0 {
+            root.apply-theme();
+        }
+    }
+
+    changed theme => {
+        root.apply-theme();
+    }
+}
+
+export component SidebarItem inherits Rectangle {
+    in property <string> label;
+    in property <image> icon;
+    in property <bool> selected;
+    // Onboarding's list only shows where you are.
+    in property <bool> interactive: true;
+    callback clicked();
+
+    height: 32px;
+    border-radius: 6px;
+    background: selected ? Theme.surface : touch.has-hover ? Theme.hover : transparent;
+    accessible-role: tab;
+    accessible-label: label;
+    accessible-item-selected: selected;
+    accessible-action-default => {
+        clicked();
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+
+        Image {
+            width: 16px;
+            source: root.icon;
+            colorize: root.selected ? Theme.accent : Theme.muted;
+            image-fit: contain;
+        }
+
+        Text {
+            text: root.label;
+            color: root.selected ? Theme.text : Theme.muted;
+            font-size: Theme.body-text;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.interactive;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
 
 export component Label inherits Text {
     color: Theme.text;
@@ -447,13 +518,15 @@ export component Page inherits VerticalLayout {
 // so it doesn't depend on the font having the glyph.
 export component StatusMark inherits Rectangle {
     in property <bool> ok;
+    // Not known yet, so neither a tick nor a warning.
+    in property <bool> waiting;
 
     width: 14px;
     height: 14px;
     border-radius: 7px;
-    background: ok ? Theme.accent : Theme.danger;
+    background: waiting ? Theme.track : ok ? Theme.accent : Theme.danger;
 
-    if root.ok: Path {
+    if root.ok && !root.waiting: Path {
         x: 3px;
         y: 4px;
         width: 8px;
@@ -464,7 +537,7 @@ export component StatusMark inherits Rectangle {
         fill: transparent;
     }
 
-    if !root.ok: Text {
+    if !root.ok && !root.waiting: Text {
         text: "!";
         color: Theme.on-accent;
         font-size: 11px;

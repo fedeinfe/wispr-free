@@ -4,7 +4,10 @@ import { PillLook } from "pill.slint";
 export component Tray inherits SystemTrayIcon {
     in property <bool> debug-menu;
     in property <bool> in-meeting;
+    // Onboarding isn't finished, or something it set up broke.
+    in property <bool> setup-needed;
     callback toggle-meeting();
+    callback open-setup();
     callback open-settings();
     callback quit();
     callback debug-state(PillLook);
@@ -17,6 +20,10 @@ export component Tray inherits SystemTrayIcon {
     tooltip: "wispr-free";
 
     Menu {
+        if root.setup-needed: MenuItem {
+            title: "Finish setup…";
+            activated => { root.open-setup(); }
+        }
         MenuItem {
             title: root.in-meeting ? "Stop meeting notes" : "Start meeting notes";
             activated => { root.toggle-meeting(); }

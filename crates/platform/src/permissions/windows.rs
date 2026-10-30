@@ -4,7 +4,7 @@
 use windows_sys::Win32::Foundation::ERROR_SUCCESS;
 use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
 
-use super::{Access, Permissions};
+use super::{Access, Permission, Permissions};
 
 pub const MICROPHONE_DENIED: &str = "Allow the microphone in Windows Settings, Privacy & security";
 
@@ -17,6 +17,12 @@ pub fn check() -> Permissions {
         accessibility: Access::Granted,
         input_monitoring: Access::Granted,
     }
+}
+
+pub fn ask(_permission: Permission) {}
+
+pub fn settings_link(permission: Permission) -> Option<&'static str> {
+    (permission == Permission::Microphone).then_some("ms-settings:privacy-microphone")
 }
 
 fn microphone() -> Access {

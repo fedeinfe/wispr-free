@@ -1,0 +1,439 @@
+// First-run onboarding, and the one step that needs redoing when something it set up breaks. Rust
+// creates the window on open and drops it on close, like Settings, and shares its `Prefs`.
+import { ScrollView } from "std-widgets.slint";
+import { Prefs, SettingsValues, ShortcutRow, MicrophoneRow, LanguageRow, ReplacementRow, SnippetRow, ModelRow } from "../settings/bridge.slint";
+import { Theme } from "../settings/theme.slint";
+import { Btn, Card, ErrorText, Hint, Label, Page, Row, Select, SidebarItem, StatusMark, ThemedWindow } from "../settings/controls.slint";
+import { ModelLine, ModelsFolderCard } from "../settings/pages/models.slint";
+import { ShortcutLine } from "../settings/pages/general.slint";
+import { Consent, Mark, Setup, SetupStep, TrialPhase } from "setup.slint";
+
+export { Setup }
+
+// One thing to allow: what it's for, whether it is, and the way to change that.
+component PermissionCard inherits Card {
+    in property <string> name;
+    in property <string> why;
+    in property <Consent> consent;
+    in property <int> permission;
+    // macOS's question still works for this one, so the first button is worth showing.
+    in property <bool> can-ask: true;
+
+    title: root.name;
+    hint: root.why;
+
+    HorizontalLayout {
+        spacing: 8px;
+
+        VerticalLayout {
+            alignment: center;
+
+            StatusMark {
+                ok: root.consent == Consent.granted;
+                waiting: root.consent == Consent.not-asked;
+            }
+        }
+
+        Label {
+            horizontal-stretch: 1;
+            vertical-alignment: center;
+            text: root.consent == Consent.granted ? "Allowed"
+                : root.consent == Consent.not-asked ? "Not allowed yet" : "Not allowed";
+        }
+
+        if root.consent != Consent.granted && root.can-ask: Btn {
+            width: 80px;
+            text: "Allow…";
+            primary: true;
+            accessible-label: "Allow " + root.name;
+            clicked => {
+                Setup.ask(root.permission);
+            }
+        }
+
+        if root.consent != Consent.granted: Btn {
+            width: 170px;
+            text: "Open System Settings";
+            accessible-label: "Open System Settings for " + root.name;
+            clicked => {
+                Setup.open-pane(root.permission);
+            }
+        }
+    }
+
+    if root.consent == Consent.denied: Hint {
+        text: "Turn on Wispr Free in the list. If it's on already, turn it off and on again: macOS sees a rebuilt app as a new one.";
+    }
+}
+
+component MicrophonePage inherits Page {
+    PermissionCard {
+        name: "Microphone access";
+        why: "Wispr Free hears you only while you dictate, and your voice stays on this Mac.";
+        consent: Setup.microphone;
+        permission: 0;
+        can-ask: Setup.microphone == Consent.not-asked;
+    }
+
+    Card {
+        title: "Microphone";
+
+        HorizontalLayout {
+            spacing: 8px;
+
+            VerticalLayout {
+                alignment: center;
+
+                StatusMark {
+                    ok: Setup.microphone-name != "";
+                    waiting: !Setup.microphone-looked;
+                }
+            }
+
+            Label {
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+                text: !Setup.microphone-looked ? "Looking for a microphone…"
+                    : Setup.microphone-name != "" ? Setup.microphone-name
+                    : "No microphone connected";
+            }
+        }
+
+        if Setup.microphone-looked && Setup.microphone-name == "": Hint {
+            text: "This Mac has no input to listen to yet. Plug in a headset, a USB microphone or a webcam, or connect AirPods. This page notices by itself.";
+        }
+    }
+}
+
+component KeysPage inherits Page {
+    PermissionCard {
+        name: "Input Monitoring";
+        why: "Lets Wispr Free see your shortcut while another app is in front.";
+        consent: Setup.input-monitoring;
+        permission: 2;
+    }
+
+    PermissionCard {
+        name: "Accessibility";
+        why: "Lets Wispr Free paste your words into the app you're using.";
+        consent: Setup.accessibility;
+        permission: 1;
+    }
+
+    if Setup.keys-stuck: Card {
+        title: "One more thing";
+        hint: "Both are allowed, but the shortcut isn't reaching the app. macOS sometimes wants the app reopened after this.";
+
+        HorizontalLayout {
+            alignment: start;
+
+            Btn {
+                width: 140px;
+                text: "Quit and reopen";
+                primary: true;
+                clicked => {
+                    Setup.reopen-app();
+                }
+            }
+        }
+    }
+}
+
+component ModelsStepPage inherits Page {
+    Card {
+        title: "This computer";
+
+        Label {
+            text: Prefs.hardware-summary;
+        }
+
+        if Prefs.recommended-tier != "": Hint {
+            text: "Recommended for it: " + Prefs.recommended-tier;
+        }
+    }
+
+    Card {
+        title: "Quality";
+        hint: "Lite is quick and small. Balanced also rewrites your words cleanly. High needs the most memory. You can change this later in Settings.";
+
+        Row {
+            label: "Quality tier";
+
+            VerticalLayout {
+                alignment: center;
+
+                Select {
+                    label: "Quality tier";
+                    options: Prefs.values.tier == 3 ? ["Lite", "Balanced", "High", "Custom"] : ["Lite", "Balanced", "High"];
+                    current <=> Prefs.values.tier;
+                    enabled: !Prefs.model-busy;
+                    selected => {
+                        Prefs.commit();
+                    }
+                }
+            }
+        }
+    }
+
+    Card {
+        title: "What it downloads";
+        hint: Prefs.models-in-use-summary != "" ? Prefs.models-in-use-summary + " to download" : "Everything is downloaded.";
+
+        for model in Prefs.models-in-use: ModelLine {
+            model: model;
+        }
+
+        if Prefs.models-in-use-summary != "": HorizontalLayout {
+            alignment: start;
+
+            Btn {
+                width: 110px;
+                text: "Download all";
+                primary: true;
+                enabled: !Prefs.model-busy && !Prefs.models-folder-missing;
+                clicked => {
+                    Prefs.download-models-in-use();
+                }
+            }
+        }
+    }
+
+    if Prefs.model-error != "": ErrorText {
+        text: Prefs.model-error;
+    }
+
+    ModelsFolderCard { }
+}
+
+// A part the trial proves.
+component CheckLine inherits HorizontalLayout {
+    in property <string> name;
+    in property <Mark> mark;
+
+    spacing: 8px;
+    accessible-role: text;
+    accessible-label: root.name + (root.mark == Mark.passed ? ": works" : root.mark == Mark.failed ? ": failed" : ": not tried");
+
+    VerticalLayout {
+        alignment: center;
+
+        StatusMark {
+            ok: root.mark == Mark.passed;
+            waiting: root.mark == Mark.waiting;
+        }
+    }
+
+    Label {
+        horizontal-stretch: 1;
+        vertical-alignment: center;
+        text: root.name;
+    }
+}
+
+component TrialPage inherits Page {
+    Card {
+        title: "Your turn";
+
+        if !Setup.trial-problem: Label {
+            text: Setup.trial-message;
+        }
+
+        if Setup.trial-problem: ErrorText {
+            text: Setup.trial-message;
+        }
+
+        if Setup.trial-phase == TrialPhase.listening: Rectangle {
+            height: 4px;
+            border-radius: 2px;
+            background: Theme.track;
+            clip: true;
+
+            Rectangle {
+                x: 0;
+                width: parent.width * Setup.trial-level;
+                background: Theme.accent;
+            }
+        }
+
+        if Setup.trial-can-stop: HorizontalLayout {
+            alignment: start;
+
+            Btn {
+                width: 80px;
+                text: "Stop";
+                primary: true;
+                clicked => {
+                    Setup.stop-trial();
+                }
+            }
+        }
+    }
+
+    if Setup.trial-heard != "": Card {
+        title: "Heard";
+
+        Label {
+            text: Setup.trial-heard;
+        }
+    }
+
+    Card {
+        title: "What this proves";
+
+        CheckLine {
+            name: "Shortcut";
+            mark: Setup.trial-keys;
+        }
+
+        CheckLine {
+            name: "Microphone";
+            mark: Setup.trial-microphone;
+        }
+
+        CheckLine {
+            name: "Models";
+            mark: Setup.trial-models;
+        }
+    }
+
+    Card {
+        title: "If the shortcut does nothing";
+        hint: "Change it here, or start with the mouse to check the rest.";
+
+        if Prefs.shortcuts.length > 0: ShortcutLine {
+            index: 0;
+            shortcut: Prefs.shortcuts[0];
+        }
+
+        if Prefs.shortcut-error != "": ErrorText {
+            text: Prefs.shortcut-error;
+        }
+
+        HorizontalLayout {
+            alignment: start;
+
+            Btn {
+                width: 170px;
+                text: "Try without the shortcut";
+                enabled: Setup.trial-phase == TrialPhase.idle;
+                clicked => {
+                    Setup.try-with-mouse();
+                }
+            }
+        }
+    }
+}
+
+export component OnboardingWindow inherits ThemedWindow {
+    property <int> page: Setup.page;
+    property <[image]> icons: [
+        @image-url("../icons/settings/sounds.svg"),
+        @image-url("../icons/settings/general.svg"),
+        @image-url("../icons/settings/models.svg"),
+        @image-url("../icons/settings/pipeline.svg"),
+    ];
+
+    title: "Set up Wispr Free";
+    preferred-width: 760px;
+    preferred-height: 620px;
+    min-width: 680px;
+    min-height: 460px;
+
+    changed page => {
+        scroller.content-y = 0;
+    }
+
+    HorizontalLayout {
+        Rectangle {
+            width: 200px;
+            background: Theme.sidebar;
+
+            VerticalLayout {
+                padding: 12px;
+                padding-top: 16px;
+                spacing: 2px;
+                alignment: start;
+
+                for step[index] in Setup.steps: Rectangle {
+                    height: 32px;
+
+                    SidebarItem {
+                        label: step.title;
+                        icon: root.icons[step.page];
+                        selected: Setup.current == index;
+                        interactive: false;
+                    }
+
+                    if step.done: StatusMark {
+                        x: parent.width - self.width - 6px;
+                        y: (parent.height - self.height) / 2;
+                        ok: true;
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+
+            Text {
+                height: 58px;
+                x: 24px;
+                text: Setup.steps[Setup.current].title;
+                color: Theme.text;
+                font-size: Theme.heading-text;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+
+            if Prefs.notice != "": Rectangle {
+                height: 34px;
+
+                ErrorText {
+                    x: 24px;
+                    width: parent.width - 48px;
+                    text: Prefs.notice;
+                }
+            }
+
+            scroller := ScrollView {
+                vertical-stretch: 1;
+
+                VerticalLayout {
+                    width: scroller.visible-width;
+
+                    if Setup.page == 0: MicrophonePage { }
+                    if Setup.page == 1: KeysPage { }
+                    if Setup.page == 2: ModelsStepPage { }
+                    if Setup.page == 3: TrialPage { }
+                }
+            }
+
+            HorizontalLayout {
+                padding: 16px;
+                padding-left: 24px;
+                padding-right: 24px;
+                spacing: 8px;
+                alignment: end;
+
+                if Setup.current > 0: Btn {
+                    width: 80px;
+                    text: "Back";
+                    clicked => {
+                        Setup.back();
+                    }
+                }
+
+                Btn {
+                    width: 100px;
+                    text: Setup.continue-label;
+                    primary: true;
+                    enabled: Setup.can-continue;
+                    clicked => {
+                        Setup.continue();
+                    }
+                }
+            }
+        }
+    }
+}

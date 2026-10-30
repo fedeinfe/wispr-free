@@ -1,13 +1,18 @@
-//! macOS: TCC. Nothing here can ask for a permission, so a check never shows a dialog.
+//! macOS: TCC. A check never shows a dialog; only [`ask`] can.
 
 use std::ffi::{CStr, c_char, c_int, c_void};
+use std::thread;
 
+use block2::RcBlock;
 use objc2::msg_send;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyClass, AnyObject};
-use objc2_application_services::AXIsProcessTrusted;
+use objc2::runtime::{AnyClass, AnyObject, Bool};
+use objc2_application_services::{
+    AXIsProcessTrusted, AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt,
+};
+use objc2_core_foundation::{CFBoolean, CFDictionary, CFString};
 
-use super::{Access, Permissions};
+use super::{Access, Permission, Permissions};
 
 pub const MICROPHONE_DENIED: &str = "Allow the microphone in System Settings, Privacy & Security";
 
@@ -23,6 +28,7 @@ unsafe extern "C" {
 #[link(name = "IOKit", kind = "framework")]
 unsafe extern "C" {
     fn IOHIDCheckAccess(request: u32) -> u32;
+    fn IOHIDRequestAccess(request: u32) -> bool;
 }
 
 pub fn check() -> Permissions {
@@ -37,25 +43,72 @@ pub fn check() -> Permissions {
     }
 }
 
-/// AVFoundation is heavy, and only this check wants it, so it's loaded by hand on first use.
-fn microphone() -> Access {
-    let handle = unsafe { dlopen(AV_FOUNDATION.as_ptr(), RTLD_LAZY) };
-    if handle.is_null() {
-        return Access::Unknown;
-    }
-    let media_type = unsafe { dlsym(handle, c"AVMediaTypeAudio".as_ptr()) };
-    let Some(device) = AnyClass::get(c"AVCaptureDevice") else {
-        return Access::Unknown;
+/// Not on the caller's thread: each of these may wait for the user.
+pub fn ask(permission: Permission) {
+    thread::spawn(move || match permission {
+        Permission::Microphone => ask_microphone(),
+        Permission::Accessibility => ask_accessibility(),
+        Permission::InputMonitoring => {
+            unsafe { IOHIDRequestAccess(LISTEN_EVENT) };
+        }
+    });
+}
+
+/// The anchors are the ones in macOS's own `TCCServiceList.plist`.
+pub fn settings_link(permission: Permission) -> Option<&'static str> {
+    Some(match permission {
+        Permission::Microphone => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+        }
+        Permission::Accessibility => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        }
+        Permission::InputMonitoring => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+        }
+    })
+}
+
+fn ask_microphone() {
+    let Some((device, media_type)) = capture_device() else {
+        return;
     };
-    if media_type.is_null() {
-        return Access::Unknown;
-    }
-    let media_type = unsafe { *media_type.cast::<*const AnyObject>() };
-    let Some(media_type) = (unsafe { Retained::retain(media_type.cast_mut()) }) else {
+    let answered = RcBlock::new(|_granted: Bool| {});
+    let _: () = unsafe {
+        msg_send![device, requestAccessForMediaType: &*media_type, completionHandler: &*answered]
+    };
+}
+
+fn ask_accessibility() {
+    let prompt = unsafe { kAXTrustedCheckOptionPrompt };
+    let options =
+        CFDictionary::<CFString, CFBoolean>::from_slices(&[prompt], &[CFBoolean::new(true)]);
+    unsafe { AXIsProcessTrustedWithOptions(Some(options.as_opaque())) };
+}
+
+fn microphone() -> Access {
+    let Some((device, media_type)) = capture_device() else {
         return Access::Unknown;
     };
     let status: isize = unsafe { msg_send![device, authorizationStatusForMediaType: &*media_type] };
     from_av_status(status)
+}
+
+/// `AVCaptureDevice` and `AVMediaTypeAudio`. AVFoundation is heavy, and only these calls want it,
+/// so it's loaded by hand on first use.
+fn capture_device() -> Option<(&'static AnyClass, Retained<AnyObject>)> {
+    let handle = unsafe { dlopen(AV_FOUNDATION.as_ptr(), RTLD_LAZY) };
+    if handle.is_null() {
+        return None;
+    }
+    let media_type = unsafe { dlsym(handle, c"AVMediaTypeAudio".as_ptr()) };
+    let device = AnyClass::get(c"AVCaptureDevice")?;
+    if media_type.is_null() {
+        return None;
+    }
+    let media_type = unsafe { *media_type.cast::<*const AnyObject>() };
+    let media_type = unsafe { Retained::retain(media_type.cast_mut()) }?;
+    Some((device, media_type))
 }
 
 /// `AVAuthorizationStatus`.
@@ -89,5 +142,18 @@ mod tests {
         assert_eq!(from_hid_access(0), Access::Granted);
         assert_eq!(from_hid_access(1), Access::Denied);
         assert_eq!(from_hid_access(2), Access::Unknown);
+    }
+
+    #[test]
+    fn every_permission_links_to_its_own_pane() {
+        for (permission, anchor) in [
+            (Permission::Microphone, "Privacy_Microphone"),
+            (Permission::Accessibility, "Privacy_Accessibility"),
+            (Permission::InputMonitoring, "Privacy_ListenEvent"),
+        ] {
+            let link = settings_link(permission).expect("macOS has a pane for it");
+            assert!(link.starts_with("x-apple.systempreferences:"), "{link}");
+            assert!(link.ends_with(anchor), "{link}");
+        }
     }
 }

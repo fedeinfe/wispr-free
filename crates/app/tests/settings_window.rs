@@ -1,6 +1,9 @@
 //! The Settings window driven through its real .slint UI on Slint's testing backend: what the
 //! user does on a page ends up in the settings file, and what is in the file shows up on a page.
 
+#[path = "support/memory_cap.rs"]
+mod memory_cap;
+
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::fs;
@@ -28,6 +31,9 @@ use wispr_free::settings_window::{
     SettingsParts,
 };
 use wispr_free::{Prefs, ReplacementRow, SettingsWindow, SnippetRow};
+
+/// Well above what these tests use, far below what would hurt.
+const MEMORY_LIMIT_MB: u64 = 1024;
 
 const GENERAL: i32 = 0;
 const MODELS: i32 = 1;
@@ -133,6 +139,7 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
+        memory_cap::install(MEMORY_LIMIT_MB);
         init_no_event_loop();
         Self::on_files(tempfile::tempdir().unwrap())
     }

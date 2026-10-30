@@ -16,8 +16,8 @@ use wf_core::dictation::PillInput;
 use wf_core::pill::PillState;
 use wf_core::settings::{CleanupStrength, HistoryRetention, KeepModels, PipelineTier};
 use wf_core::shortcut::{Combo, Key};
-use wf_dictation::Event;
 use wf_dictation::plan::AsrModel;
+use wf_dictation::{Event, TrialPart};
 
 const HOLD: Duration = Duration::from_millis(800);
 
@@ -1009,6 +1009,178 @@ fn a_trial_reports_what_it_heard_and_inserts_nothing() {
     });
     assert_eq!(text, "Testing one two.");
     assert_eq!(rig.inserted(), Vec::<String>::new());
+}
+
+fn wait_trial_failure(rig: &Rig) -> (TrialPart, String) {
+    rig.wait_event("a failed trial", |event| match event {
+        Event::TrialFailed { part, reason } => Some((part, reason)),
+        _ => None,
+    })
+}
+
+fn wait_trial(rig: &Rig) -> String {
+    rig.wait_event("the trial", |event| match event {
+        Event::Trial(text) => Some(text),
+        _ => None,
+    })
+}
+
+#[test]
+fn while_armed_the_shortcut_runs_a_trial_and_inserts_nothing() {
+    let rig = Rig::new(base_settings());
+    rig.probe.hears("um testing one two");
+
+    rig.dictation.arm_trial(true);
+    rig.dictate(&speech());
+
+    assert_eq!(wait_trial(&rig), "Testing one two.");
+    assert_eq!(rig.inserted(), Vec::<String>::new());
+}
+
+#[test]
+fn a_tap_too_short_to_count_leaves_the_trial_armed() {
+    let rig = Rig::new(base_settings());
+    rig.probe.hears("testing");
+    rig.dictation.arm_trial(true);
+
+    rig.press(FN);
+    rig.mic.wait_open();
+    rig.release(FN);
+    rig.hold(HOLD);
+    rig.mic.wait_closed();
+    rig.dictate(&speech());
+
+    assert_eq!(wait_trial(&rig), "Testing.");
+    assert_eq!(rig.inserted(), Vec::<String>::new());
+}
+
+#[test]
+fn disarming_gives_the_shortcut_back_to_the_focused_app() {
+    let rig = Rig::new(base_settings());
+    rig.probe.hears("hello there");
+    rig.dictation.arm_trial(true);
+    rig.dictation.arm_trial(false);
+
+    rig.dictate(&speech());
+    rig.wait_inserted();
+
+    assert_eq!(rig.inserted(), ["Hello there."]);
+}
+
+#[test]
+fn a_trial_without_its_models_blames_the_models() {
+    let rig = Rig::build(base_settings(), &[SILERO]);
+
+    rig.dictation.start_trial();
+
+    let (part, reason) = wait_trial_failure(&rig);
+    assert_eq!(part, TrialPart::Models);
+    assert!(reason.contains("isn't downloaded"), "{reason}");
+    assert_eq!(rig.mic.opened.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn a_trial_on_a_refused_mic_blames_the_mic() {
+    let rig = Rig::new(base_settings());
+    *rig.mic.problem.lock().unwrap() = Some("Allow the microphone".into());
+
+    rig.dictation.start_trial();
+
+    assert_eq!(
+        wait_trial_failure(&rig),
+        (TrialPart::Microphone, "Allow the microphone".to_owned())
+    );
+}
+
+#[test]
+fn a_trial_on_a_vanished_mic_blames_the_mic() {
+    let rig = Rig::new(base_settings());
+
+    rig.dictation.start_trial();
+    rig.mic.wait_open();
+    rig.mic.send(CaptureEvent::Device(None));
+
+    let (part, reason) = wait_trial_failure(&rig);
+    assert_eq!(part, TrialPart::Microphone);
+    assert!(reason.contains("No microphone"), "{reason}");
+    assert!(rig.wait_error().contains("No microphone"));
+}
+
+#[test]
+fn a_trial_on_digital_silence_blames_the_mic() {
+    let rig = Rig::new(base_settings());
+    rig.probe.hears("never heard");
+
+    rig.dictation.start_trial();
+    rig.mic.wait_open();
+    rig.mic.play(&AudioClip::new(vec![0.0; 16_000]));
+    rig.dictation.on_pill(PillInput::Stop);
+
+    let (part, reason) = wait_trial_failure(&rig);
+    assert_eq!(part, TrialPart::Microphone);
+    assert!(reason.contains("silence"), "{reason}");
+}
+
+#[test]
+fn a_trial_that_hears_no_words_says_so() {
+    let rig = Rig::new(base_settings());
+    rig.probe.hears("never heard");
+
+    rig.dictation.start_trial();
+    rig.mic.wait_open();
+    rig.mic.play(&AudioClip::new(vec![0.000_1; 16_000]));
+    rig.dictation.on_pill(PillInput::Stop);
+
+    let (part, reason) = wait_trial_failure(&rig);
+    assert_eq!(part, TrialPart::Microphone);
+    assert!(reason.contains("No speech"), "{reason}");
+}
+
+#[test]
+fn a_trial_whose_model_will_not_load_blames_the_models() {
+    let rig = Rig::new(base_settings());
+    rig.probe.fail_asr_load.store(true, Ordering::SeqCst);
+
+    rig.dictation.start_trial();
+
+    let (part, reason) = wait_trial_failure(&rig);
+    assert_eq!(part, TrialPart::Models);
+    assert!(reason.contains("load the models"), "{reason}");
+}
+
+#[test]
+fn a_cancelled_trial_is_not_a_failure() {
+    let rig = Rig::new(base_settings());
+
+    rig.dictation.start_trial();
+    rig.mic.wait_open();
+    rig.dictation.on_pill(PillInput::Cancel);
+    rig.mic.wait_closed();
+    rig.settle();
+
+    let events: Vec<_> = rig.events.try_iter().collect();
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, Event::TrialFailed { .. })),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn a_normal_dictation_reports_no_trial_failure() {
+    let rig = Rig::build(base_settings(), &[SILERO]);
+
+    rig.press(FN);
+    rig.wait_error();
+
+    let events: Vec<_> = rig.events.try_iter().collect();
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, Event::TrialFailed { .. })),
+        "{events:?}"
+    );
 }
 
 #[test]

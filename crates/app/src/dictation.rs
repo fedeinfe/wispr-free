@@ -1,7 +1,7 @@
 //! Connects the dictation flow to the app: its events to the pill, the keyboard to the flow, and
 //! the pill menu to the settings. The flow itself lives in `wf_dictation`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc;
@@ -14,10 +14,12 @@ use wf_dictation::{Dictation, Event, Parts};
 use wf_history::History;
 use wf_models::{Catalog, ModelStore};
 use wf_platform::keys::{self, KeyListener};
+use wf_platform::permissions::Permissions;
 
 use crate::Tray;
 use crate::debug::ClipRun;
 use crate::memory;
+use crate::onboarding::FlowWatcher;
 use crate::pill::{LANGUAGES, PillController, PillEvent};
 use crate::settings_window::SettingsHost;
 use crate::settings_window::values::choose_tier;
@@ -38,13 +40,14 @@ pub fn start(
     pill: &PillController,
     tray: &Tray,
     clip: Option<&ClipRun>,
+    watcher: FlowWatcher,
 ) -> Dictation {
     let data = data_dir().unwrap_or_else(|| PathBuf::from("wispr-free"));
     let default_models = ModelStore::default_root().unwrap_or_else(|| data.join("models"));
     let history = History::default_path().unwrap_or_else(|| data.join("history.sqlite3"));
     let meetings = data.join("meetings");
     let executable = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("wispr-free"));
-    let on_event = deliver_to(pill, tray.as_weak());
+    let on_event = deliver_to(pill, tray.as_weak(), watcher);
     let mut parts = Parts::system(
         settings,
         Arc::new(Catalog::bundled()),
@@ -61,11 +64,18 @@ pub fn start(
 }
 
 /// Returns the callback for the flow's threads. Events wait in a queue for the UI thread.
-pub fn deliver_to(pill: &PillController, tray: Weak<Tray>) -> Arc<dyn Fn(Event) + Send + Sync> {
+pub fn deliver_to(
+    pill: &PillController,
+    tray: Weak<Tray>,
+    watcher: FlowWatcher,
+) -> Arc<dyn Fn(Event) + Send + Sync> {
     let (events, inbox) = mpsc::channel();
     let target = pill.clone();
     pill.on_events_arrived(move || {
         while let Ok(event) = inbox.try_recv() {
+            if let Some(watch) = &*watcher.borrow() {
+                watch(&event);
+            }
             show(&target, &tray, event);
         }
     });
@@ -93,22 +103,19 @@ fn show(pill: &PillController, tray: &Weak<Tray>, event: Event) {
             }
         }
         Event::SuggestMeeting(app) => pill.suggest_meeting(app),
-        Event::Trial(_) | Event::Inserted(_) => {}
+        Event::Trial(_) | Event::TrialFailed { .. } | Event::Inserted(_) => {}
     }
 }
 
 /// Listens to the keyboard for as long as the returned value lives. While the OS refuses, the pill
-/// says why and this keeps trying.
+/// says why and this keeps trying. The way a bare binary runs: in the app bundle, onboarding's
+/// watch does all this through [`KeyWatch::refresh`].
 pub fn listen_to_keys(dictation: &Dictation) -> KeyWatch {
-    let watch = KeyWatch {
-        listener: Rc::default(),
-        retry: Rc::new(Timer::default()),
-    };
-    if !watch.try_listen(dictation) {
+    let watch = KeyWatch::idle(dictation);
+    if !watch.try_listen_and_report() {
         let this = watch.clone();
-        let dictation = dictation.clone();
         watch.retry.start(TimerMode::Repeated, KEYS_RETRY, move || {
-            if this.try_listen(&dictation) {
+            if this.try_listen_and_report() {
                 this.retry.stop();
             }
         });
@@ -118,21 +125,55 @@ pub fn listen_to_keys(dictation: &Dictation) -> KeyWatch {
 
 #[derive(Clone)]
 pub struct KeyWatch {
+    dictation: Dictation,
     listener: Rc<RefCell<Option<KeyListener>>>,
     retry: Rc<Timer>,
+    permissions: Rc<Cell<Option<Permissions>>>,
 }
 
 impl KeyWatch {
-    fn try_listen(&self, dictation: &Dictation) -> bool {
-        let flow = dictation.clone();
-        match keys::listen(move |signal| flow.on_key(signal)) {
-            Ok(listener) => {
-                *self.listener.borrow_mut() = Some(listener);
-                dictation.set_blocked(None);
+    /// Not listening yet.
+    pub fn idle(dictation: &Dictation) -> Self {
+        Self {
+            dictation: dictation.clone(),
+            listener: Rc::default(),
+            retry: Rc::new(Timer::default()),
+            permissions: Rc::default(),
+        }
+    }
+
+    pub fn is_listening(&self) -> bool {
+        self.listener.borrow().is_some()
+    }
+
+    /// Keeps the listener in step with the permissions. Any change restarts it: a tap made
+    /// without Accessibility can't swallow keys until it's made again, and one made before a
+    /// revoke may be dead with nothing to say so. `may_prompt` false holds back the first try,
+    /// which could bring up an OS question.
+    pub fn refresh(&self, permissions: &Permissions, may_prompt: bool) {
+        if self.permissions.replace(Some(*permissions)) != Some(*permissions) {
+            self.listener.borrow_mut().take();
+        }
+        if may_prompt && !self.is_listening() {
+            let _ = self.try_listen();
+        }
+    }
+
+    fn try_listen(&self) -> Result<(), keys::KeysError> {
+        let flow = self.dictation.clone();
+        let listener = keys::listen(move |signal| flow.on_key(signal))?;
+        *self.listener.borrow_mut() = Some(listener);
+        Ok(())
+    }
+
+    fn try_listen_and_report(&self) -> bool {
+        match self.try_listen() {
+            Ok(()) => {
+                self.dictation.set_blocked(None);
                 true
             }
             Err(error) => {
-                dictation.set_blocked(Some(error.to_string()));
+                self.dictation.set_blocked(Some(error.to_string()));
                 false
             }
         }

@@ -2,7 +2,7 @@ import { Prefs, ShortcutRow } from "../bridge.slint";
 import { Theme } from "../theme.slint";
 import { Btn, Card, ErrorText, Hint, Label, Page, Row, SelectRow, ToggleRow, Toggle } from "../controls.slint";
 
-component ShortcutLine inherits HorizontalLayout {
+export component ShortcutLine inherits HorizontalLayout {
     in property <int> index;
     in property <ShortcutRow> shortcut;
     property <bool> recording: Prefs.recording-action == index;

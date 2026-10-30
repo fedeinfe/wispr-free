@@ -1,6 +1,7 @@
-//! The Settings window (spec §5): created on open, dropped on close. [`SettingsController`] ties
-//! the .slint pages to the settings store and the rest of the app. Closures stored in the UI hold
-//! only weak references to it, so dropping the controller frees the window.
+//! The Settings window (spec §5): created on open, dropped on close. [`Controller`] ties the
+//! .slint pages to the settings store and the rest of the app. Closures stored in the UI hold only
+//! weak references to it, so dropping the controller frees the window. It drives any [`Surface`],
+//! which is how onboarding gets the Models machinery without a second copy.
 
 pub mod data;
 mod host;
@@ -10,6 +11,7 @@ pub mod values;
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -21,7 +23,7 @@ use std::time::Duration;
 
 use slint::{
     ComponentHandle, FilterModel, Model, ModelRc, PlatformError, SharedString, Timer, TimerMode,
-    VecModel, Weak,
+    VecModel,
 };
 use wf_audio::InputDevice;
 use wf_core::settings::{Replacement, Settings, SettingsStore, Snippet};
@@ -38,7 +40,7 @@ use rows::{
 use values::{ModelChoices, apply_values, models_in_use, values_of};
 use wf_dictation::plan::vad_forced;
 
-pub use host::{MakeParts, SettingsHost};
+pub use host::{MakeParts, Redirect, SettingsHost, system_parts};
 
 const RELEASES_URL: &str = "https://github.com/fedeinfe/wispr-free/releases";
 
@@ -72,6 +74,24 @@ pub trait Desktop {
     fn pick_folder(&self, start: &Path, done: Box<dyn FnOnce(PathBuf)>);
     /// Lets go of what lives in the data folder, which is about to be removed.
     fn before_delete_all(&self) {}
+    /// Reports the microphones again, as [`Event::Microphones`] through `mailbox`.
+    fn look_for_microphones(&self, _mailbox: &Mailbox) {}
+}
+
+/// A window with the Settings pages' state in its `Prefs`.
+pub trait Surface: ComponentHandle + Sized + 'static {
+    fn create() -> Result<Self, PlatformError>;
+    fn prefs(&self) -> Prefs<'_>;
+}
+
+impl Surface for SettingsWindow {
+    fn create() -> Result<Self, PlatformError> {
+        Self::new()
+    }
+
+    fn prefs(&self) -> Prefs<'_> {
+        self.global::<Prefs>()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -126,15 +146,13 @@ pub enum Event {
 #[derive(Clone)]
 pub struct Mailbox {
     events: Sender<Event>,
-    window: Weak<SettingsWindow>,
+    wake: Arc<dyn Fn() + Send + Sync>,
 }
 
 impl Mailbox {
     pub fn post(&self, event: Event) {
         if self.events.send(event).is_ok() {
-            let _ = self.window.upgrade_in_event_loop(|window| {
-                window.global::<Prefs>().invoke_events_arrived();
-            });
+            (self.wake)();
         }
     }
 }
@@ -145,13 +163,15 @@ struct Recording {
     _capture: Box<dyn Any>,
 }
 
-/// One open Settings window. Dropping it closes everything the window started.
-pub struct SettingsController {
-    inner: Rc<Inner>,
+/// One open window. Dropping it closes everything the window started.
+pub struct Controller<W: Surface> {
+    inner: Rc<Inner<W>>,
 }
 
-struct Inner {
-    window: SettingsWindow,
+pub type SettingsController = Controller<SettingsWindow>;
+
+struct Inner<W: Surface> {
+    window: W,
     parts: SettingsParts,
     choices: ModelChoices,
     mailbox: Mailbox,
@@ -160,8 +180,12 @@ struct Inner {
     recording_timeout: Timer,
     microphone_test: RefCell<Option<Box<dyn Any>>>,
     devices: RefCell<(Vec<InputDevice>, Option<String>)>,
+    devices_known: Cell<bool>,
+    on_microphones: RefCell<Option<Box<dyn Fn()>>>,
     models: Rc<VecModel<ModelRow>>,
     model_task: Cell<Option<usize>>,
+    /// Downloads waiting for the one running.
+    model_queue: RefCell<VecDeque<usize>>,
     cancel_download: Arc<AtomicBool>,
     model_store: RefCell<Arc<ModelStore>>,
     /// The folder waiting for the user to say what happens to their models. The inner `None` is
@@ -184,13 +208,17 @@ macro_rules! wire {
     }};
 }
 
-impl SettingsController {
+impl<W: Surface> Controller<W> {
     pub fn new(parts: SettingsParts) -> Result<Self, PlatformError> {
-        let window = SettingsWindow::new()?;
+        let window = W::create()?;
         let (sender, events) = mpsc::channel();
+        let weak = window.as_weak();
+        let wake = move || {
+            let _ = weak.upgrade_in_event_loop(|window| window.prefs().invoke_events_arrived());
+        };
         let mailbox = Mailbox {
             events: sender,
-            window: window.as_weak(),
+            wake: Arc::new(wake),
         };
         let choices = ModelChoices::from_catalog(&parts.catalog);
         let model_store = RefCell::new(Arc::new(configured_store(&parts)));
@@ -204,8 +232,11 @@ impl SettingsController {
             recording_timeout: Timer::default(),
             microphone_test: RefCell::default(),
             devices: RefCell::default(),
+            devices_known: Cell::default(),
+            on_microphones: RefCell::default(),
             models: Rc::default(),
             model_task: Cell::default(),
+            model_queue: RefCell::default(),
             cancel_download: Arc::default(),
             model_store,
             pending_folder: RefCell::default(),
@@ -218,7 +249,7 @@ impl SettingsController {
         Ok(Self { inner })
     }
 
-    pub fn window(&self) -> &SettingsWindow {
+    pub fn window(&self) -> &W {
         &self.inner.window
     }
 
@@ -247,9 +278,32 @@ impl SettingsController {
     pub fn refresh(&self) {
         self.inner.show_everything();
     }
+
+    /// The connected microphones, once a look has found out.
+    pub fn microphones(&self) -> Option<Vec<InputDevice>> {
+        let devices = self.inner.devices.borrow();
+        self.inner.devices_known.get().then(|| devices.0.clone())
+    }
+
+    /// Calls `seen` on the UI thread after each look at the microphones. It must hold only weak
+    /// references to whatever owns this controller.
+    pub fn on_microphones(&self, seen: impl Fn() + 'static) {
+        *self.inner.on_microphones.borrow_mut() = Some(Box::new(seen));
+    }
+
+    /// Looks for microphones again, for whoever waits for one to be plugged in.
+    pub fn look_for_microphones(&self) {
+        let inner = &self.inner;
+        inner.parts.desktop.look_for_microphones(&inner.mailbox);
+    }
+
+    /// Lets the models folder be checked again, as "Check again" does.
+    pub fn recheck_models_folder(&self) {
+        self.inner.recheck_models_folder();
+    }
 }
 
-impl Drop for SettingsController {
+impl<W: Surface> Drop for Controller<W> {
     fn drop(&mut self) {
         // A `.part` file stays, so the download resumes from the Models page. A cancelled move
         // leaves the models where they were.
@@ -257,9 +311,9 @@ impl Drop for SettingsController {
     }
 }
 
-impl Inner {
+impl<W: Surface> Inner<W> {
     fn prefs(&self) -> Prefs<'_> {
-        self.window.global::<Prefs>()
+        self.window.prefs()
     }
 
     fn connect(self: &Rc<Self>) {
@@ -279,6 +333,10 @@ impl Inner {
         prefs.set_available_models(ModelRc::new(FilterModel::new(
             Rc::clone(&self.models),
             |row: &ModelRow| !row.installed,
+        )));
+        prefs.set_models_in_use(ModelRc::new(FilterModel::new(
+            Rc::clone(&self.models),
+            |row: &ModelRow| !row.used_for.is_empty(),
         )));
         prefs.set_replacements(ModelRc::from(Rc::clone(&self.replacements)));
         prefs.set_snippets(ModelRc::from(Rc::clone(&self.snippets)));
@@ -302,9 +360,12 @@ impl Inner {
             .toggle_language(index));
         wire!(inner, prefs.on_download_model, |this, index| this
             .download_model(index));
-        wire!(inner, prefs.on_cancel_download, |this| this
-            .cancel_download
-            .store(true, Ordering::Relaxed));
+        wire!(inner, prefs.on_download_models_in_use, |this| this
+            .download_models_in_use());
+        wire!(inner, prefs.on_cancel_download, |this| {
+            this.model_queue.borrow_mut().clear();
+            this.cancel_download.store(true, Ordering::Relaxed);
+        });
         wire!(inner, prefs.on_delete_model, |this, index| this
             .delete_model(index));
         wire!(inner, prefs.on_verify_model, |this, index| this
@@ -492,7 +553,11 @@ impl Inner {
             }
             Event::Microphones { devices, default } => {
                 *self.devices.borrow_mut() = (devices, default);
+                self.devices_known.set(true);
                 self.show_microphones();
+                if let Some(seen) = &*self.on_microphones.borrow() {
+                    seen();
+                }
             }
             Event::Hardware {
                 summary,
@@ -820,6 +885,7 @@ impl Inner {
             .filter(|model| store.status(model) == ModelStatus::Installed)
             .collect();
         prefs.set_downloaded_summary(downloaded_summary(&downloaded).into());
+        prefs.set_models_in_use_summary(self.missing_summary().into());
         let menu = |ids: Vec<String>, names: Vec<String>| {
             let entries = ids.iter().zip(names).map(|(id, name)| {
                 if downloaded.iter().any(|model| model.id == *id) {
@@ -835,6 +901,43 @@ impl Inner {
         prefs.set_llm_options(menu(self.choices.llm_ids(), self.choices.llm_names()));
     }
 
+    /// The pipeline's models that aren't on disk yet, by their place in the catalog.
+    fn missing_models(&self) -> Vec<usize> {
+        let store = self.store();
+        let in_use = models_in_use(&self.settings(), &self.parts.catalog);
+        let catalog = &self.parts.catalog.models;
+        (0..catalog.len())
+            .filter(|&index| in_use.iter().any(|(id, _)| *id == catalog[index].id))
+            .filter(|&index| store.status(&catalog[index]) != ModelStatus::Installed)
+            .collect()
+    }
+
+    /// Says what the pipeline still needs to download, or nothing once it's all there.
+    fn missing_summary(&self) -> String {
+        let catalog = &self.parts.catalog.models;
+        let missing: Vec<_> = self
+            .missing_models()
+            .into_iter()
+            .map(|index| &catalog[index])
+            .collect();
+        downloaded_summary(&missing)
+    }
+
+    /// One after another, like every model task (ticket 11: no file locking).
+    fn download_models_in_use(&self) {
+        if !self.busy() {
+            self.model_queue.replace(self.missing_models().into());
+            self.download_next_model();
+        }
+    }
+
+    fn download_next_model(&self) {
+        let next = self.model_queue.borrow_mut().pop_front();
+        if let Some(index) = next {
+            self.download_model(index as i32);
+        }
+    }
+
     /// The pipeline changed: rows keep their task and progress, only their stage moves.
     fn show_models_in_use(&self) {
         for (index, model) in self.parts.catalog.models.iter().enumerate() {
@@ -846,6 +949,8 @@ impl Inner {
                 }
             }
         }
+        self.prefs()
+            .set_models_in_use_summary(self.missing_summary().into());
     }
 
     fn open_models_folder(&self) {
@@ -1052,11 +1157,15 @@ impl Inner {
         match outcome {
             Ok(Some(note)) => row.status = note.into(),
             Ok(None) => {}
-            Err(error) => prefs.set_model_error(error.into()),
+            Err(error) => {
+                self.model_queue.borrow_mut().clear();
+                prefs.set_model_error(error.into());
+            }
         }
         self.models.set_row_data(index, row);
         prefs.set_models_folder_missing(!self.store().available());
         self.show_model_overview();
+        self.download_next_model();
     }
 
     fn download_model(&self, index: i32) {

@@ -22,6 +22,15 @@ pub struct Settings {
     pub meetings: Meetings,
     pub media: Media,
     pub privacy: Privacy,
+    pub onboarding: Onboarding,
+}
+
+/// Whether the first-run flow was seen through. Delete all resets it with everything else, which
+/// is right: what it set up is gone.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Onboarding {
+    pub finished: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

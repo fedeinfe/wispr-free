@@ -1,0 +1,59 @@
+// What Rust and the onboarding pages share, beside the `Prefs` they share with Settings.
+
+export enum Consent { not-asked, denied, granted }
+
+export enum Mark { waiting, passed, failed }
+
+export enum TrialPhase { idle, listening, working }
+
+export struct SetupStep {
+    title: string,
+    // Its page, see `Setup.page`.
+    page: int,
+    done: bool,
+}
+
+export global Setup {
+    in property <[SetupStep]> steps;
+    // The step on show, as an index into `steps`.
+    in property <int> current;
+    // Which page that is: 0 microphone, 1 keyboard and paste, 2 models, 3 trial.
+    in property <int> page;
+    in property <bool> can-continue;
+    in property <string> continue-label: "Continue";
+    callback back();
+    callback continue();
+
+    // Microphone
+    in property <Consent> microphone;
+    in property <bool> microphone-looked;
+    in property <string> microphone-name;
+
+    // Keyboard and paste
+    in property <Consent> accessibility;
+    in property <Consent> input-monitoring;
+    // Both allowed, and keys still don't arrive.
+    in property <bool> keys-stuck;
+    callback reopen-app();
+
+    // 0 microphone, 1 accessibility, 2 input monitoring.
+    callback ask(int);
+    callback open-pane(int);
+
+    // Models
+    in property <bool> models-ready;
+
+    // Trial
+    in property <string> shortcut;
+    in property <TrialPhase> trial-phase;
+    in property <Mark> trial-keys;
+    in property <Mark> trial-microphone;
+    in property <Mark> trial-models;
+    in property <string> trial-message;
+    in property <bool> trial-problem;
+    in property <string> trial-heard;
+    in property <bool> trial-can-stop;
+    in property <float> trial-level;
+    callback try-with-mouse();
+    callback stop-trial();
+}

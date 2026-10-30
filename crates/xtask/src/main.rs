@@ -1,6 +1,6 @@
 //! `cargo xtask eval --model model.gguf` scores LLM cleanup against `eval/cleanup.toml`.
 //! Flags: `--rules-only` scores rule cleanup alone, `--dev` skips the holdout cases, and
-//! `--cpu` keeps every layer off the GPU.
+//! `--cpu` keeps every layer off the GPU. `cargo xtask bundle` is in [`xtask::bundle`].
 //!
 //! `cargo xtask-meeting meeting-fixture --out dir` builds the 30-minute meeting with macOS `say`.
 //! `cargo xtask-meeting meeting-run --fixture dir --models dir --out dir` runs it through every
@@ -13,6 +13,7 @@
 use std::process::ExitCode;
 
 use anyhow::{Context as _, bail};
+use xtask::bundle;
 use xtask::eval::{self, Report, RulesOnly, TARGET};
 
 fn main() -> anyhow::Result<ExitCode> {
@@ -22,6 +23,8 @@ fn main() -> anyhow::Result<ExitCode> {
     };
     match task.as_str() {
         "eval" => {}
+        "bundle" => return bundle::run(args).map(|()| ExitCode::SUCCESS),
+        "signing-identity" => return bundle::create_identity().map(|()| ExitCode::SUCCESS),
         "meeting-fixture" | "meeting-run" | "meeting-summary" | "meeting-diarize"
         | "meeting-holdout" => {
             return meeting_task(&task, args);

@@ -129,6 +129,9 @@ export global Prefs {
     in property <[ModelRow]> models;
     in property <[ModelRow]> downloaded-models;
     in property <[ModelRow]> available-models;
+    // What the pipeline runs on, and what of that isn't downloaded yet.
+    in property <[ModelRow]> models-in-use;
+    in property <string> models-in-use-summary;
     in property <string> downloaded-summary;
     // `asr-rows[i]` is the row in `models` of `asr-options[i]`.
     in property <[int]> asr-rows;
@@ -137,6 +140,7 @@ export global Prefs {
     in property <bool> model-busy;
     in property <string> model-error;
     callback download-model(int);
+    callback download-models-in-use();
     callback cancel-download();
     callback delete-model(int);
     callback verify-model(int);

@@ -30,6 +30,10 @@
 
 **Pipeline tier**: Lite / Balanced / High / Custom. A bundle of stage toggles and model picks matched to the hardware.
 
+**Onboarding**: the first-run setup window: microphone, keyboard and paste, models, trial dictation. It shows once and comes back only for a step that broke.
+
+**Trial dictation**: a real dictation that pastes nothing and shows its text in the onboarding window, to prove the shortcut, microphone and models. It names the part that failed.
+
 **Engine host**: the child process, the app's own binary, that holds one loaded engine. Killing it is how a model unloads (ADR-0005).
 
 **Model catalog**: the versioned manifest of downloadable models with size, checksum, license and RAM needs.
