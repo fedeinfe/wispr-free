@@ -15,7 +15,7 @@ mod recorder;
 pub mod sounds;
 
 pub use capture::{AudioBackend, Capture, CaptureConfig, CaptureEvent, StreamFormat, StreamSink};
-pub use cpal_backend::CpalBackend;
+pub use cpal_backend::{CpalBackend, open_stream};
 pub use devices::{InputDevice, rank_devices};
 pub use frames::FrameConverter;
 pub use level::{LEVEL_WINDOW_MS, LevelMeter};

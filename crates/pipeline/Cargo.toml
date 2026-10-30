@@ -12,3 +12,7 @@ publish.workspace = true
 [dependencies]
 wf-core.workspace = true
 thiserror.workspace = true
+sherpa-onnx = { workspace = true, optional = true }
+
+[features]
+silero = ["dep:sherpa-onnx"]

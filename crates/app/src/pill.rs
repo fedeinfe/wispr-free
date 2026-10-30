@@ -300,7 +300,7 @@ impl PillController {
         core.last_poll = now;
 
         if !core.overlay_applied {
-            let applied = window.with_winit_window(|window| overlay::apply(window));
+            let applied = window.with_winit_window(overlay::apply);
             if let Some(result) = applied {
                 core.overlay_applied = true;
                 if let Err(err) = result {
@@ -399,7 +399,7 @@ mod tests {
 
     use i_slint_backend_testing::{ElementHandle, init_integration_test_with_system_time};
     use slint::platform::PointerEventButton;
-    use slint::{ComponentHandle, ModelRc, VecModel};
+    use slint::{ModelRc, VecModel};
 
     use crate::{PillLook, PillWindow};
 

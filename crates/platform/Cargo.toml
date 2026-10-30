@@ -7,30 +7,51 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-# Per-OS deps (evdev, wayland layer-shell) arrive with tickets 03 and 04 under
-# [target.'cfg(...)'.dependencies].
+# Per-OS deps for Wayland layer-shell would arrive here. macOS key capture links the system
+# frameworks directly.
 [dependencies]
 wf-core.workspace = true
 raw-window-handle.workspace = true
 thiserror.workspace = true
 
-# Pill overlay (05): NSPanel swap, screens, cursor and Esc state.
+# Insertion + context (04): NSPasteboard, CGEvent paste, AX focused-text reads. Pill overlay (05):
+# NSPanel swap, screens, cursor and Esc state.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
+dispatch2.workspace = true
 objc2-foundation.workspace = true
+objc2-core-foundation.workspace = true
 objc2-app-kit.workspace = true
 objc2-core-graphics.workspace = true
+objc2-application-services.workspace = true
 
-# Pill overlay (05): extended window styles, monitors, cursor and Esc state.
+# Key capture (03): low-level hooks. Insertion + context (04): SendInput paste, clipboard,
+# UI Automation reads. Pill overlay (05): window styles, monitors, cursor and Esc state.
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
     "Win32_UI_HiDpi",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
+arboard.workspace = true
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_DataExchange",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
-# Pill overlay (05): stacking, monitors, cursor and Esc state.
+# Key capture (03): evdev. Insertion + context (04): XTest paste (wtype/ydotool on Wayland),
+# clipboard, X11 window info. Pill overlay (05): stacking, monitors, cursor and Esc state.
 [target.'cfg(target_os = "linux")'.dependencies]
-x11rb = { workspace = true, features = ["randr"] }
+evdev.workspace = true
+arboard = { workspace = true, features = ["wayland-data-control"] }
+x11rb = { workspace = true, features = ["randr", "xtest"] }
