@@ -8,9 +8,18 @@ Free, open-source, **fully local** voice typing for macOS, Windows and Linux, wr
 - **Runs on your hardware:** the app recommends models for your machine, and you can turn off heavy stages on older PCs and Macs.
 - **Private by design:** no account, no telemetry, no cloud. The only network use is model downloads you start.
 
-> Status: early development (workspace scaffold). See [`.scratch/v1/spec.md`](.scratch/v1/spec.md) and the [ADRs](docs/adr/).
+> Status: early development. Dictation and meeting notes run on macOS, with no signed release yet. Windows and Linux are not finished. See [`.scratch/v1/spec.md`](.scratch/v1/spec.md), the [ADRs](docs/adr/) and the [benchmarks](docs/benchmarks.md).
 
 Not affiliated with Wispr or Wispr Flow.
+
+## Run it on a Mac
+
+```sh
+cargo xtask signing-identity   # once, before granting permissions
+cargo xtask bundle --install   # builds Wispr Free.app and copies it to ~/Applications
+```
+
+Open the app from `~/Applications`. The first run asks for the microphone, keyboard access and models.
 
 ## License
 
