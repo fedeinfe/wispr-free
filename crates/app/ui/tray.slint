@@ -1,0 +1,16 @@
+// The always-present tray icon. Later tickets add Settings, Meetings and pill toggles here.
+export component Tray inherits SystemTrayIcon {
+    callback quit();
+
+    // Neutral gray reads on light and dark bars. Slint 1.18 exposes neither template images
+    // nor the bar's appearance to .slint, so a proper monochrome glyph needs native code.
+    icon: @image-url("icons/tray.svg");
+    tooltip: "wispr-free";
+
+    Menu {
+        MenuItem {
+            title: "Quit wispr-free";
+            activated => { root.quit(); }
+        }
+    }
+}
