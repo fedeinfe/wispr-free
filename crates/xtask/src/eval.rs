@@ -1,13 +1,14 @@
 //! The LLM cleanup eval (ticket 09). Each case runs the way a dictation does, through rule
-//! cleanup and then LLM cleanup with its guards and timeout, so a timeout or a rejected reply
-//! scores whatever the user would have received.
+//! cleanup, LLM cleanup with its guards and timeout, and the local passes, so a timeout or a
+//! rejected reply scores whatever the user would have received.
 
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use serde::Deserialize;
-use wf_pipeline::cleanup::{CleanupRequest, DEFAULT_TIMEOUT, Style, llm_cleanup};
+use wf_pipeline::cleanup::{CleanupRequest, DEFAULT_TIMEOUT, llm_cleanup};
+use wf_pipeline::passes::{AppCategory, LocalPassOptions, Style, local_passes};
 use wf_pipeline::rules::rule_cleanup;
 use wf_pipeline::{Llm, LlmPrompt, PipelineError};
 
@@ -186,7 +187,6 @@ pub fn run(cases: &[Case], llm: &mut dyn Llm) -> Report {
             text: &cleaned,
             language: case.language.as_deref(),
             style: case.style.map(Style::from),
-            email: case.email,
             dictionary: &case.dictionary,
             ..CleanupRequest::default()
         };
@@ -203,14 +203,32 @@ pub fn run(cases: &[Case], llm: &mut dyn Llm) -> Report {
                 Some(reply) => format!("{fallback:?}, model said {reply:?}"),
                 None => format!("{fallback:?}"),
             });
+        let output = local_passes(
+            &outcome.text,
+            &LocalPassOptions {
+                // Formal leaves the text as it is, so it stands in for "no style".
+                style: case.style.map_or(Style::Formal, Style::from),
+                category: if case.email {
+                    AppCategory::Email
+                } else {
+                    AppCategory::Other
+                },
+                snippets: &[],
+                replacements: &[],
+                press_enter_command: false,
+                before: None,
+                after: None,
+            },
+        )
+        .text;
         report.results.push(CaseResult {
             id: case.id.clone(),
             category: case.category.clone(),
             holdout: case.holdout,
             input: cleaned.clone(),
-            misses: score(case, &outcome.text),
+            misses: score(case, &output),
             fallback,
-            output: outcome.text,
+            output,
             elapsed,
         });
     }

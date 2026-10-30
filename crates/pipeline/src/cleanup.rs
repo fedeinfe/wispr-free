@@ -4,6 +4,7 @@
 
 use std::time::{Duration, Instant};
 
+use crate::passes::Style;
 use crate::{Llm, LlmPrompt, PipelineError, rules};
 
 /// The middle of the spec's 2–3 s window.
@@ -19,15 +20,6 @@ pub enum CleanupStrength {
     High,
 }
 
-/// Tone and punctuation preset for the target app's category.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Style {
-    Formal,
-    Casual,
-    VeryCasual,
-    Excited,
-}
-
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CleanupRequest<'a> {
     /// The rule-cleaned transcript. It is also the fallback.
@@ -35,9 +27,8 @@ pub struct CleanupRequest<'a> {
     /// The transcript's BCP-47-ish code ("en", "it-IT"), when known.
     pub language: Option<&'a str>,
     pub strength: CleanupStrength,
+    /// A hint for tone and word choice. `local_passes` applies the mechanical part afterwards.
     pub style: Option<Style>,
-    /// The target app is an email client.
-    pub email: bool,
     pub dictionary: &'a [String],
 }
 
@@ -73,18 +64,15 @@ pub fn llm_cleanup(
     request: &CleanupRequest,
     timeout: Duration,
 ) -> CleanupOutcome {
-    let result = run_model(llm, request, timeout);
-    let text = match &result {
-        Ok(reply) => reply,
-        Err(_) => request.text,
-    };
-    let mut text = apply_style(text, request.style);
-    if request.email {
-        text = break_after_greeting(text);
-    }
-    CleanupOutcome {
-        text,
-        fallback: result.err(),
+    match run_model(llm, request, timeout) {
+        Ok(text) => CleanupOutcome {
+            text,
+            fallback: None,
+        },
+        Err(fallback) => CleanupOutcome {
+            text: request.text.to_owned(),
+            fallback: Some(fallback),
+        },
     }
 }
 
@@ -102,52 +90,6 @@ fn run_model(
         Err(PipelineError::Timeout) => Err(Fallback::Timeout),
         Err(error) => Err(Fallback::Engine(error)),
     }
-}
-
-/// The mechanical parts of a style. Models apply these unreliably and fallbacks need them too.
-fn apply_style(text: &str, style: Option<Style>) -> String {
-    let unfinished = text.strip_suffix('.');
-    match (style, unfinished) {
-        (Some(Style::Casual), Some(rest)) => rest.to_owned(),
-        (Some(Style::VeryCasual), rest) => rest.unwrap_or(text).to_lowercase(),
-        (Some(Style::Excited), Some(rest)) => format!("{rest}!"),
-        _ => text.to_owned(),
-    }
-}
-
-/// Words that open an email greeting.
-const GREETINGS: &[&str] = &[
-    "hi",
-    "hello",
-    "hey",
-    "dear",
-    "ciao",
-    "salve",
-    "caro",
-    "cara",
-    "cari",
-    "care",
-    "gentile",
-    "gentili",
-    "buongiorno",
-    "buonasera",
-];
-
-/// Longest greeting, in words ("Gentile dottor Mario Rossi,").
-const MAX_GREETING_WORDS: usize = 4;
-
-fn break_after_greeting(text: String) -> String {
-    let Some((greeting, body)) = text.split_once(", ") else {
-        return text;
-    };
-    let mut words = greeting.split_whitespace();
-    let opens = words
-        .next()
-        .is_some_and(|first| GREETINGS.contains(&first.to_lowercase().as_str()));
-    if !opens || words.count() >= MAX_GREETING_WORDS {
-        return text;
-    }
-    format!("{greeting},\n\n{}", rules::capitalize(body))
 }
 
 /// The spec's rules, in our own words. The transcript is data: it travels only in the user

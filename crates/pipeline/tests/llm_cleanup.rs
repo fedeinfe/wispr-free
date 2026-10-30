@@ -4,8 +4,9 @@
 use std::time::{Duration, Instant};
 
 use wf_pipeline::cleanup::{
-    CleanupRequest, CleanupStrength, DEFAULT_TIMEOUT, Fallback, Style, llm_cleanup,
+    CleanupRequest, CleanupStrength, DEFAULT_TIMEOUT, Fallback, llm_cleanup,
 };
+use wf_pipeline::passes::Style;
 use wf_pipeline::{Llm, LlmPrompt, PipelineError};
 
 /// Replies with fixed text (or an error) and records the prompts it was given.
@@ -416,46 +417,6 @@ fn each_style_adds_its_own_instruction() {
 }
 
 #[test]
-fn styles_that_are_mechanical_do_not_depend_on_the_model() {
-    for (style, reply, expected) in [
-        (
-            Style::Casual,
-            "Sounds good, see you.",
-            "Sounds good, see you",
-        ),
-        (Style::Casual, "Are you in?", "Are you in?"),
-        (Style::VeryCasual, "See you, Anna.", "see you, anna"),
-        (Style::Excited, "We did it.", "We did it!"),
-        (Style::Excited, "We did it!", "We did it!"),
-        (Style::Formal, "We did it.", "We did it."),
-    ] {
-        let mut llm = CannedLlm::replying(reply);
-        let request = CleanupRequest {
-            style: Some(style),
-            ..request(reply)
-        };
-
-        let outcome = llm_cleanup(&mut llm, &request, DEFAULT_TIMEOUT);
-
-        assert_eq!(outcome.text, expected);
-    }
-}
-
-#[test]
-fn a_fallback_keeps_the_style() {
-    let mut llm = CannedLlm::failing(|| PipelineError::Timeout);
-    let request = CleanupRequest {
-        style: Some(Style::VeryCasual),
-        ..request("See you at noon.")
-    };
-
-    let outcome = llm_cleanup(&mut llm, &request, DEFAULT_TIMEOUT);
-
-    assert_eq!(outcome.text, "see you at noon");
-    assert!(matches!(outcome.fallback, Some(Fallback::Timeout)));
-}
-
-#[test]
 fn worked_examples_use_the_same_transcript_format_as_the_real_input() {
     let mut llm = CannedLlm::replying("Ship it.");
 
@@ -467,56 +428,6 @@ fn worked_examples_use_the_same_transcript_format_as_the_real_input() {
         assert!(transcript.starts_with("<transcript>\n"), "{transcript}");
         assert!(!reply.contains("transcript"), "{reply}");
     }
-}
-
-fn email(text: &str, reply: &str) -> String {
-    let mut llm = CannedLlm::replying(reply);
-    let request = CleanupRequest {
-        email: true,
-        ..request(text)
-    };
-    llm_cleanup(&mut llm, &request, DEFAULT_TIMEOUT).text
-}
-
-#[test]
-fn email_puts_a_line_break_after_the_greeting() {
-    let text = "Hi Sarah, thanks for the update.";
-    assert_eq!(email(text, text), "Hi Sarah,\n\nThanks for the update.");
-
-    let text = "Gentile dottor Rossi, le scrivo per confermare.";
-    assert_eq!(
-        email(text, text),
-        "Gentile dottor Rossi,\n\nLe scrivo per confermare."
-    );
-}
-
-#[test]
-fn email_leaves_text_without_a_greeting_alone() {
-    let text = "Thanks for the update, Sarah.";
-    assert_eq!(email(text, text), text);
-    let text = "Hi there everyone in the whole team here, thanks.";
-    assert_eq!(email(text, text), text);
-}
-
-#[test]
-fn email_does_not_double_a_break_the_model_already_made() {
-    assert_eq!(
-        email("Hi Sarah, thanks a lot.", "Hi Sarah,\n\nThanks a lot."),
-        "Hi Sarah,\n\nThanks a lot."
-    );
-}
-
-#[test]
-fn email_formatting_survives_a_fallback() {
-    let mut llm = CannedLlm::failing(|| PipelineError::Timeout);
-    let request = CleanupRequest {
-        email: true,
-        ..request("Hi Sarah, thanks.")
-    };
-
-    let outcome = llm_cleanup(&mut llm, &request, DEFAULT_TIMEOUT);
-
-    assert_eq!(outcome.text, "Hi Sarah,\n\nThanks.");
 }
 
 #[test]

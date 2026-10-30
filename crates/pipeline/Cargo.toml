@@ -9,10 +9,12 @@ publish.workspace = true
 
 # Engine impls arrive with their tickets as optional deps behind features:
 # `silero` (sherpa-onnx, 06), `whisper` / `sherpa` (07), `llama` (09), plus `metal` / `cuda` / `vulkan`.
-[features]
-llama = ["dep:llama-cpp-2"]
-
 [dependencies]
 wf-core.workspace = true
 thiserror.workspace = true
+sherpa-onnx = { workspace = true, optional = true }
 llama-cpp-2 = { workspace = true, optional = true }
+
+[features]
+silero = ["dep:sherpa-onnx"]
+llama = ["dep:llama-cpp-2"]

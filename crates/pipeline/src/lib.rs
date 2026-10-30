@@ -10,7 +10,11 @@ pub mod cleanup;
 #[cfg(feature = "llama")]
 pub mod llama;
 pub mod llm_host;
+pub mod passes;
 pub mod rules;
+#[cfg(feature = "silero")]
+pub mod silero;
+pub mod vad;
 
 /// Engine failures that the pill's Error state and the fallbacks need to tell apart.
 #[derive(Debug, thiserror::Error)]
@@ -30,9 +34,25 @@ pub struct SpeechSegment {
     pub end: usize,
 }
 
-/// Voice activity detection (Silero, ticket 06).
+/// Voice activity detection over one recording at a time (Silero, ticket 06). [`vad`] turns the
+/// segments into what ASR hears.
 pub trait Vad: Send {
-    fn speech_segments(&mut self, clip: &AudioClip) -> Result<Vec<SpeechSegment>, PipelineError>;
+    /// Feeds the next samples of the recording and returns the segments that just closed.
+    /// A segment closes once the pause after it is long enough to be sure it ended.
+    fn accept(&mut self, samples: &[f32]) -> Result<Vec<SpeechSegment>, PipelineError>;
+
+    /// Whether a segment is open. Stays true through the pause that will close it.
+    fn is_speaking(&self) -> bool;
+
+    /// Ends the recording, returns the segment still open, and readies for the next recording.
+    fn finish(&mut self) -> Result<Vec<SpeechSegment>, PipelineError>;
+
+    /// All the speech in a finished clip.
+    fn speech_segments(&mut self, clip: &AudioClip) -> Result<Vec<SpeechSegment>, PipelineError> {
+        let mut segments = self.accept(clip.samples())?;
+        segments.extend(self.finish()?);
+        Ok(segments)
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
