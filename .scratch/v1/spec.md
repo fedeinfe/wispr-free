@@ -157,7 +157,7 @@ If no text field is focused, keep the text as "last transcript" and show a toast
 
 ## 4. Meeting notetaker
 
-**Start/stop.** Shortcut, pill menu or tray. Optional auto-detect suggestion when a known meeting app (Zoom, Teams, Meet in a browser, Webex, FaceTime, Slack huddle) starts using the mic: a "Take notes for this meeting?" card. Never auto-records without that opt-in. A visible indicator stays on the pill for the whole recording.
+**Start/stop.** Shortcut, pill menu or tray. Auto-detect suggestion, on by default and off in Settings, when a known meeting app (Zoom, Teams, Meet in a browser, Webex, FaceTime, Slack huddle, Discord, WhatsApp, Telegram) starts using the mic: a "Take notes for this meeting?" card. It only asks: nothing records until the user says so. A visible indicator stays on the pill for the whole recording.
 
 **Audio.**
 

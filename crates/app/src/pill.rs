@@ -517,8 +517,8 @@ mod tests {
         ui.set_look(look);
         ui.set_capsule_x(82.0);
         ui.set_capsule_y(80.0);
-        ui.set_capsule_width(148.0);
-        ui.set_capsule_height(32.0);
+        ui.set_capsule_width(100.0);
+        ui.set_capsule_height(24.0);
         ui.set_bars(ModelRc::from(Rc::new(VecModel::from(vec![0.5_f32; 10]))));
         ui.set_card_shown(true);
         ui.set_card_x(42.0);

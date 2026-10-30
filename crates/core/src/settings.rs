@@ -228,7 +228,7 @@ pub struct Meetings {
 impl Default for Meetings {
     fn default() -> Self {
         Self {
-            auto_detect: false,
+            auto_detect: true,
             live_transcript: true,
             refine_pass: true,
             diarization: true,

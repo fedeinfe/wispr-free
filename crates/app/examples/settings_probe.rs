@@ -509,7 +509,7 @@ fn every_setting_changed() -> Settings {
     style.auto_add_corrections = false;
     style.press_enter_command = true;
     let meetings = &mut settings.meetings;
-    meetings.auto_detect = true;
+    meetings.auto_detect = false;
     meetings.live_transcript = false;
     meetings.refine_pass = false;
     meetings.diarization = false;

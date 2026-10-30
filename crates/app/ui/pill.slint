@@ -33,8 +33,8 @@ export enum PillLook { hidden, resting, ready, listening, locked, processing, er
 component Bars {
     in property <[float]> heights;
     in property <float> bar-scale: 1;
-    property <length> bar-width: 3px;
-    property <length> bar-gap: 3px;
+    property <length> bar-width: 2px;
+    property <length> bar-gap: 2px;
 
     width: 10 * self.bar-width + 9 * self.bar-gap;
 
@@ -54,8 +54,8 @@ component RoundButton {
     in property <brush> ink;
     callback clicked();
 
-    width: 22px;
-    height: 22px;
+    width: 18px;
+    height: 18px;
 
     Rectangle {
         border-radius: self.height / 2;
@@ -63,8 +63,8 @@ component RoundButton {
     }
 
     Path {
-        width: 10px;
-        height: 10px;
+        width: 8px;
+        height: 8px;
         viewbox-width: 10;
         viewbox-height: 10;
         commands: root.glyph;
@@ -227,14 +227,14 @@ export component PillWindow inherits Window {
 
         if root.look == PillLook.listening || root.look == PillLook.locked
             || root.look == PillLook.meeting: Bars {
-            height: parent.height - 8px;
-            y: 4px;
+            height: parent.height - 6px;
+            y: 3px;
             heights: root.bars;
             bar-scale: root.bar-scale;
         }
 
         if root.look == PillLook.locked: cancel-button := RoundButton {
-            x: 5px;
+            x: 3px;
             glyph: "M 2 2 L 8 8 M 8 2 L 2 8";
             fill: #ffffff24;
             ink: #f4f1ea;
@@ -242,7 +242,7 @@ export component PillWindow inherits Window {
         }
 
         if root.look == PillLook.locked: stop-button := RoundButton {
-            x: parent.width - self.width - 5px;
+            x: parent.width - self.width - 3px;
             glyph: "M 1.5 5.5 L 4 8 L 8.5 2.5";
             fill: #f4f1ea;
             ink: #17161c;

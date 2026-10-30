@@ -78,7 +78,7 @@ fn every_setting_changed() -> Settings {
     style.press_enter_command = true;
 
     let meetings = &mut settings.meetings;
-    meetings.auto_detect = true;
+    meetings.auto_detect = false;
     meetings.live_transcript = false;
     meetings.refine_pass = false;
     meetings.diarization = false;
@@ -155,7 +155,7 @@ fn defaults_follow_the_spec() {
     assert!(!settings.pipeline.vad_auto_stop);
     assert_eq!(settings.pipeline.vad_auto_stop_seconds, 3);
 
-    assert!(!settings.meetings.auto_detect, "never without opt-in");
+    assert!(settings.meetings.auto_detect, "it only asks");
     assert!(settings.media.sounds);
     assert_eq!(settings.media.while_dictating, MediaWhileDictating::Nothing);
     assert!(settings.privacy.context_awareness);

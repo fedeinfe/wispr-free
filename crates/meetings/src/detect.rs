@@ -1,6 +1,6 @@
 //! Spots a known meeting app that starts using the mic, so the app can offer "Take notes for this
 //! meeting?". This module only ever produces that suggestion: nothing here can start a recording,
-//! and with the opt-in off it stays quiet.
+//! and with the setting off it stays quiet.
 
 /// Polls an app must hold the mic before it counts, which skips quick mic tests. At the intended
 /// 2 s poll this is about 4 s.
@@ -27,6 +27,9 @@ pub enum MeetingApp {
     Webex,
     FaceTime,
     Slack,
+    Discord,
+    WhatsApp,
+    Telegram,
 }
 
 impl MeetingApp {
@@ -39,6 +42,9 @@ impl MeetingApp {
             Self::Webex => "Webex",
             Self::FaceTime => "FaceTime",
             Self::Slack => "Slack",
+            Self::Discord => "Discord",
+            Self::WhatsApp => "WhatsApp",
+            Self::Telegram => "Telegram",
         }
     }
 }
@@ -62,6 +68,14 @@ const KNOWN_APPS: &[(&str, MeetingApp)] = &[
     ("com.apple.avconferenced", MeetingApp::FaceTime),
     ("com.tinyspeck.slackmacgap", MeetingApp::Slack),
     ("slack", MeetingApp::Slack),
+    ("com.hnc.discord", MeetingApp::Discord),
+    ("discord", MeetingApp::Discord),
+    ("net.whatsapp.whatsapp", MeetingApp::WhatsApp),
+    ("desktop.whatsapp", MeetingApp::WhatsApp),
+    ("whatsapp", MeetingApp::WhatsApp),
+    ("ru.keepcoder.telegram", MeetingApp::Telegram),
+    ("org.telegram.desktop", MeetingApp::Telegram),
+    ("telegram", MeetingApp::Telegram),
     ("com.google.chrome", MeetingApp::Browser),
     ("com.apple.safari", MeetingApp::Browser),
     ("com.apple.webkit.gpu", MeetingApp::Browser),
@@ -69,6 +83,10 @@ const KNOWN_APPS: &[(&str, MeetingApp)] = &[
     ("com.microsoft.edgemac", MeetingApp::Browser),
     ("com.brave.browser", MeetingApp::Browser),
     ("company.thebrowser.browser", MeetingApp::Browser),
+    ("com.google.chrome.canary", MeetingApp::Browser),
+    ("com.vivaldi.vivaldi", MeetingApp::Browser),
+    ("com.operasoftware.opera", MeetingApp::Browser),
+    ("app.zen-browser.zen", MeetingApp::Browser),
     ("chrome", MeetingApp::Browser),
     ("google chrome", MeetingApp::Browser),
     ("chromium", MeetingApp::Browser),
@@ -116,7 +134,7 @@ impl Session {
 }
 
 impl MeetingDetector {
-    /// `enabled` is the user's auto-detect setting, which is off by default.
+    /// `enabled` is the user's auto-detect setting, which is on by default.
     pub fn new(enabled: bool) -> Self {
         Self {
             enabled,

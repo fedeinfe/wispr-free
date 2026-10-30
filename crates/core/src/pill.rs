@@ -51,12 +51,12 @@ impl PillState {
     pub fn capsule_size(&self, edge: Edge) -> Size {
         let (width, height) = match self {
             PillState::Hidden => (0.0, 0.0),
-            PillState::Resting if edge == Edge::Bottom => (44.0, 6.0),
-            PillState::Resting => (6.0, 44.0),
-            PillState::Ready | PillState::Processing | PillState::Error { .. } => (56.0, 22.0),
-            PillState::Meeting => (68.0, 24.0),
-            PillState::ListeningPtt => (92.0, 28.0),
-            PillState::ListeningHandsFree => (148.0, 32.0),
+            PillState::Resting if edge == Edge::Bottom => (32.0, 4.0),
+            PillState::Resting => (4.0, 32.0),
+            PillState::Ready | PillState::Processing | PillState::Error { .. } => (42.0, 18.0),
+            PillState::Meeting => (50.0, 18.0),
+            PillState::ListeningPtt => (60.0, 20.0),
+            PillState::ListeningHandsFree => (100.0, 24.0),
         };
         Size { width, height }
     }

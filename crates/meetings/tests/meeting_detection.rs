@@ -46,7 +46,11 @@ fn known_meeting_apps_are_recognised_on_every_platform() {
         ("com.tinyspeck.slackmacgap.helper", MeetingApp::Slack),
         ("slack.exe", MeetingApp::Slack),
         ("slack", MeetingApp::Slack),
+        ("com.hnc.Discord.helper", MeetingApp::Discord),
+        ("net.whatsapp.WhatsApp", MeetingApp::WhatsApp),
+        ("ru.keepcoder.Telegram", MeetingApp::Telegram),
         ("com.google.Chrome.helper", MeetingApp::Browser),
+        ("com.vivaldi.Vivaldi.helper", MeetingApp::Browser),
         ("com.apple.WebKit.GPU", MeetingApp::Browser),
         ("org.mozilla.firefox", MeetingApp::Browser),
         ("com.microsoft.edgemac.helper", MeetingApp::Browser),
@@ -84,7 +88,7 @@ fn nothing_is_suggested_without_the_opt_in() {
 }
 
 #[test]
-fn the_opt_in_is_the_default_off() {
+fn a_detector_stays_quiet_until_the_setting_turns_it_on() {
     assert!(!MeetingDetector::default().is_enabled());
 }
 
