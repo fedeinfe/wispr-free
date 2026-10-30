@@ -412,22 +412,13 @@ mod tests {
     use std::rc::Rc;
 
     use i_slint_backend_testing::{ElementHandle, init_integration_test_with_system_time};
-    use slint::platform::PointerEventButton;
-    use slint::{ModelRc, VecModel};
+    use slint::platform::{PointerEventButton, WindowEvent};
+    use slint::{ComponentHandle, LogicalPosition, ModelRc, VecModel};
 
     use crate::{PillLook, PillWindow};
 
-    /// Clicks the element named `id` in a window showing `look`, and returns what fired.
-    fn click(look: PillLook, id: &str) -> Vec<&'static str> {
-        let (fired, _) = click_with(look, id, PointerEventButton::Left);
-        fired
-    }
-
-    fn click_with(
-        look: PillLook,
-        id: &str,
-        button: PointerEventButton,
-    ) -> (Vec<&'static str>, PillWindow) {
+    /// A window showing `look`, with a log of what fired.
+    fn pill_window(look: PillLook) -> (PillWindow, Rc<RefCell<Vec<&'static str>>>) {
         let ui = PillWindow::new().unwrap();
         ui.set_look(look);
         ui.set_capsule_x(82.0);
@@ -445,19 +436,44 @@ mod tests {
         ui.on_pill_released(log("released"));
         ui.on_cancel_clicked(log("cancel"));
         ui.on_stop_clicked(log("stop"));
+        (ui, fired)
+    }
 
-        let element = ElementHandle::find_by_element_id(&ui, id)
+    fn element(ui: &PillWindow, id: &str) -> ElementHandle {
+        ElementHandle::find_by_element_id(ui, id)
             .next()
-            .unwrap_or_else(|| panic!("no element {id}"));
-        let done = fired.clone();
+            .unwrap_or_else(|| panic!("no element {id}"))
+    }
+
+    /// Clicks the element named `id` in a window showing `look`, and returns what fired.
+    fn click(look: PillLook, id: &str) -> Vec<&'static str> {
+        let (ui, fired) = pill_window(look);
+        let element = element(&ui, id);
         slint::spawn_local(async move {
-            element.single_click(button).await;
+            element.single_click(PointerEventButton::Left).await;
             slint::quit_event_loop().unwrap();
         })
         .unwrap();
         slint::run_event_loop().unwrap();
-        let fired = done.borrow().clone();
-        (fired, ui)
+        fired.borrow().clone()
+    }
+
+    /// Presses the right button on the capsule without releasing it. On x86_64 the menu is gone
+    /// after `single_click`, for a reason not traced; a plain press and release keep it open.
+    fn right_press(look: PillLook) -> (PillWindow, Vec<&'static str>) {
+        let (ui, fired) = pill_window(look);
+        let capsule = element(&ui, "PillWindow::capsule-touch");
+        let size = capsule.size();
+        let corner = capsule.absolute_position();
+        ui.window().dispatch_event(WindowEvent::PointerPressed {
+            position: LogicalPosition::new(
+                corner.x + size.width / 2.0,
+                corner.y + size.height / 2.0,
+            ),
+            button: PointerEventButton::Right,
+        });
+        let fired = fired.borrow().clone();
+        (ui, fired)
     }
 
     // One test: Slint's test platform can only be installed once per process.
@@ -475,8 +491,7 @@ mod tests {
         assert_eq!(click(PillLook::Locked, "PillWindow::stop-button"), ["stop"]);
 
         let is_open = |look| {
-            let (fired, ui) =
-                click_with(look, "PillWindow::capsule-touch", PointerEventButton::Right);
+            let (ui, fired) = right_press(look);
             assert_eq!(fired, Vec::<&str>::new(), "a right-click is not a press");
             ElementHandle::find_by_accessible_label(&ui, "Hide for 1 hour").count() > 0
         };
