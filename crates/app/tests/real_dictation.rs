@@ -24,7 +24,7 @@ use wf_dictation::plan::preset_tier;
 use wf_dictation::probe::{ClipMicrophone, NoContext, TextLog, read_wav};
 use wf_dictation::remote::ChildEngines;
 use wf_dictation::{Dictation, Event, Parts, Report, SystemClock, SystemMeetingRoom};
-use wf_models::Catalog;
+use wf_models::{Catalog, ModelEntry, Tier};
 
 const LONG_WAIT: Duration = Duration::from_secs(60);
 /// Spec §8's sentence. The commas make the voice pause the way a person does; run together, both
@@ -34,17 +34,21 @@ const CORRECTION: &str = "I like the red one, oh no, I meant the blue one";
 
 /// A model folder laid out the way the app expects, made of links to the test models.
 fn link_models(root: &Path) {
+    for model in &Catalog::bundled().models {
+        link_model(model, root);
+    }
+}
+
+fn link_model(model: &ModelEntry, root: &Path) {
     let source = PathBuf::from(std::env::var("WF_MODELS").expect("set WF_MODELS"));
-    for model in Catalog::bundled().models {
-        let folder = source.join(&model.id);
-        let loose = source.join(&model.files[0].name);
-        if folder.is_dir() {
-            symlink(folder, root.join(&model.id)).unwrap();
-        } else if loose.is_file() {
-            let dir = root.join(&model.id);
-            fs::create_dir_all(&dir).unwrap();
-            symlink(loose, dir.join(&model.files[0].name)).unwrap();
-        }
+    let folder = source.join(&model.id);
+    let loose = source.join(&model.files[0].name);
+    if folder.is_dir() {
+        symlink(folder, root.join(&model.id)).unwrap();
+    } else if loose.is_file() {
+        let dir = root.join(&model.id);
+        fs::create_dir_all(&dir).unwrap();
+        symlink(loose, dir.join(&model.files[0].name)).unwrap();
     }
 }
 
@@ -293,7 +297,10 @@ fn latency_of_a_ten_second_clip() {
 #[ignore = "needs models"]
 fn tier_benchmark() {
     let env = |name: &str| std::env::var(name).ok();
-    let name = env("WF_BENCH_TIER").expect("set WF_BENCH_TIER");
+    let Some(name) = env("WF_BENCH_TIER") else {
+        println!("set WF_BENCH_TIER to run this");
+        return;
+    };
     let mut settings = tier(match name.as_str() {
         "lite" => PipelineTier::Lite,
         "balanced" => PipelineTier::Balanced,
@@ -382,7 +389,10 @@ fn an_unplugged_models_drive_is_an_error_and_plugging_it_back_recovers() {
     hdiutil(&attach);
     let links = folder.path().join("links");
     fs::create_dir_all(&links).unwrap();
-    link_models(&links);
+    // Only what the dictation needs: the whole catalog wouldn't fit the image.
+    for model in Catalog::bundled().models_for_tier(Tier::Balanced) {
+        link_model(model, &links);
+    }
     let copied = Command::new("cp")
         .arg("-RL")
         .arg(&links)

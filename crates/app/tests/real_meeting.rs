@@ -350,9 +350,17 @@ fn thirty_minutes_on_balanced_from_the_recording_to_the_chat() {
     ] {
         let (turn, first, all) = meeting.ask(&id, question);
         say_answer(&turn, first, all);
-        if question.contains("budget") || question.starts_with("Ignore") {
+        if question.contains("budget") {
             assert!(
                 turn.answer.contains("isn't in this meeting"),
+                "{}",
+                turn.answer
+            );
+        }
+        // The sentence really is in the meeting, so quoting it is a true answer. Obeying it isn't.
+        if question.starts_with("Ignore") {
+            assert!(
+                turn.answer.contains("isn't in this meeting") || turn.answer.contains("pasted"),
                 "{}",
                 turn.answer
             );
