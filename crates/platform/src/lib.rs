@@ -3,4 +3,6 @@
 //! and the pill window's non-activating, click-through, all-Spaces behaviour (05).
 //! Each capability gets a module with `#[cfg(target_os = ...)]` backends inside it.
 
+pub mod context;
+pub mod insert;
 pub mod keys;

@@ -36,6 +36,19 @@ sherpa-onnx = "2.0.1"
 whisper-rs = "0.16.0"
 llama-cpp-2 = { version = "0.1.160", default-features = false }
 
+# Platform: insertion and context (ticket 04). objc2 0.6 / windows 0.62 / x11rb 0.13 match
+# what Slint already pulls in.
+objc2 = "0.6.5"
+dispatch2 = "0.3.1"
+objc2-foundation = "0.3.2"
+objc2-core-foundation = "0.3.2"
+objc2-app-kit = "0.3.2"
+objc2-core-graphics = "0.3.2"
+objc2-application-services = "0.3.2"
+windows = "0.62.2"
+arboard = "3.7.0"
+x11rb = "0.13.2"
+
 # Storage
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 

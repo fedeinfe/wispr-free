@@ -7,12 +7,24 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-# Per-OS deps (objc2 / x11rb, wayland layer-shell) arrive with tickets 04 and 05. macOS key capture
+# Per-OS deps for the overlay (wayland layer-shell) arrive with ticket 05. macOS key capture
 # links the system frameworks directly.
 [dependencies]
 wf-core.workspace = true
 thiserror.workspace = true
 
+# Insertion + context (04): NSPasteboard, CGEvent paste, AX focused-text reads.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+dispatch2.workspace = true
+objc2-foundation.workspace = true
+objc2-core-foundation.workspace = true
+objc2-app-kit.workspace = true
+objc2-core-graphics.workspace = true
+objc2-application-services.workspace = true
+
+# Key capture (03): low-level hooks. Insertion + context (04): SendInput paste, clipboard,
+# UI Automation reads.
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
@@ -20,6 +32,21 @@ windows-sys = { workspace = true, features = [
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }
+arboard.workspace = true
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_DataExchange",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
+# Key capture (03): evdev. Insertion + context (04): XTest paste (wtype/ydotool on Wayland),
+# clipboard, X11 window info.
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev.workspace = true
+arboard = { workspace = true, features = ["wayland-data-control"] }
+x11rb = { workspace = true, features = ["xtest"] }
