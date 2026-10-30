@@ -121,6 +121,13 @@ impl<'a> LiveVad<'a> {
         })
     }
 
+    /// Closes the chunk being built, however short. For when the speaker has gone quiet and the
+    /// words shouldn't wait for more speech to join them.
+    pub fn flush(&mut self) -> Option<LiveChunk> {
+        let range = self.chunker.close(self.received)?;
+        Some(self.take(range))
+    }
+
     /// Ends the recording and returns the chunks still to transcribe.
     pub fn finish(mut self) -> Result<Vec<LiveChunk>, PipelineError> {
         let mut chunks = Vec::new();

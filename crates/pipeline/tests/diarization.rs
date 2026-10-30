@@ -19,10 +19,7 @@ fn path(variable: &str) -> String {
 }
 
 fn diarizer() -> SherpaDiarizer {
-    let config = DiarizationConfig::new(
-        path("WF_SEGMENTATION_MODEL"),
-        path("WF_EMBEDDING_MODEL"),
-    );
+    let config = DiarizationConfig::new(path("WF_SEGMENTATION_MODEL"), path("WF_EMBEDDING_MODEL"));
     SherpaDiarizer::new(&config).unwrap()
 }
 
@@ -93,7 +90,12 @@ fn silence_has_no_turns() {
 #[test]
 #[ignore = "needs models"]
 fn an_empty_clip_has_no_turns() {
-    assert!(diarizer().diarize(&AudioClip::default()).unwrap().is_empty());
+    assert!(
+        diarizer()
+            .diarize(&AudioClip::default())
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]

@@ -2,13 +2,15 @@
 
 use std::f32::consts::TAU;
 use std::path::PathBuf;
+use std::sync::mpsc::{Receiver, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use wf_audio::{AudioBackend, Error as AudioError, InputDevice, StreamFormat, StreamSink};
 use wf_core::audio::{FRAME_SAMPLES, SAMPLE_RATE_HZ};
 use wf_meetings::{
-    Channel, MeetingConfig, MeetingEvent, MeetingRecorder, read_meeting, repair_meeting,
+    Channel, MeetingConfig, MeetingEvent, MeetingRecorder, TimelineFrame, read_meeting,
+    repair_meeting,
 };
 
 const FORMAT: StreamFormat = StreamFormat {
@@ -99,9 +101,8 @@ impl AudioBackend for FakeDevice {
 
 fn start(path: PathBuf, mic: &FakeDevice, system: &FakeDevice) -> MeetingRecorder {
     let config = MeetingConfig {
-        path,
-        mic_ranking: Vec::new(),
         poll_interval: Duration::from_millis(20),
+        ..MeetingConfig::new(path)
     };
     let (mic, system) = (mic.clone(), system.clone());
     MeetingRecorder::start_with(config, move || mic, move || system).unwrap()
@@ -212,9 +213,8 @@ fn a_recording_is_never_started_over_an_existing_file() {
     std::fs::write(&path, b"an earlier meeting").unwrap();
     let (mic, system) = (FakeDevice::default(), FakeDevice::default());
     let config = MeetingConfig {
-        path: path.clone(),
-        mic_ranking: Vec::new(),
         poll_interval: Duration::from_millis(20),
+        ..MeetingConfig::new(path.clone())
     };
 
     let result = MeetingRecorder::start_with(config, move || mic, move || system);
@@ -245,4 +245,67 @@ fn audio_on_disk_during_the_meeting_survives_abandoning_the_recorder() {
 
     repair_meeting(&path).unwrap();
     assert!(read_meeting(&path).unwrap().you.samples().len() >= 2 * SAMPLE_RATE_HZ as usize);
+}
+
+fn start_with_timeline(
+    path: PathBuf,
+    mic: &FakeDevice,
+    system: &FakeDevice,
+    buffer: usize,
+) -> (MeetingRecorder, Receiver<TimelineFrame>) {
+    let (sender, timeline) = sync_channel(buffer);
+    let config = MeetingConfig {
+        poll_interval: Duration::from_millis(20),
+        timeline: Some(sender),
+        ..MeetingConfig::new(path)
+    };
+    let (mic, system) = (mic.clone(), system.clone());
+    let recorder = MeetingRecorder::start_with(config, move || mic, move || system).unwrap();
+    (recorder, timeline)
+}
+
+/// ScreenCaptureKit and WASAPI loopback deliver nothing while nothing plays. Counting the raw
+/// frames of that channel would put the live transcript's timestamps behind the file.
+#[test]
+fn the_timeline_keeps_a_silent_source_in_step_with_the_file() {
+    let dir = temp_dir("timeline-silent");
+    let path = dir.join("meeting.opus");
+    let (mic, system) = (FakeDevice::default(), FakeDevice::default());
+    let (recorder, timeline) = start_with_timeline(path.clone(), &mic, &system, 1_024);
+    mic.wait_until_open();
+    system.wait_until_open();
+
+    play_alone(&mic, 50);
+    wait_for_frames(&recorder, Channel::You, 50);
+    recorder.stop().unwrap();
+
+    let frames: Vec<TimelineFrame> = timeline.iter().collect();
+    let audio = read_meeting(&path).unwrap();
+    assert_eq!(frames.len() * FRAME_SAMPLES, audio.you.samples().len());
+    assert_eq!(frames.len() * FRAME_SAMPLES, audio.others.samples().len());
+    let indices: Vec<u64> = frames.iter().map(|f| f.index).collect();
+    assert_eq!(indices, (0..frames.len() as u64).collect::<Vec<_>>());
+    assert!(loudness(&frames[10].frame.you) > 0.1);
+    assert_eq!(loudness(&frames[10].frame.others), 0.0);
+}
+
+/// Nobody reading the timeline must never cost the recording anything, and the frame numbers
+/// still say how much was missed.
+#[test]
+fn a_timeline_nobody_reads_drops_frames_and_never_the_recording() {
+    let dir = temp_dir("timeline-unread");
+    let path = dir.join("meeting.opus");
+    let (mic, system) = (FakeDevice::default(), FakeDevice::default());
+    let (recorder, timeline) = start_with_timeline(path.clone(), &mic, &system, 4);
+    mic.wait_until_open();
+    system.wait_until_open();
+
+    play_both(&mic, &system, 75);
+    wait_for_frames(&recorder, Channel::You, 75);
+    recorder.stop().unwrap();
+
+    let frames: Vec<TimelineFrame> = timeline.iter().collect();
+    assert_eq!(frames.len(), 4);
+    let audio = read_meeting(&path).unwrap();
+    assert!(audio.you.samples().len() >= 70 * FRAME_SAMPLES);
 }

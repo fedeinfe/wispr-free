@@ -3,6 +3,7 @@
 
 use std::collections::VecDeque;
 
+use serde::{Deserialize, Serialize};
 use wf_core::audio::FRAME_SAMPLES;
 
 /// One side may run this far ahead before the other is padded. Long enough to ride out normal
@@ -10,7 +11,8 @@ use wf_core::audio::FRAME_SAMPLES;
 /// a crash can lose.
 const MAX_SKEW_FRAMES: usize = 5;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Channel {
     /// The microphone.
     You,

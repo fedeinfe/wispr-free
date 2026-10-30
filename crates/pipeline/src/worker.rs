@@ -119,6 +119,12 @@ impl<S: Send + 'static> AsrWorker<S> {
         self.failed.try_iter().collect()
     }
 
+    /// `false` once the engine's thread has ended, which before [`finish`](Self::finish) means
+    /// the engine panicked and the backlog will never shrink.
+    pub fn is_running(&self) -> bool {
+        !self.thread.is_finished()
+    }
+
     /// How much submitted audio isn't transcribed yet, the running chunk included.
     pub fn backlog(&self) -> Duration {
         let samples = self.backlog.load(Ordering::Relaxed);

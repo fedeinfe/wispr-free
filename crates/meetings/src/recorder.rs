@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use wf_audio::{AudioBackend, Capture, CaptureConfig, CaptureEvent, CpalBackend, InputDevice};
 
-use crate::{Channel, Error, MeetingWriter, StereoAligner, SystemAudioBackend};
+use crate::{Channel, Error, MeetingWriter, StereoAligner, StereoFrame, SystemAudioBackend};
 
 /// About 10 s of both channels. The writer outruns capture by far, so this only absorbs a
 /// momentarily slow disk.
@@ -27,6 +27,9 @@ pub struct MeetingConfig {
     pub mic_ranking: Vec<String>,
     /// How often to look for device changes.
     pub poll_interval: Duration,
+    /// Receives every frame as it goes to the file. Frames it has no room for are skipped, so
+    /// a slow reader never holds up the recording.
+    pub timeline: Option<SyncSender<TimelineFrame>>,
 }
 
 impl MeetingConfig {
@@ -35,8 +38,18 @@ impl MeetingConfig {
             path,
             mic_ranking: Vec::new(),
             poll_interval: CaptureConfig::default().poll_interval,
+            timeline: None,
         }
     }
+}
+
+/// 40 ms of both channels exactly as the file has them, padding included. Unlike
+/// [`MeetingEvent::Frame`] this is the meeting's clock: `index * 40 ms` is the place in the file,
+/// and a jump in `index` shows how much a reader missed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimelineFrame {
+    pub index: u64,
+    pub frame: StereoFrame,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -106,7 +119,7 @@ impl MeetingRecorder {
         ];
         let worker = std::thread::Builder::new()
             .name("wf-meeting-writer".into())
-            .spawn(move || write_meeting(writer, inbox, events_tx))?;
+            .spawn(move || write_meeting(writer, inbox, events_tx, config.timeline))?;
         Ok(Self {
             events,
             stop,
@@ -178,10 +191,18 @@ fn write_meeting(
     writer: MeetingWriter,
     inbox: Receiver<(Channel, CaptureEvent)>,
     events: SyncSender<MeetingEvent>,
+    timeline: Option<SyncSender<TimelineFrame>>,
 ) -> Result<Duration, Error> {
     let notify = |event| {
         // A full buffer means nobody is reading right now. The recording must not wait for them.
         let _ = events.try_send(event);
+    };
+    let mut index = 0;
+    let mut publish = |frame| {
+        if let Some(timeline) = &timeline {
+            let _ = timeline.try_send(TimelineFrame { index, frame });
+        }
+        index += 1;
     };
     let mut writer = Some(writer);
     let mut failure = None;
@@ -202,6 +223,7 @@ fn write_meeting(
                     writer = None;
                     failure = Some(e);
                 }
+                frames.into_iter().for_each(&mut publish);
             }
         }
     }
@@ -213,6 +235,7 @@ fn write_meeting(
     };
     for frame in aligner.drain() {
         writer.write_frame(&frame.you, &frame.others)?;
+        publish(frame);
     }
     writer.finish()
 }

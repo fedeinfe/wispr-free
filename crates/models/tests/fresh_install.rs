@@ -131,9 +131,12 @@ fn a_tier_that_diarizes_also_downloads_its_speaker_models() {
 
     let mut last = Progress::default();
     store
-        .install_tier(&catalog, Tier::Balanced, &AtomicBool::new(false), &mut |p| {
-            last = p
-        })
+        .install_tier(
+            &catalog,
+            Tier::Balanced,
+            &AtomicBool::new(false),
+            &mut |p| last = p,
+        )
         .unwrap();
 
     assert_eq!(

@@ -228,7 +228,10 @@ impl ModelStore {
         let models = catalog.models_for_tier(tier);
         let speaker_models = catalog.speaker_models_for_tier(tier);
         let total = models.iter().map(|m| m.download_size()).sum::<u64>()
-            + speaker_models.iter().map(|m| m.download_size()).sum::<u64>();
+            + speaker_models
+                .iter()
+                .map(|m| m.download_size())
+                .sum::<u64>();
         let mut done = 0;
         let mut track = |n: u64, finished: bool| {
             on_progress(Progress {
