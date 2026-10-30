@@ -2,8 +2,14 @@
 //! trait so tiers and settings can pick backends at runtime. Implementations land with their
 //! tickets: VAD (06), ASR (07), rule cleanup (08), LLM cleanup (09), local passes (10).
 
+use std::time::Instant;
+
 use wf_core::audio::AudioClip;
 
+pub mod cleanup;
+#[cfg(feature = "llama")]
+pub mod llama;
+pub mod llm_host;
 pub mod rules;
 
 /// Engine failures that the pill's Error state and the fallbacks need to tell apart.
@@ -57,13 +63,19 @@ pub trait Asr: Send {
 pub struct LlmPrompt {
     pub system: String,
     pub user: String,
+    /// Worked (user, assistant) turns placed before `user`. Small models follow them far more
+    /// reliably than rules.
+    pub examples: Vec<(String, String)>,
     /// `0` lets the engine pick.
     pub max_tokens: u32,
+    /// When to give up with [`PipelineError::Timeout`]. `None` waits for as long as it takes.
+    pub deadline: Option<Instant>,
 }
 
 /// A local instruct model (llama.cpp, ticket 09) for LLM cleanup, summaries and meeting chat.
 pub trait Llm: Send {
-    /// Streams tokens to `on_token` as they decode and returns the full completion.
+    /// Streams tokens to `on_token` as they decode and returns the full completion. Engines
+    /// check `prompt.deadline` between tokens.
     fn generate(
         &mut self,
         prompt: &LlmPrompt,

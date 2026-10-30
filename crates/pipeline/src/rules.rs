@@ -23,6 +23,33 @@ pub fn rule_cleanup(text: &str, language: Option<&str>) -> String {
     render(&words)
 }
 
+/// Whether the text contains a revision marker of any language ("oh no", "anzi"…).
+pub(crate) fn has_correction_marker(text: &str) -> bool {
+    let words: Vec<Word> = text.split_whitespace().map(Word::parse).collect();
+    LEXICONS
+        .iter()
+        .flat_map(|lexicon| lexicon.correction_markers)
+        .any(|marker| (0..words.len()).any(|i| keys_at(&words, i, marker).is_some()))
+}
+
+/// Counts the words in `reply` and how many of them the speaker never said, ignoring case and
+/// punctuation. A bare list dash is not a word.
+pub(crate) fn new_words(text: &str, reply: &str) -> (usize, usize) {
+    let spoken: Vec<Word> = text.split_whitespace().map(Word::parse).collect();
+    let words = reply.split_whitespace().map(Word::parse);
+    let words: Vec<Word> = words.filter(|word| !word.key.is_empty()).collect();
+    let new = words
+        .iter()
+        .filter(|word| !spoken.iter().any(|said| said.key == word.key))
+        .count();
+    (new, words.len())
+}
+
+/// The first word, lowercase and without its punctuation.
+pub(crate) fn first_word(text: &str) -> Option<String> {
+    text.split_whitespace().next().map(|w| Word::parse(w).key)
+}
+
 /// Per-language word lists. Entries are lowercase.
 struct Lexicon {
     language: &'static str,
@@ -50,7 +77,7 @@ const LEXICONS: &[Lexicon] = &[
         edit_commands: &["scratch that"],
         edit_commands_at_pause: &["delete that", "never mind"],
         correction_markers: &[
-            "no", "no wait", "wait", "sorry", "no sorry", "oh no", "i mean", "actually",
+            "no", "no wait", "wait", "sorry", "no sorry", "oh no", "i mean", "i meant", "actually",
         ],
         doubles: &["had", "bye"],
     },
@@ -215,6 +242,7 @@ fn collapse_repeats(words: &mut Vec<Word>, lexicons: &[&Lexicon]) {
                     && lexicons
                         .iter()
                         .any(|l| l.doubles.contains(&words[i].key.as_str())))
+                && !words[i..i + n].iter().all(|w| is_number(&w.key))
         });
         match repeat {
             Some(n) => {
@@ -308,12 +336,59 @@ fn slot_swap(words: &[Word], sentence_start: usize, i: usize, m: usize) -> Optio
         return None;
     }
     let replaced = &words[i - n..i];
-    let aligned = n == 1
-        || replaced
+    let aligned = if n == 1 {
+        !is_number(&words[first].key) || is_number(&replaced[0].key)
+    } else {
+        replaced
             .iter()
             .zip(&words[first..=last])
-            .any(|(a, b)| a.key == b.key);
+            .any(|(a, b)| a.key == b.key)
+    };
     aligned.then_some(n)
+}
+
+/// Numbers people revise out loud. Larger ones usually span several words and aren't swaps.
+const NUMBER_WORDS: &[&str] = &[
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "twenty",
+    "thirty",
+    "forty",
+    "fifty",
+    "hundred",
+    "thousand",
+    "uno",
+    "due",
+    "tre",
+    "quattro",
+    "cinque",
+    "sei",
+    "sette",
+    "otto",
+    "nove",
+    "dieci",
+    "undici",
+    "dodici",
+    "venti",
+    "trenta",
+    "quaranta",
+    "cinquanta",
+    "cento",
+    "mille",
+];
+
+fn is_number(key: &str) -> bool {
+    !key.is_empty() && (key.chars().all(|c| c.is_ascii_digit()) || NUMBER_WORDS.contains(&key))
 }
 
 /// Capitalizes each sentence start and ends the text with a period if it has no final mark.
@@ -332,7 +407,7 @@ fn sentence_case(words: &mut [Word]) {
     }
 }
 
-fn capitalize(s: &str) -> String {
+pub(crate) fn capitalize(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect(),

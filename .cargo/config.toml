@@ -1,0 +1,3 @@
+[alias]
+# Builds llama.cpp the first time, so it is not part of the default workspace build.
+xtask = "run --release --package xtask --features llama --"
