@@ -1,6 +1,13 @@
-// The always-present tray icon. Later tickets add Settings, Meetings and pill toggles here.
+import { PillLook } from "pill.slint";
+
+// The always-present tray icon. Later tickets add Meetings and pill toggles here.
 export component Tray inherits SystemTrayIcon {
+    in property <bool> debug-menu;
+    callback open-settings();
     callback quit();
+    callback debug-state(PillLook);
+    callback debug-sound(string);
+    callback debug-mic-level();
 
     // Neutral gray reads on light and dark bars. Slint 1.18 exposes neither template images
     // nor the bar's appearance to .slint, so a proper monochrome glyph needs native code.
@@ -8,6 +15,67 @@ export component Tray inherits SystemTrayIcon {
     tooltip: "wispr-free";
 
     Menu {
+        if root.debug-menu: Menu {
+            title: "Debug pill";
+            MenuItem {
+                title: "Hidden";
+                activated => { root.debug-state(PillLook.hidden); }
+            }
+            MenuItem {
+                title: "Resting";
+                activated => { root.debug-state(PillLook.resting); }
+            }
+            MenuItem {
+                title: "Ready";
+                activated => { root.debug-state(PillLook.ready); }
+            }
+            MenuItem {
+                title: "Listening (push-to-talk)";
+                activated => { root.debug-state(PillLook.listening); }
+            }
+            MenuItem {
+                title: "Listening (hands-free)";
+                activated => { root.debug-state(PillLook.locked); }
+            }
+            MenuItem {
+                title: "Processing";
+                activated => { root.debug-state(PillLook.processing); }
+            }
+            MenuItem {
+                title: "Error";
+                activated => { root.debug-state(PillLook.error); }
+            }
+            MenuItem {
+                title: "Meeting";
+                activated => { root.debug-state(PillLook.meeting); }
+            }
+            MenuSeparator {}
+            MenuItem {
+                title: "Play start sound";
+                activated => { root.debug-sound("start"); }
+            }
+            MenuItem {
+                title: "Play stop sound";
+                activated => { root.debug-sound("stop"); }
+            }
+            MenuItem {
+                title: "Play lock sound";
+                activated => { root.debug-sound("lock"); }
+            }
+            MenuItem {
+                title: "Play error sound";
+                activated => { root.debug-sound("error"); }
+            }
+            MenuSeparator {}
+            MenuItem {
+                title: "Use real mic level";
+                activated => { root.debug-mic-level(); }
+            }
+        }
+        MenuItem {
+            title: "Settings…";
+            activated => { root.open-settings(); }
+        }
         MenuItem {
             title: "Quit wispr-free";
             activated => { root.quit(); }

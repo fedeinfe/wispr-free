@@ -1,0 +1,450 @@
+// Our own controls, so that every part of the window uses the palette in theme.slint.
+import { Prefs } from "bridge.slint";
+import { Theme } from "theme.slint";
+
+export component Label inherits Text {
+    color: Theme.text;
+    font-size: Theme.body-text;
+    wrap: word-wrap;
+}
+
+export component Hint inherits Text {
+    color: Theme.muted;
+    font-size: Theme.small-text;
+    wrap: word-wrap;
+}
+
+export component Toggle inherits Rectangle {
+    in property <string> label;
+    in property <bool> enabled: true;
+    in-out property <bool> checked;
+    callback toggled();
+
+    function flip() {
+        if enabled {
+            checked = !checked;
+            toggled();
+        }
+    }
+
+    width: 36px;
+    height: 20px;
+    border-radius: self.height / 2;
+    background: checked ? Theme.accent : Theme.track;
+    opacity: enabled ? 1 : 0.5;
+    accessible-role: switch;
+    accessible-label: label;
+    accessible-checked: checked;
+    accessible-enabled: enabled;
+    accessible-action-default => {
+        flip();
+    }
+
+    Rectangle {
+        x: root.checked ? parent.width - self.width - 2px : 2px;
+        width: 16px;
+        height: 16px;
+        border-radius: self.height / 2;
+        background: #ffffff;
+        animate x { duration: 100ms; easing: ease-out; }
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.flip();
+        }
+    }
+}
+
+export component Btn inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary;
+    in property <bool> danger;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    min-width: label.preferred-width + 24px;
+    height: 28px;
+    border-radius: 6px;
+    border-width: primary ? 0 : 1px;
+    border-color: Theme.line;
+    background: primary ? Theme.accent : touch.has-hover && enabled ? Theme.hover : Theme.surface;
+    opacity: enabled ? 1 : 0.5;
+    accessible-role: button;
+    accessible-label: text;
+    accessible-enabled: enabled;
+    accessible-action-default => {
+        if enabled {
+            clicked();
+        }
+    }
+
+    label := Text {
+        text: root.text;
+        color: root.primary ? Theme.on-accent : root.danger ? Theme.danger : Theme.text;
+        font-size: Theme.body-text;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component Select inherits Rectangle {
+    in property <string> label;
+    in property <[string]> options;
+    in property <bool> enabled: true;
+    in-out property <int> current;
+    callback selected();
+
+    width: 200px;
+    height: 28px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Theme.line;
+    background: touch.has-hover && enabled ? Theme.hover : Theme.surface;
+    opacity: enabled ? 1 : 0.5;
+    accessible-role: combobox;
+    accessible-label: label;
+    accessible-value: options[current];
+
+    Text {
+        x: 10px;
+        width: parent.width - 30px;
+        text: root.options[root.current];
+        color: Theme.text;
+        font-size: Theme.body-text;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+
+    Path {
+        x: parent.width - 19px;
+        y: (parent.height - self.height) / 2;
+        width: 9px;
+        height: 5px;
+        commands: "M 0 0 L 4.5 5 L 9 0";
+        stroke: Theme.muted;
+        stroke-width: 1.5px;
+        fill: transparent;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            popup.show();
+        }
+    }
+
+    popup := PopupWindow {
+        x: 0;
+        y: root.height + 2px;
+        width: root.width;
+
+        Rectangle {
+            background: Theme.surface;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: Theme.line;
+
+            VerticalLayout {
+                padding: 4px;
+
+                for option[index] in root.options: Rectangle {
+                    height: 26px;
+                    border-radius: 4px;
+                    background: option-touch.has-hover ? Theme.hover : transparent;
+
+                    Text {
+                        x: 6px;
+                        width: parent.width - 12px;
+                        text: option;
+                        color: index == root.current ? Theme.accent : Theme.text;
+                        font-size: Theme.body-text;
+                        overflow: elide;
+                        vertical-alignment: center;
+                    }
+
+                    option-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.current = index;
+                            root.selected();
+                            popup.close();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component Field inherits Rectangle {
+    in property <string> label;
+    in property <string> placeholder;
+    in property <bool> multiline;
+    in-out property <string> text;
+    callback edited();
+    callback accepted();
+
+    function focus-input() {
+        input.focus();
+    }
+
+    min-width: 80px;
+    height: multiline ? 72px : 28px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : Theme.line;
+    background: Theme.surface;
+
+    TouchArea {
+        mouse-cursor: MouseCursor.text;
+        clicked => {
+            root.focus-input();
+        }
+    }
+
+    Text {
+        x: input.x;
+        y: input.y;
+        width: input.width;
+        height: multiline ? self.preferred-height : input.height;
+        visible: root.text == "";
+        text: root.placeholder;
+        color: Theme.muted;
+        font-size: Theme.body-text;
+        vertical-alignment: multiline ? top : center;
+        wrap: multiline ? word-wrap : no-wrap;
+        overflow: elide;
+    }
+
+    input := TextInput {
+        x: 8px;
+        y: multiline ? 6px : 0;
+        width: parent.width - 16px;
+        height: parent.height - (multiline ? 12px : 0);
+        text <=> root.text;
+        color: Theme.text;
+        font-size: Theme.body-text;
+        selection-background-color: Theme.accent;
+        selection-foreground-color: Theme.on-accent;
+        single-line: !root.multiline;
+        wrap: root.multiline ? word-wrap : no-wrap;
+        vertical-alignment: root.multiline ? top : center;
+        accessible-label: root.label;
+        edited => {
+            root.edited();
+        }
+        accepted => {
+            root.accepted();
+        }
+    }
+}
+
+export component Stepper inherits Rectangle {
+    in property <string> label;
+    in property <string> unit;
+    in property <int> minimum: 1;
+    in property <int> maximum: 100;
+    in property <int> step: 1;
+    in property <bool> enabled: true;
+    in-out property <int> value;
+    callback changed-by-user();
+
+    function change(by: int) {
+        value = max(minimum, min(maximum, value + by));
+        changed-by-user();
+    }
+
+    width: 150px;
+    height: 28px;
+    opacity: enabled ? 1 : 0.5;
+    accessible-role: spinbox;
+    accessible-label: label;
+    accessible-value: value;
+    accessible-enabled: enabled;
+    accessible-action-increment => {
+        if enabled {
+            change(step);
+        }
+    }
+    accessible-action-decrement => {
+        if enabled {
+            change(-step);
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 6px;
+
+        Btn {
+            width: 28px;
+            text: "−";
+            enabled: root.enabled && root.value > root.minimum;
+            clicked => {
+                root.change(-root.step);
+            }
+        }
+
+        Text {
+            horizontal-stretch: 1;
+            text: root.value + " " + root.unit;
+            color: Theme.text;
+            font-size: Theme.body-text;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        Btn {
+            width: 28px;
+            text: "+";
+            enabled: root.enabled && root.value < root.maximum;
+            clicked => {
+                root.change(root.step);
+            }
+        }
+    }
+}
+
+// A titled group of rows on a page.
+export component Card inherits Rectangle {
+    in property <string> title;
+    in property <string> hint;
+
+    background: Theme.surface;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.line;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        if root.title != "": VerticalLayout {
+            spacing: 2px;
+
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-size: Theme.body-text;
+                font-weight: 600;
+            }
+
+            if root.hint != "": Hint {
+                text: root.hint;
+            }
+        }
+
+        @children
+    }
+}
+
+// A label on the left and a control on the right.
+export component Row inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> hint;
+
+    spacing: 16px;
+    alignment: stretch;
+
+    VerticalLayout {
+        horizontal-stretch: 1;
+        alignment: center;
+        spacing: 2px;
+
+        Label {
+            text: root.label;
+        }
+
+        if root.hint != "": Hint {
+            text: root.hint;
+        }
+    }
+
+    @children
+}
+
+export component ToggleRow inherits Row {
+    in-out property <bool> checked;
+    in property <bool> enabled: true;
+
+    VerticalLayout {
+        alignment: center;
+
+        Toggle {
+            label: root.label;
+            enabled: root.enabled;
+            checked <=> root.checked;
+            toggled => {
+                Prefs.commit();
+            }
+        }
+    }
+}
+
+export component SelectRow inherits Row {
+    in-out property <int> current;
+    in property <[string]> options;
+
+    VerticalLayout {
+        alignment: center;
+
+        Select {
+            label: root.label;
+            options: root.options;
+            current <=> root.current;
+            selected => {
+                Prefs.commit();
+            }
+        }
+    }
+}
+
+export component StepperRow inherits Row {
+    in-out property <int> value;
+    in property <string> unit;
+    in property <int> minimum: 1;
+    in property <int> maximum: 100;
+    in property <int> step: 1;
+    in property <bool> enabled: true;
+
+    VerticalLayout {
+        alignment: center;
+
+        Stepper {
+            label: root.label;
+            unit: root.unit;
+            minimum: root.minimum;
+            maximum: root.maximum;
+            step: root.step;
+            enabled: root.enabled;
+            value <=> root.value;
+            changed-by-user => {
+                Prefs.commit();
+            }
+        }
+    }
+}
+
+// The title of a page and its scrolling cards are in window.slint; this is the page's column.
+export component Page inherits VerticalLayout {
+    padding: 24px;
+    padding-top: 0;
+    spacing: 14px;
+    alignment: start;
+}
+
+export component ErrorText inherits Text {
+    color: Theme.danger;
+    font-size: Theme.small-text;
+    wrap: word-wrap;
+}

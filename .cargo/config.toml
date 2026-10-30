@@ -1,3 +1,7 @@
+[alias]
+# Builds llama.cpp the first time, so it is not part of the default workspace build.
+xtask = "run --release --package xtask --features llama --"
+
 # ADR-0003: llama.cpp is a shared library so its ggml stays apart from whisper.cpp's. Binaries
 # look for it next to themselves.
 [target.'cfg(target_os = "macos")']

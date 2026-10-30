@@ -136,6 +136,29 @@ const CASES: &[(Option<&str>, &str, &str)] = &[
         "I like the red one, oh no, I meant the blue one.",
     ),
     (Some("en"), "I said no, thanks.", "I said no, thanks."),
+    // A number can only swap a number: dropping "tickets" here would lose it for good.
+    (
+        Some("en"),
+        "Add two tickets, no, three.",
+        "Add two tickets, no, three.",
+    ),
+    (
+        Some("it"),
+        "Compra due biglietti, anzi tre.",
+        "Compra due biglietti, anzi tre.",
+    ),
+    (Some("en"), "Add 2, no, 3.", "Add 3."),
+    // Repeated digits are content: a phone number is not a stutter.
+    (
+        Some("en"),
+        "My number is five five five one two.",
+        "My number is five five five one two.",
+    ),
+    (
+        Some("it"),
+        "Il codice è tre tre sette.",
+        "Il codice è tre tre sette.",
+    ),
     (Some("en"), "Yes, no, maybe.", "Yes, no, maybe."),
     (Some("en"), "Do you want tea, no?", "Do you want tea, no?"),
     (

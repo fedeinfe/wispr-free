@@ -1,0 +1,17 @@
+[package]
+name = "wf-history"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# Separate from wf-core so SQLite's C build stays out of the crates that cross-check from one OS.
+[dependencies]
+rusqlite.workspace = true
+thiserror.workspace = true
+directories.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
