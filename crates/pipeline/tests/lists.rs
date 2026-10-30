@@ -84,6 +84,36 @@ fn counted_off_items_become_a_numbered_list() {
 }
 
 #[test]
+fn items_introduced_with_an_article_count_too() {
+    let cases = [
+        (
+            "Allora senti, devo fixare questi 4 bug: il primo è che non funziona il login, il secondo è che non funziona la pagina home page, la terza è che praticamente la sera è fredda.",
+            "Allora senti, devo fixare questi 4 bug:\n1. non funziona il login\n2. non funziona la pagina home page\n3. praticamente la sera è fredda",
+        ),
+        (
+            "Devo fixare questi bug il primo è che non funziona il login, il secondo è che manca il bottone",
+            "Devo fixare questi bug:\n1. non funziona il login\n2. manca il bottone",
+        ),
+        (
+            "Ci sono tre problemi: il primo problema è il login, il secondo problema è il bottone, il terzo è la home.",
+            "Ci sono tre problemi:\n1. il login\n2. il bottone\n3. la home",
+        ),
+        (
+            "Ho questi due problemi: il primo il login, il secondo il bottone.",
+            "Ho questi due problemi:\n1. il login\n2. il bottone",
+        ),
+        (
+            "There are three bugs: the first is that login fails, the second one is that the button is gone, the third is the home page.",
+            "There are three bugs:\n1. login fails\n2. the button is gone\n3. the home page",
+        ),
+    ];
+    for (spoken, written) in cases {
+        let cleaned = rule_cleanup(spoken, Some("it"));
+        assert_eq!(format_lists(&cleaned).as_deref(), Some(written), "{spoken}");
+    }
+}
+
+#[test]
 fn what_follows_the_list_stays_after_it() {
     assert_eq!(
         format_lists(
@@ -105,6 +135,7 @@ fn ordinary_sentences_stay_sentences() {
         "Oggi ho comprato pane, latte e uova.",
         "Ho comprato tre mele, due pere, un kiwi.",
         "He came first, second place went to Anna.",
+        "Il primo è arrivato Marco, il secondo è arrivato Luca, il terzo è arrivato Gino.",
         "Queste tre cose non mi piacciono per niente.",
         "Queste cose succedono, lo so.",
     ];

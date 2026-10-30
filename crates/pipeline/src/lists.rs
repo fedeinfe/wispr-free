@@ -50,8 +50,15 @@ const NOT_AFTER_SECONDO: &[&str] = &[
     "me", "te", "lui", "lei", "noi", "voi", "loro", "quanto", "cui", "come",
 ];
 
+/// Before a counting word these introduce the item when a break or "è che" says so: "il primo è
+/// che…". Otherwise they make it an adjective.
+const ARTICLES: &[&str] = &["il", "la", "lo", "l", "the"];
+
 /// Spoken right after a counting word, as in "prima cosa", without being part of the item.
-const COUNTED_NOUNS: &[&str] = &["cosa", "punto", "thing", "point", "item"];
+const COUNTED_NOUNS: &[&str] = &[
+    "cosa", "punto", "problema", "motivo", "bug", "thing", "point", "item", "problem", "reason",
+    "issue", "one",
+];
 
 /// What a list can be a list of, after "queste" or "these". Anything else, as in "questi due
 /// ragazzi", is too likely to be an ordinary sentence.
@@ -82,16 +89,8 @@ const LIST_NOUNS: &[&str] = &[
     "questions",
 ];
 
-/// In the lead-in, these announce a list, which lets two counted items be enough.
-const ANNOUNCING: &[&str] = &[
-    "due",
-    "two",
-    "questi",
-    "queste",
-    "these",
-    "seguenti",
-    "following",
-];
+/// In the lead-in, these and a count announce a list, which lets two counted items be enough.
+const ANNOUNCING: &[&str] = &["questi", "queste", "these", "seguenti", "following"];
 
 const JOINERS: &[&str] = &["e", "ed", "and", "poi", "then", "infine", "finally"];
 
@@ -157,6 +156,30 @@ struct Marker {
     value: usize,
     start: usize,
     end: usize,
+    /// An article and no "è che", as in "il secondo no": it needs the lead-in to announce a list.
+    weak: bool,
+}
+
+/// Where the words that lead into an item end, after the ordinal at `words[i]`, and whether they
+/// close with "è che" or "is that".
+fn after_ordinal(words: &[Word], i: usize) -> (usize, bool) {
+    let is = |at: usize, wanted: &[&str]| {
+        let word = words.get(at);
+        word.is_some_and(|word| wanted.contains(&word.text.as_str()))
+    };
+    let mut last = i;
+    if is(last + 1, COUNTED_NOUNS) {
+        last += 1;
+    }
+    if !is(last + 1, &["è", "is"]) {
+        return (words[last].end, false);
+    }
+    last += 1;
+    let closed = is(last + 1, &["che", "that"]);
+    if closed {
+        last += 1;
+    }
+    (words[last].end, closed)
 }
 
 /// The counting words that start at `words[i]`, if that's what they are.
@@ -173,6 +196,7 @@ fn marker(text: &str, words: &[Word], i: usize) -> Option<Marker> {
                 value,
                 start,
                 end: next.end,
+                weak: false,
             });
         }
         let opener = (word.text == "prima" && next_is("di"))
@@ -186,6 +210,18 @@ fn marker(text: &str, words: &[Word], i: usize) -> Option<Marker> {
                 value,
                 start: word.start,
                 end: opener.end,
+                weak: false,
+            });
+        }
+        let (end, closed) = after_ordinal(words, i);
+        if let Some(article) = previous.filter(|word| ARTICLES.contains(&word.text.as_str()))
+            && (closed || after_a_break(text, article.start))
+        {
+            return Some(Marker {
+                value,
+                start: article.start,
+                end,
+                weak: !closed,
             });
         }
         let adjective = !after_a_break(text, word.start)
@@ -198,13 +234,11 @@ fn marker(text: &str, words: &[Word], i: usize) -> Option<Marker> {
         if adjective || linked {
             return None;
         }
-        let end = next
-            .filter(|word| COUNTED_NOUNS.contains(&word.text.as_str()))
-            .map_or(word.end, |word| word.end);
         return Some(Marker {
             value,
             start: word.start,
             end,
+            weak: false,
         });
     }
 
@@ -215,6 +249,7 @@ fn marker(text: &str, words: &[Word], i: usize) -> Option<Marker> {
             value,
             start: word.start,
             end: next.end,
+            weak: false,
         });
     }
 
@@ -227,6 +262,7 @@ fn marker(text: &str, words: &[Word], i: usize) -> Option<Marker> {
             value,
             start: word.start,
             end: word.end + 1,
+            weak: false,
         });
     }
 
@@ -235,6 +271,7 @@ fn marker(text: &str, words: &[Word], i: usize) -> Option<Marker> {
         value,
         start: word.start,
         end: word.end,
+        weak: false,
     })
 }
 
@@ -300,13 +337,16 @@ fn numbered(text: &str, words: &[Word]) -> Option<String> {
     }
     let lead = &text[..found.first()?.start];
     let announced = || {
-        let announcing = |word: &Word| ANNOUNCING.contains(&word.text.as_str());
+        let announcing = |word: &Word| {
+            ANNOUNCING.contains(&word.text.as_str()) || count_of(&word.text).is_some_and(|n| n > 1)
+        };
         words
             .iter()
             .take_while(|word| word.start < lead.len())
             .any(announcing)
     };
-    if found.len() < 2 || (found.len() == 2 && !announced()) {
+    let weak = found.iter().any(|marker| marker.weak);
+    if found.len() < 2 || ((found.len() == 2 || weak) && !announced()) {
         return None;
     }
 
