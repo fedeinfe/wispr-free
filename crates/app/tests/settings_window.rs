@@ -118,6 +118,7 @@ impl FakeDesktop {
 struct Harness {
     dir: tempfile::TempDir,
     desktop: Rc<FakeDesktop>,
+    announced: Rc<RefCell<Vec<Settings>>>,
     controller: Option<SettingsController>,
 }
 
@@ -131,6 +132,7 @@ impl Harness {
         let mut harness = Self {
             dir,
             desktop: Rc::default(),
+            announced: Rc::default(),
             controller: None,
         };
         harness.open();
@@ -155,6 +157,10 @@ impl Harness {
             catalog: Arc::new(Catalog::bundled()),
             models: Arc::new(ModelStore::new(self.data_dir().join("models"))),
             desktop: self.desktop.clone(),
+            on_change: {
+                let announced = Rc::clone(&self.announced);
+                Rc::new(move |settings: &Settings| announced.borrow_mut().push(settings.clone()))
+            },
             paths: Paths {
                 data_dir: self.data_dir(),
                 export_dir: self.export_dir(),
@@ -394,6 +400,29 @@ fn picking_a_tier_moves_the_stage_toggles_on_the_page() {
     harness.prefs().invoke_commit();
 
     assert!(!harness.checked("LLM cleanup"));
+}
+
+#[test]
+fn the_rest_of_the_app_hears_about_a_change() {
+    let harness = Harness::new();
+    harness.go_to(SOUNDS);
+
+    harness.click("Sounds");
+
+    let announced = harness.announced.borrow();
+    assert!(!announced.last().expect("announced").media.sounds);
+}
+
+#[test]
+fn the_rest_of_the_app_hears_about_delete_all() {
+    let harness = Harness::new();
+    harness.go_to(SOUNDS);
+    harness.click("Sounds");
+
+    harness.prefs().invoke_delete_all();
+
+    let announced = harness.announced.borrow();
+    assert!(announced.last().expect("announced").media.sounds);
 }
 
 #[test]
@@ -640,6 +669,7 @@ fn a_ranked_microphone_that_is_unplugged_stays_listed_as_not_connected() {
         let mut next = Harness {
             dir,
             desktop: Rc::default(),
+            announced: Rc::default(),
             controller: None,
         };
         next.open();

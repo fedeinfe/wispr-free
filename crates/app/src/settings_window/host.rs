@@ -13,7 +13,7 @@ use wf_core::shortcut::Platform;
 use wf_models::{Catalog, ModelStore};
 
 use super::system::SystemDesktop;
-use super::{Paths, SettingsController, SettingsParts};
+use super::{OnChange, Paths, SettingsController, SettingsParts};
 use crate::{SettingsWindow, memory};
 
 /// Long enough for the OS window to be gone once the controller is dropped. The memory spike on
@@ -38,8 +38,10 @@ impl SettingsHost {
     }
 
     /// The host of the running app, on the real OS and data folder.
-    pub fn system(store: Arc<SettingsStore>) -> Self {
-        Self::new(Rc::new(move || system_parts(Arc::clone(&store))))
+    pub fn system(store: Arc<SettingsStore>, on_change: OnChange) -> Self {
+        Self::new(Rc::new(move || {
+            system_parts(Arc::clone(&store), Rc::clone(&on_change))
+        }))
     }
 
     pub fn is_open(&self) -> bool {
@@ -84,7 +86,7 @@ impl SettingsHost {
     }
 }
 
-fn system_parts(store: Arc<SettingsStore>) -> SettingsParts {
+fn system_parts(store: Arc<SettingsStore>, on_change: OnChange) -> SettingsParts {
     let data_dir = data_dir().unwrap_or_else(|| PathBuf::from("wispr-free"));
     let export_dir = UserDirs::new()
         .and_then(|user| {
@@ -97,6 +99,7 @@ fn system_parts(store: Arc<SettingsStore>) -> SettingsParts {
         catalog: Arc::new(Catalog::bundled()),
         models: Arc::new(ModelStore::new(data_dir.join("models"))),
         desktop: Rc::new(SystemDesktop),
+        on_change,
         paths: Paths {
             data_dir,
             export_dir,

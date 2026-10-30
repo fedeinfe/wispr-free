@@ -6,14 +6,24 @@ use std::thread;
 use wf_core::audio::AudioClip;
 use wf_pipeline::{Asr, AsrOptions, Llm, LlmPrompt, PipelineError, SpeechSegment, Transcript, Vad};
 
-struct EverythingIsSpeech;
+#[derive(Default)]
+struct EverythingIsSpeech {
+    heard: usize,
+}
 
 impl Vad for EverythingIsSpeech {
-    fn speech_segments(&mut self, clip: &AudioClip) -> Result<Vec<SpeechSegment>, PipelineError> {
-        Ok(vec![SpeechSegment {
-            start: 0,
-            end: clip.samples().len(),
-        }])
+    fn accept(&mut self, samples: &[f32]) -> Result<Vec<SpeechSegment>, PipelineError> {
+        self.heard += samples.len();
+        Ok(Vec::new())
+    }
+
+    fn is_speaking(&self) -> bool {
+        self.heard > 0
+    }
+
+    fn finish(&mut self) -> Result<Vec<SpeechSegment>, PipelineError> {
+        let end = std::mem::take(&mut self.heard);
+        Ok(vec![SpeechSegment { start: 0, end }])
     }
 }
 
@@ -61,7 +71,7 @@ impl Asr for NoModel {
 
 #[test]
 fn boxed_engines_run_a_dictation_on_a_worker_thread() {
-    let mut vad: Box<dyn Vad> = Box::new(EverythingIsSpeech);
+    let mut vad: Box<dyn Vad> = Box::new(EverythingIsSpeech::default());
     let mut asr: Box<dyn Asr> = Box::new(CannedAsr("ship it"));
     let mut llm: Box<dyn Llm> = Box::new(EchoLlm);
 

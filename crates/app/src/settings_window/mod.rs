@@ -80,9 +80,13 @@ pub struct SettingsParts {
     pub catalog: Arc<Catalog>,
     pub models: Arc<ModelStore>,
     pub desktop: Rc<dyn Desktop>,
+    /// Told about every change the rest of the running app may care about.
+    pub on_change: OnChange,
     pub paths: Paths,
     pub platform: Platform,
 }
+
+pub type OnChange = Rc<dyn Fn(&Settings)>;
 
 /// What other threads report to the window.
 #[derive(Debug)]
@@ -406,7 +410,9 @@ impl Inner {
                 .desktop
                 .set_dock_icon_visible(after.general.show_in_dock);
         }
-        self.show_values(&self.settings());
+        let settings = self.settings();
+        self.show_values(&settings);
+        (self.parts.on_change)(&settings);
     }
 
     fn drain_events(&self) {
@@ -842,6 +848,7 @@ impl Inner {
         prefs.set_microphone_auto(true);
         self.show_everything();
         prefs.set_data_status(status.into());
+        (self.parts.on_change)(&self.settings());
     }
 }
 

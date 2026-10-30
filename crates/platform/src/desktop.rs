@@ -26,11 +26,7 @@ pub fn open(target: &str) -> io::Result<()> {
 /// running. Elsewhere there's nothing to do.
 pub fn set_dock_icon_visible(visible: bool) {
     #[cfg(target_os = "macos")]
-    macos::set_activation_policy(if visible {
-        macos::POLICY_REGULAR
-    } else {
-        macos::POLICY_ACCESSORY
-    });
+    macos::set_dock_icon_visible(visible);
     #[cfg(not(target_os = "macos"))]
     let _ = visible;
 }
@@ -44,52 +40,25 @@ pub fn activate_app() {
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use std::ffi::{CStr, c_void};
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 
-    pub const POLICY_REGULAR: isize = 0;
-    pub const POLICY_ACCESSORY: isize = 1;
-
-    type Object = *mut c_void;
-    type Selector = *const c_void;
-
-    #[link(name = "AppKit", kind = "framework")]
-    unsafe extern "C" {}
-
-    #[link(name = "objc")]
-    unsafe extern "C" {
-        fn objc_getClass(name: *const std::ffi::c_char) -> Object;
-        fn sel_registerName(name: *const std::ffi::c_char) -> Selector;
-        fn objc_msgSend();
-    }
-
-    fn selector(name: &CStr) -> Selector {
-        unsafe { sel_registerName(name.as_ptr()) }
-    }
-
-    fn shared_application() -> Object {
-        let send: extern "C" fn(Object, Selector) -> Object =
-            unsafe { std::mem::transmute(objc_msgSend as unsafe extern "C" fn()) };
-        let class = unsafe { objc_getClass(c"NSApplication".as_ptr()) };
-        send(class, selector(c"sharedApplication"))
-    }
-
-    pub fn set_activation_policy(policy: isize) {
-        let send: extern "C" fn(Object, Selector, isize) -> bool =
-            unsafe { std::mem::transmute(objc_msgSend as unsafe extern "C" fn()) };
-        send(
-            shared_application(),
-            selector(c"setActivationPolicy:"),
-            policy,
-        );
+    pub fn set_dock_icon_visible(visible: bool) {
+        let Some(main_thread) = MainThreadMarker::new() else {
+            return;
+        };
+        NSApplication::sharedApplication(main_thread).setActivationPolicy(if visible {
+            NSApplicationActivationPolicy::Regular
+        } else {
+            NSApplicationActivationPolicy::Accessory
+        });
     }
 
     pub fn activate() {
-        let send: extern "C" fn(Object, Selector, bool) =
-            unsafe { std::mem::transmute(objc_msgSend as unsafe extern "C" fn()) };
-        send(
-            shared_application(),
-            selector(c"activateIgnoringOtherApps:"),
-            true,
-        );
+        if let Some(main_thread) = MainThreadMarker::new() {
+            // Deprecated, but its replacement needs macOS 14 and the app supports 13.
+            #[allow(deprecated)]
+            NSApplication::sharedApplication(main_thread).activateIgnoringOtherApps(true);
+        }
     }
 }

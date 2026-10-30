@@ -1,6 +1,6 @@
-//! Headless checks of the Settings window, safe on a machine in use: the production software
-//! renderer draws into memory, so there is no OS window, no focus change and no key or mic
-//! capture, and all files live in a temporary folder.
+//! Headless checks of the Settings window, safe on a machine in use: Slint's software renderer
+//! draws into memory, so there is no OS window, no focus change and no key or mic capture, and
+//! all files live in a temporary folder.
 //!
 //!   cargo run --release -p wispr-free --example settings_probe -- memory [cycles]
 //!   cargo run --release -p wispr-free --example settings_probe -- render <folder>
@@ -8,8 +8,9 @@
 //!   cargo run --release -p wispr-free --example settings_probe -- persist-check <folder>
 //!
 //! `memory` opens and closes the window through `SettingsHost`, drawing every page each time, and
-//! prints `phys_footprint` in MB (macOS). It can't see the OS window itself: AppKit and the
-//! window's surface need a real window, which only a person should open on a machine in use.
+//! prints `phys_footprint` in MB (macOS). It covers what the app itself holds. The running app
+//! draws with femtovg, so its GL memory, AppKit and the window's surface are not in these numbers:
+//! they need a real window, which only a person should open on a machine in use.
 //!
 //! `persist-write` changes every setting through the window and exits. `persist-check` is a new
 //! process: it compares every value in the file with what was set and fails on any difference.
@@ -86,6 +87,7 @@ fn parts(folder: &Path) -> SettingsParts {
         catalog: Arc::new(Catalog::bundled()),
         models: Arc::new(ModelStore::new(folder.join("data/models"))),
         desktop: Rc::new(HeadlessDesktop),
+        on_change: Rc::new(|_| {}),
         paths: Paths {
             data_dir: folder.join("data"),
             export_dir: folder.join("exports"),
