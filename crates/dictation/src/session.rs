@@ -14,12 +14,14 @@ use wf_core::audio::{AudioClip, SAMPLE_RATE_HZ};
 use wf_core::settings::{Settings, Style, StyleSettings};
 use wf_history::Timings;
 use wf_pipeline::cleanup::{CleanupRequest, DEFAULT_TIMEOUT, Fallback, llm_cleanup};
+use wf_pipeline::lists::format_lists;
 use wf_pipeline::passes::{AppCategory, LocalPassOptions, app_category, local_passes};
 use wf_pipeline::rules::rule_cleanup;
 use wf_pipeline::vad::{LiveVad, VadOptions, speech_chunks, transcribe_speech};
 use wf_pipeline::worker::AsrWorker;
 use wf_pipeline::{Asr, AsrOptions, PipelineError, Transcript, Vad};
 use wf_platform::context::{Context, ContextDepth, ContextSource, Focus, TextAround};
+use wf_platform::insert::is_terminal;
 
 use crate::coordinator::Input;
 use crate::engines::{Engines, LlmSlot, Loaded, Ready};
@@ -290,10 +292,15 @@ impl Session {
         let category = category_of(context);
         let chosen_style = style_for(style, category);
         let cleaned = rule_cleanup(&heard.transcript.text, language);
+        // A terminal would run each line as it lands.
+        let lists_fit = !context.app.as_ref().is_some_and(is_terminal);
+        let written_list = |text: &str| lists_fit.then(|| format_lists(text)).flatten();
+        let spoken_list = written_list(&cleaned);
         let mut cleanup_fallback = None;
         let host = self.plan.llm.as_ref().and(self.shared.llm.host());
-        let text = match host {
-            Some(mut host) => {
+        let text = match (spoken_list, host) {
+            (Some(list), _) => list,
+            (None, Some(mut host)) => {
                 let request = CleanupRequest {
                     text: &cleaned,
                     language,
@@ -303,9 +310,9 @@ impl Session {
                 };
                 let outcome = llm_cleanup(&mut host, &request, DEFAULT_TIMEOUT);
                 cleanup_fallback = outcome.fallback.as_ref().and_then(describe_fallback);
-                outcome.text
+                written_list(&outcome.text).unwrap_or(outcome.text)
             }
-            None => cleaned.clone(),
+            (None, None) => cleaned.clone(),
         };
         drop(loaded);
         if self.cancelled() {

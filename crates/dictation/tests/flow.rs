@@ -18,6 +18,7 @@ use wf_core::settings::{CleanupStrength, HistoryRetention, KeepModels, PipelineT
 use wf_core::shortcut::{Combo, Key};
 use wf_dictation::plan::AsrModel;
 use wf_dictation::{Event, TrialPart};
+use wf_platform::context::AppIdentity;
 
 const HOLD: Duration = Duration::from_millis(800);
 
@@ -42,6 +43,64 @@ fn the_filler_case_of_the_spec_comes_out_clean_with_the_llm_off() {
 
     assert_eq!(rig.inserted(), ["So I think we should ship it."]);
     assert!(rig.probe.heard_samples() > 0, "real audio reached ASR");
+}
+
+#[test]
+fn a_spoken_list_is_written_as_one_without_asking_the_llm() {
+    let rig = Rig::new(with_llm());
+    rig.probe.hears(
+        "Risolvi questi quattro bug primo non funziona il login, secondo non funziona il bottone, \
+         terzo non carica",
+    );
+    rig.probe.llm_says("the model must not get this one");
+
+    rig.dictate(&speech());
+    rig.wait_inserted();
+
+    assert_eq!(
+        rig.inserted(),
+        [
+            "Risolvi questi quattro bug:\n1. non funziona il login\n2. non funziona il bottone\n3. non carica"
+        ]
+    );
+    assert!(rig.probe.llm_prompts.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_list_the_llm_leaves_flat_is_still_written_as_one() {
+    let rig = Rig::new(with_llm());
+    rig.probe
+        .hears("oggi ehm devo fare tre cose cucinare, pulire, stirare");
+    rig.probe
+        .llm_says("Oggi devo fare queste tre cose: cucinare, pulire, stirare.");
+
+    rig.dictate(&speech());
+    rig.wait_inserted();
+
+    assert_eq!(
+        rig.inserted(),
+        ["Oggi devo fare queste tre cose:\n- Cucinare\n- Pulire\n- Stirare"]
+    );
+}
+
+#[test]
+fn a_terminal_gets_a_list_on_one_line() {
+    let rig = Rig::new(base_settings());
+    rig.context.0.lock().unwrap().app = Some(AppIdentity {
+        id: "com.apple.Terminal".to_owned(),
+        name: None,
+        pid: None,
+    });
+    rig.probe
+        .hears("Controlla primo il login, secondo il bottone, terzo la home.");
+
+    rig.dictate(&speech());
+    rig.wait_inserted();
+
+    assert_eq!(
+        rig.inserted(),
+        ["Controlla primo il login, secondo il bottone, terzo la home."]
+    );
 }
 
 #[test]

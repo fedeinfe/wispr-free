@@ -120,6 +120,8 @@ Output is constrained: no preamble, and length must stay within 0.5×–1.3× th
 
 Cleanup strength: None / Light (default) / Medium / High. Light = the rules above. Medium = also tighten wording. High = rewrite for clarity.
 
+**Spoken lists (deterministic, on every tier).** An announced list ("queste tre cose: a, b, c", "these three things") becomes a line for the lead-in and one "- item" per line, and counted items ("primo a, secondo b, terzo c", "first a, second b") become a numbered list. These skip the LLM. Ordinary sentences stay sentences ("secondo me…"). Terminals get one line, since each pasted line would run.
+
 **Styles** per app category (personal messages, work messages, email, other): Formal, Casual (few commas, no final period), Very casual (lowercase), Excited (more !). Email puts a line break after the greeting.
 
 **Local passes (deterministic, after cleanup):**
