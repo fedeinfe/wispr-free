@@ -10,6 +10,7 @@ use directories::UserDirs;
 use slint::{CloseRequestResponse, ComponentHandle, PlatformError, Timer, Weak};
 use wf_core::settings::{SettingsStore, data_dir};
 use wf_core::shortcut::Platform;
+use wf_dictation::Dictation;
 use wf_models::Catalog;
 
 use super::system::SystemDesktop;
@@ -38,9 +39,9 @@ impl SettingsHost {
     }
 
     /// The host of the running app, on the real OS and data folder.
-    pub fn system(store: Arc<SettingsStore>, on_change: OnChange) -> Self {
+    pub fn system(store: Arc<SettingsStore>, on_change: OnChange, dictation: Dictation) -> Self {
         Self::new(Rc::new(move || {
-            system_parts(Arc::clone(&store), Rc::clone(&on_change))
+            system_parts(Arc::clone(&store), Rc::clone(&on_change), dictation.clone())
         }))
     }
 
@@ -53,6 +54,13 @@ impl SettingsHost {
         let open = self.open.borrow();
         open.as_ref()
             .map(|controller| controller.window().as_weak())
+    }
+
+    /// Shows the settings again in an open window, after something else changed them.
+    pub fn refresh(&self) {
+        if let Some(controller) = &*self.open.borrow() {
+            controller.refresh();
+        }
     }
 
     /// Opens the window, or brings it forward if it's open already.
@@ -86,7 +94,11 @@ impl SettingsHost {
     }
 }
 
-fn system_parts(store: Arc<SettingsStore>, on_change: OnChange) -> SettingsParts {
+fn system_parts(
+    store: Arc<SettingsStore>,
+    on_change: OnChange,
+    dictation: Dictation,
+) -> SettingsParts {
     let data_dir = data_dir().unwrap_or_else(|| PathBuf::from("wispr-free"));
     let export_dir = UserDirs::new()
         .and_then(|user| {
@@ -97,7 +109,7 @@ fn system_parts(store: Arc<SettingsStore>, on_change: OnChange) -> SettingsParts
     SettingsParts {
         store,
         catalog: Arc::new(Catalog::bundled()),
-        desktop: Rc::new(SystemDesktop),
+        desktop: Rc::new(SystemDesktop { dictation }),
         on_change,
         paths: Paths {
             data_dir,

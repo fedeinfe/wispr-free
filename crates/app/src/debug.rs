@@ -1,8 +1,7 @@
-//! Lets every pill state be reached by hand until the dictation pipeline drives it: the tray's
-//! "Debug pill" menu (always in debug builds, with `--debug-pill` in release), `--pill-state`,
-//! and a stand-in for the dictation flow behind the pill's own buttons.
+//! Lets every pill state be reached by hand: the tray's "Debug pill" menu (always in debug builds,
+//! with `--debug-pill` in release) and `--pill-state`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -10,11 +9,10 @@ use slint::{Timer, TimerMode};
 use wf_core::pill::{PillState, Sound};
 
 use crate::mic_levels::MicLevels;
-use crate::pill::{PillController, PillEvent};
+use crate::pill::PillController;
 use crate::{PillLook, Tray};
 
 const LEVEL_POLL: Duration = Duration::from_millis(150);
-const PROCESSING_TIME: Duration = Duration::from_millis(1500);
 
 /// Parses `--pill-state=<name>`.
 pub fn state_from_args(args: impl Iterator<Item = String>) -> Option<PillState> {
@@ -54,13 +52,18 @@ fn state_for(look: PillLook) -> PillState {
     }
 }
 
-/// Connects the tray's debug menu and starts feeding the waveform a made-up level, or the real
-/// one once "Use real mic level" is chosen.
+/// Connects the tray's debug menu. Once a state is picked by hand the waveform gets a made-up
+/// level, or the real one once "Use real mic level" is chosen.
 pub fn install(tray: &Tray, pill: &PillController) {
     tray.set_debug_menu(true);
 
     let controller = pill.clone();
-    tray.on_debug_state(move |look| controller.set_state(state_for(look)));
+    let driving = Rc::new(Cell::new(false));
+    let picked = driving.clone();
+    tray.on_debug_state(move |look| {
+        picked.set(true);
+        controller.set_state(state_for(look));
+    });
 
     let controller = pill.clone();
     tray.on_debug_sound(move |name| {
@@ -83,6 +86,9 @@ pub fn install(tray: &Tray, pill: &PillController) {
     let started = Instant::now();
     let levels = Timer::default();
     levels.start(TimerMode::Repeated, LEVEL_POLL, move || {
+        if !driving.get() {
+            return;
+        }
         let level = mic.borrow().as_ref().map_or_else(
             || made_up_level(started.elapsed().as_secs_f32()),
             MicLevels::level,
@@ -98,32 +104,6 @@ fn made_up_level(seconds: f32) -> f32 {
     let phrase = (seconds * 1.3).sin().abs();
     let syllables = 0.6 + 0.4 * (seconds * 7.0).sin();
     phrase * syllables
-}
-
-/// Plays the part of the dictation pipeline, which does not exist yet.
-pub fn handle_event(pill: &PillController, event: PillEvent) {
-    match event {
-        PillEvent::ToggleHandsFree => pill.set_state(PillState::ListeningHandsFree),
-        PillEvent::Cancel => pill.set_state(PillState::Resting),
-        PillEvent::Stop => {
-            pill.set_state(PillState::Processing);
-            let pill = pill.clone();
-            Timer::single_shot(PROCESSING_TIME, move || {
-                if pill.state() == PillState::Processing {
-                    pill.set_state(PillState::Resting);
-                }
-            });
-        }
-        PillEvent::Quit => {
-            let _ = slint::quit_event_loop();
-        }
-        PillEvent::PasteLast
-        | PillEvent::PasteRecent(_)
-        | PillEvent::SelectMicrophone(_)
-        | PillEvent::SelectLanguage(_)
-        | PillEvent::SelectPipelineQuality(_)
-        | PillEvent::OpenSettings => eprintln!("pill menu: {event:?} is not wired up yet"),
-    }
 }
 
 #[cfg(test)]

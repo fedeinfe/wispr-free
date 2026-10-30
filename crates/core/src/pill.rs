@@ -159,6 +159,8 @@ pub struct Pill {
     edge: Edge,
     hovered: bool,
     press: Option<Press>,
+    /// The Show pill setting is off.
+    turned_off: bool,
     hidden_until: Option<Duration>,
     now: Duration,
     cursor: Option<Point>,
@@ -174,6 +176,7 @@ impl Pill {
             edge,
             hovered: false,
             press: None,
+            turned_off: false,
             hidden_until: None,
             now: Duration::ZERO,
             cursor: None,
@@ -200,6 +203,12 @@ impl Pill {
         let cue = cue(&self.state, &state);
         self.state = state;
         cue
+    }
+
+    /// The Show pill setting. Dictation carries on unseen while off, but an error still shows:
+    /// the user has no other way to learn why nothing was typed.
+    pub fn set_turned_off(&mut self, turned_off: bool) {
+        self.turned_off = turned_off;
     }
 
     /// Hides the pill for a while, whatever its state. Dictation carries on unseen.
@@ -314,7 +323,8 @@ impl Pill {
     }
 
     fn shown(&self) -> PillState {
-        if self.hidden_until.is_some() {
+        let is_error = matches!(self.state, PillState::Error { .. });
+        if self.hidden_until.is_some() || (self.turned_off && !is_error) {
             return PillState::Hidden;
         }
         match &self.state {

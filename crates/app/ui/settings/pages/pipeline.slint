@@ -92,7 +92,14 @@ export component PipelinePage inherits Page {
             checked <=> Prefs.values.denoise;
         }
 
-        ToggleRow {
+        if Prefs.vad-forced: ToggleRow {
+            label: "Silence trimming (VAD)";
+            hint: "Always on with Whisper, which invents text in silence.";
+            enabled: false;
+            checked: true;
+        }
+
+        if !Prefs.vad-forced: ToggleRow {
             label: "Silence trimming (VAD)";
             checked <=> Prefs.values.vad;
         }
@@ -145,7 +152,7 @@ export component PipelinePage inherits Page {
 
         if Prefs.values.vad-model >= 0: ModelState {
             model-row: Prefs.vad-rows[Prefs.values.vad-model];
-            needed: Prefs.values.vad;
+            needed: Prefs.vad-forced || Prefs.values.vad;
         }
 
         SelectRow {

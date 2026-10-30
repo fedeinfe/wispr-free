@@ -9,16 +9,18 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use wf_audio::{AudioBackend, Capture, CaptureConfig, CaptureEvent, CpalBackend, LevelMeter};
+use wf_dictation::Dictation;
 use wf_models::hardware;
 use wf_platform::autostart::LaunchAtLogin;
 use wf_platform::desktop;
-use wf_platform::keys::{self, KeySignal};
+use wf_platform::keys::{self, KeyListener, KeySignal};
 
 use super::rows::hardware_summary;
 use super::{Desktop, Event, Mailbox};
 
-#[derive(Debug, Default)]
-pub struct SystemDesktop;
+pub struct SystemDesktop {
+    pub dictation: Dictation,
+}
 
 impl Desktop for SystemDesktop {
     fn bring_to_front(&self) {
@@ -61,12 +63,26 @@ impl Desktop for SystemDesktop {
         &self,
         mut on_signal: Box<dyn FnMut(KeySignal) + Send>,
     ) -> Result<Box<dyn Any>, String> {
+        // Both listeners see every key, and dictation must not act on a shortcut being recorded.
+        self.dictation.pause_keys(true);
         let listener = keys::listen(move |signal| {
             on_signal(signal);
             true
-        })
-        .map_err(|error| error.to_string())?;
-        Ok(Box::new(listener))
+        });
+        match listener {
+            Ok(listener) => Ok(Box::new(KeyCapture {
+                _listener: listener,
+                dictation: self.dictation.clone(),
+            })),
+            Err(error) => {
+                self.dictation.pause_keys(false);
+                Err(error.to_string())
+            }
+        }
+    }
+
+    fn before_delete_all(&self) {
+        self.dictation.forget_history();
     }
 
     fn test_microphone(
@@ -88,6 +104,17 @@ impl Desktop for SystemDesktop {
             stop,
             thread: Some(thread),
         }))
+    }
+}
+
+struct KeyCapture {
+    _listener: KeyListener,
+    dictation: Dictation,
+}
+
+impl Drop for KeyCapture {
+    fn drop(&mut self) {
+        self.dictation.pause_keys(false);
     }
 }
 

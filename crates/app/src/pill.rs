@@ -29,8 +29,15 @@ const HIDDEN_POLL: Duration = Duration::from_millis(250);
 /// How often to re-read the screens and re-assert the stacking order.
 const DISPLAY_POLL: Duration = Duration::from_secs(1);
 const HIDE_DURATION: Duration = Duration::from_secs(60 * 60);
+const TOAST_DURATION: Duration = Duration::from_secs(4);
+const MENU_LABEL_CHARS: usize = 48;
 
-const LANGUAGES: [&str; 3] = ["Auto-detect", "English", "Italiano"];
+/// The Language menu, with the code each entry stands for. Auto-detect has none.
+pub const LANGUAGES: [(&str, Option<&str>); 3] = [
+    ("Auto-detect", None),
+    ("English", Some("en")),
+    ("Italiano", Some("it")),
+];
 const PIPELINE_QUALITIES: [&str; 4] = ["Lite", "Balanced", "High", "Custom"];
 
 /// What the user asked for through the pill. Moving and hiding it are handled internally.
@@ -118,6 +125,7 @@ struct Core {
     pill: Pill,
     waveform: Waveform,
     prefs: Prefs,
+    toast: Option<(String, Instant)>,
     displays: Vec<Display>,
     started: Instant,
     last_poll: Instant,
@@ -136,7 +144,7 @@ impl PillController {
 
         let bars = Rc::new(VecModel::from(vec![0.0; BARS]));
         ui.set_bars(ModelRc::from(bars.clone()));
-        ui.set_languages(string_model(LANGUAGES));
+        ui.set_languages(string_model(LANGUAGES.map(|(name, _)| name)));
         ui.set_pipeline_qualities(string_model(PIPELINE_QUALITIES));
 
         let now = Instant::now();
@@ -149,6 +157,7 @@ impl PillController {
                     pill: Pill::new(prefs.edge),
                     waveform: Waveform::new(),
                     prefs,
+                    toast: None,
                     displays: Vec::new(),
                     started: now,
                     last_poll: now,
@@ -202,13 +211,35 @@ impl PillController {
         self.inner.core.borrow_mut().prefs.sounds = sounds;
     }
 
-    /// The Show pill setting. A dictation in progress keeps its pill until the next one.
+    /// The Show pill setting.
     pub fn set_shown(&self, shown: bool) {
-        match self.state() {
-            PillState::Resting | PillState::Ready if !shown => self.set_state(PillState::Hidden),
-            PillState::Hidden if shown => self.set_state(PillState::Resting),
-            _ => {}
-        }
+        self.inner.core.borrow_mut().pill.set_turned_off(!shown);
+    }
+
+    /// A short message by the pill. It shows even with the pill hidden, because the text it is
+    /// about went somewhere the user can't see.
+    pub fn show_toast(&self, text: String) {
+        let until = Instant::now() + TOAST_DURATION;
+        self.inner.core.borrow_mut().toast = Some((text, until));
+    }
+
+    /// The Recent transcripts menu.
+    pub fn set_recent(&self, transcripts: &[String]) {
+        let labels = transcripts.iter().map(|text| menu_label(text));
+        let labels: Vec<SharedString> = labels.collect();
+        let labels = ModelRc::from(Rc::new(VecModel::from(labels)));
+        self.inner.ui.set_recent_transcripts(labels);
+    }
+
+    /// The id of the device at `index` of the Microphone menu.
+    pub fn microphone_id(&self, index: usize) -> Option<String> {
+        let id = self.inner.ui.get_microphone_ids().row_data(index)?;
+        Some(id.to_string())
+    }
+
+    /// A weak handle other threads can use to reach the UI thread.
+    pub fn window(&self) -> slint::Weak<PillWindow> {
+        self.inner.ui.as_weak()
     }
 
     /// Latest level from the meter, 0.0..=1.0.
@@ -253,19 +284,23 @@ impl PillController {
         ui.on_select_pipeline_quality(forward_index(PillEvent::SelectPipelineQuality));
     }
 
+    /// `handler` runs on the UI thread whenever another thread calls `invoke_events_arrived`.
+    pub fn on_events_arrived(&self, handler: impl FnMut() + 'static) {
+        self.inner.ui.on_events_arrived(handler);
+    }
+
     /// Fills the Microphone submenu without blocking the UI on device enumeration.
     fn load_microphones(&self) {
         let ui = self.inner.ui.as_weak();
         let spawned = std::thread::Builder::new()
             .name("pill-microphones".into())
             .spawn(move || {
-                let names: Vec<String> = CpalBackend::new()
-                    .devices()
-                    .into_iter()
-                    .map(|device| device.name)
-                    .collect();
+                let devices = CpalBackend::new().devices();
                 let _ = ui.upgrade_in_event_loop(move |ui| {
-                    ui.set_microphones(string_model(names.iter().map(String::as_str)));
+                    let names = devices.iter().map(|device| device.name.as_str());
+                    ui.set_microphones(string_model(names));
+                    let ids = devices.iter().map(|device| device.id.as_str());
+                    ui.set_microphone_ids(string_model(ids));
                 });
             });
         if let Err(err) = spawned {
@@ -352,7 +387,11 @@ impl PillController {
         ui.set_capsule_y(frame.capsule.y as f32);
         ui.set_capsule_width(frame.capsule.width as f32);
         ui.set_capsule_height(frame.capsule.height as f32);
-        ui.set_tooltip(frame.shown.tooltip().unwrap_or_default().into());
+        if core.toast.as_ref().is_some_and(|(_, until)| now >= *until) {
+            core.toast = None;
+        }
+        let toast = core.toast.as_ref().map(|(text, _)| text.as_str());
+        ui.set_tooltip(toast.or(frame.shown.tooltip()).unwrap_or_default().into());
         let bar_scale = frame.shown.bar_scale();
         if let Some(scale) = bar_scale {
             ui.set_bar_scale(scale);
@@ -398,6 +437,15 @@ fn look(state: &PillState) -> PillLook {
         PillState::Processing => PillLook::Processing,
         PillState::Error { .. } => PillLook::Error,
         PillState::Meeting => PillLook::Meeting,
+    }
+}
+
+/// One line of a transcript, short enough for a menu.
+fn menu_label(text: &str) -> SharedString {
+    let line = text.lines().next().unwrap_or_default();
+    match line.char_indices().nth(MENU_LABEL_CHARS) {
+        Some((end, _)) => format!("{}…", &line[..end]).into(),
+        None => line.into(),
     }
 }
 

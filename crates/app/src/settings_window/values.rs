@@ -5,7 +5,8 @@ use wf_core::settings::{
     CleanupStrength, HistoryRetention, KeepModels, MediaWhileDictating, PipelineTier, Settings,
     Style, Theme,
 };
-use wf_models::{Catalog, ModelKind, Tier};
+use wf_dictation::plan::{effective_models, preset_tier, vad_on};
+use wf_models::{Catalog, ModelKind};
 
 use crate::SettingsValues;
 
@@ -125,42 +126,13 @@ fn names(choices: &[(String, String)]) -> Vec<String> {
     choices.iter().map(|(_, name)| name.clone()).collect()
 }
 
-fn preset_tier(tier: PipelineTier) -> Option<Tier> {
-    match tier {
-        PipelineTier::Lite => Some(Tier::Lite),
-        PipelineTier::Balanced => Some(Tier::Balanced),
-        PipelineTier::High => Some(Tier::High),
-        PipelineTier::Custom => None,
-    }
-}
-
-/// The models in effect: the settings' own picks, or the catalog's for a preset tier.
-fn effective_models(settings: &Settings, catalog: &Catalog) -> [Option<String>; 3] {
-    let pipeline = &settings.pipeline;
-    match preset_tier(pipeline.tier) {
-        Some(tier) => {
-            let preset = catalog.preset(tier);
-            [
-                Some(preset.asr_model.clone()),
-                preset.vad_model.clone(),
-                preset.llm_model.clone(),
-            ]
-        }
-        None => [
-            pipeline.asr_model.clone(),
-            pipeline.vad_model.clone(),
-            pipeline.llm_model.clone(),
-        ],
-    }
-}
-
 /// The models the pipeline runs with, and what for. A stage that's off needs no model.
 pub fn models_in_use(settings: &Settings, catalog: &Catalog) -> Vec<(String, &'static str)> {
     let [asr, vad, llm] = effective_models(settings, catalog);
     let pipeline = &settings.pipeline;
     [
         (asr, "speech recognition"),
-        (vad.filter(|_| pipeline.vad), "voice detection"),
+        (vad.filter(|_| vad_on(settings, catalog)), "voice detection"),
         (llm.filter(|_| pipeline.llm_cleanup), "cleanup"),
     ]
     .into_iter()
@@ -196,6 +168,7 @@ pub fn values_of(settings: &Settings, catalog: &Catalog, choices: &ModelChoices)
         style_email: index_of(&STYLES, &settings.style.email),
         style_other: index_of(&STYLES, &settings.style.other),
         auto_add_corrections: settings.style.auto_add_corrections,
+        press_enter_command: settings.style.press_enter_command,
         meeting_auto_detect: settings.meetings.auto_detect,
         meeting_live_transcript: settings.meetings.live_transcript,
         meeting_refine_pass: settings.meetings.refine_pass,
@@ -236,6 +209,7 @@ pub fn apply_values(
     style.email = pick(&STYLES, values.style_email, &style.email);
     style.other = pick(&STYLES, values.style_other, &style.other);
     style.auto_add_corrections = values.auto_add_corrections;
+    style.press_enter_command = values.press_enter_command;
 
     let meetings = &mut settings.meetings;
     meetings.auto_detect = values.meeting_auto_detect;
@@ -287,14 +261,8 @@ fn apply_pipeline(
     );
 
     let tier = pick(&TIERS, values.tier, &pipeline.tier);
-    if tier != pipeline.tier
-        && let Some(preset) = preset_tier(tier).map(|tier| catalog.preset(tier))
-    {
-        pipeline.tier = tier;
-        pipeline.denoise = preset.denoise;
-        pipeline.vad = preset.vad;
-        pipeline.llm_cleanup = preset.llm_cleanup;
-        [pipeline.asr_model, pipeline.vad_model, pipeline.llm_model] = [None, None, None];
+    if tier != pipeline.tier && preset_tier(tier).is_some() {
+        choose_tier(settings, tier, catalog);
         return;
     }
 
@@ -308,6 +276,23 @@ fn apply_pipeline(
     if tier == PipelineTier::Custom || stages_changed || models_changed {
         pipeline.tier = PipelineTier::Custom;
         [pipeline.asr_model, pipeline.vad_model, pipeline.llm_model] = picked;
+    }
+}
+
+/// Moves to `tier`: a preset sets the stages and follows the catalog's models, and Custom pins the
+/// models in effect so they stay when the catalog changes.
+pub fn choose_tier(settings: &mut Settings, tier: PipelineTier, catalog: &Catalog) {
+    let pinned = effective_models(settings, catalog);
+    let pipeline = &mut settings.pipeline;
+    pipeline.tier = tier;
+    match preset_tier(tier).map(|tier| catalog.preset(tier)) {
+        Some(preset) => {
+            pipeline.denoise = preset.denoise;
+            pipeline.vad = preset.vad;
+            pipeline.llm_cleanup = preset.llm_cleanup;
+            [pipeline.asr_model, pipeline.vad_model, pipeline.llm_model] = [None, None, None];
+        }
+        None => [pipeline.asr_model, pipeline.vad_model, pipeline.llm_model] = pinned,
     }
 }
 

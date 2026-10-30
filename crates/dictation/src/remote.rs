@@ -495,3 +495,201 @@ pub fn load_engine(spec: &EngineSpec) -> Result<Hosted, PipelineError> {
 pub fn run_engine_host() -> io::Result<()> {
     serve(io::stdin().lock(), io::stdout().lock(), &mut load_engine)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::pipe;
+    use std::thread;
+
+    use super::*;
+
+    struct ScriptedVad;
+
+    impl Vad for ScriptedVad {
+        fn accept(&mut self, samples: &[f32]) -> Result<Vec<SpeechSegment>, PipelineError> {
+            Ok(vec![SpeechSegment {
+                start: 0,
+                end: samples.len(),
+            }])
+        }
+
+        fn is_speaking(&self) -> bool {
+            true
+        }
+
+        fn finish(&mut self) -> Result<Vec<SpeechSegment>, PipelineError> {
+            Err(PipelineError::Timeout)
+        }
+    }
+
+    struct EchoLengthAsr;
+
+    impl Asr for EchoLengthAsr {
+        fn transcribe(
+            &mut self,
+            clip: &AudioClip,
+            options: &AsrOptions,
+        ) -> Result<Transcript, PipelineError> {
+            Ok(Transcript {
+                text: format!(
+                    "{} samples, last {}",
+                    clip.samples().len(),
+                    clip.samples()[1]
+                ),
+                language: options.language.clone(),
+            })
+        }
+    }
+
+    struct TwoTokenLlm;
+
+    impl Llm for TwoTokenLlm {
+        fn generate(
+            &mut self,
+            prompt: &LlmPrompt,
+            on_token: &mut dyn FnMut(&str),
+        ) -> Result<String, PipelineError> {
+            on_token("he");
+            on_token("llo");
+            assert!(prompt.deadline.is_some());
+            Ok(prompt.user.clone())
+        }
+    }
+
+    fn load(spec: &EngineSpec) -> Result<Hosted, PipelineError> {
+        match spec {
+            EngineSpec::Silero(_) => Ok(Hosted::Vad(Box::new(ScriptedVad))),
+            EngineSpec::Whisper(_) => Ok(Hosted::Asr(Box::new(EchoLengthAsr))),
+            EngineSpec::Llama { .. } => Ok(Hosted::Llm(Box::new(TwoTokenLlm))),
+            EngineSpec::Sherpa(dir) => Err(PipelineError::ModelMissing(dir.display().to_string())),
+        }
+    }
+
+    /// A host running on a thread, with pipes in place of the child's stdin and stdout.
+    struct Host {
+        calls: io::PipeWriter,
+        replies: io::PipeReader,
+        thread: thread::JoinHandle<io::Result<()>>,
+    }
+
+    impl Host {
+        fn start() -> Self {
+            let (input, calls) = pipe().unwrap();
+            let (replies, output) = pipe().unwrap();
+            let thread = thread::spawn(move || serve(input, output, &mut load));
+            Self {
+                calls,
+                replies,
+                thread,
+            }
+        }
+
+        fn load(&mut self, spec: EngineSpec) -> Reply {
+            self.call(Call::Load(spec), &[])
+        }
+
+        fn call(&mut self, call: Call, samples: &[f32]) -> Reply {
+            write_message(&mut self.calls, &call, samples).unwrap();
+            self.reply()
+        }
+
+        fn reply(&mut self) -> Reply {
+            read_message(&mut self.replies).unwrap().unwrap().0
+        }
+    }
+
+    #[test]
+    fn samples_reach_the_engine_exactly_and_results_come_back() {
+        let mut host = Host::start();
+        assert!(matches!(
+            host.load(EngineSpec::Whisper("m".into())),
+            Reply::Done
+        ));
+
+        let call = Call::Transcribe {
+            language: Some("it".into()),
+            bias_words: Vec::new(),
+        };
+        let reply = host.call(call, &[0.0, -0.25]);
+
+        let Reply::Transcript { text, language } = reply else {
+            panic!("{reply:?}");
+        };
+        assert_eq!(text, "2 samples, last -0.25");
+        assert_eq!(language.as_deref(), Some("it"));
+    }
+
+    #[test]
+    fn the_detector_reports_segments_and_whether_speech_is_open() {
+        let mut host = Host::start();
+        host.load(EngineSpec::Silero("m".into()));
+
+        let reply = host.call(Call::Accept, &[0.1; 512]);
+
+        let Reply::Segments { segments, speaking } = reply else {
+            panic!("{reply:?}");
+        };
+        assert_eq!(segments, [(0, 512)]);
+        assert!(speaking);
+    }
+
+    #[test]
+    fn tokens_stream_before_the_completion() {
+        let mut host = Host::start();
+        host.load(EngineSpec::Llama {
+            file: "m".into(),
+            in_ram: false,
+        });
+
+        let call = Call::Generate {
+            system: String::new(),
+            user: "hello".into(),
+            examples: Vec::new(),
+            max_tokens: 8,
+            timeout_ms: Some(1_000),
+        };
+        let first = host.call(call, &[]);
+
+        assert!(matches!(first, Reply::Token(token) if token == "he"));
+        assert!(matches!(host.reply(), Reply::Token(token) if token == "llo"));
+        assert!(matches!(host.reply(), Reply::Completion(text) if text == "hello"));
+    }
+
+    #[test]
+    fn engine_errors_keep_their_kind_across_the_process_wall() {
+        let mut host = Host::start();
+
+        let Reply::Failed(failure) = host.load(EngineSpec::Sherpa("gone".into())) else {
+            panic!("the load must fail");
+        };
+        assert!(matches!(
+            PipelineError::from(failure),
+            PipelineError::ModelMissing(model) if model == "gone"
+        ));
+
+        host.load(EngineSpec::Silero("m".into()));
+        let Reply::Failed(failure) = host.call(Call::Finish, &[]) else {
+            panic!("the call must fail");
+        };
+        assert!(matches!(
+            PipelineError::from(failure),
+            PipelineError::Timeout
+        ));
+    }
+
+    #[test]
+    fn a_call_for_an_engine_that_is_not_loaded_is_an_error_not_a_crash() {
+        let mut host = Host::start();
+
+        assert!(matches!(host.call(Call::Finish, &[]), Reply::Failed(_)));
+    }
+
+    #[test]
+    fn the_host_ends_when_the_app_closes_the_stream() {
+        let Host { calls, thread, .. } = Host::start();
+
+        drop(calls);
+
+        assert!(thread.join().unwrap().is_ok());
+    }
+}

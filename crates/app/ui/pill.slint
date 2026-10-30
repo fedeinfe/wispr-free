@@ -64,6 +64,8 @@ export component PillWindow inherits Window {
     in property <string> tooltip;
     in property <[string]> recent-transcripts;
     in property <[string]> microphones;
+    // Device ids, in the order of `microphones`.
+    in property <[string]> microphone-ids;
     in property <[string]> languages;
     in property <[string]> pipeline-qualities;
 
@@ -79,6 +81,8 @@ export component PillWindow inherits Window {
     callback open-settings();
     callback hide-for-an-hour();
     callback quit();
+    // Other threads left something for the UI thread to collect.
+    callback events-arrived();
 
     title: "wispr-free pill";
     width: 320px;

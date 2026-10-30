@@ -36,6 +36,7 @@ use rows::{
     model_row, model_row_unavailable, shortcut_rows,
 };
 use values::{ModelChoices, apply_values, models_in_use, values_of};
+use wf_dictation::plan::vad_forced;
 
 pub use host::{MakeParts, SettingsHost};
 
@@ -69,6 +70,8 @@ pub trait Desktop {
     ) -> Result<Box<dyn Any>, String>;
     /// Asks for a folder, starting at `start`. `done` runs on the UI thread, only if one is picked.
     fn pick_folder(&self, start: &Path, done: Box<dyn FnOnce(PathBuf)>);
+    /// Lets go of what lives in the data folder, which is about to be removed.
+    fn before_delete_all(&self) {}
 }
 
 #[derive(Debug, Clone)]
@@ -238,6 +241,11 @@ impl SettingsController {
     /// Re-reads what is on disk for the Models page.
     pub fn refresh_models(&self) {
         self.inner.show_models();
+    }
+
+    /// Shows the stored settings again.
+    pub fn refresh(&self) {
+        self.inner.show_everything();
     }
 }
 
@@ -425,6 +433,7 @@ impl Inner {
         if prefs.get_values() != values {
             prefs.set_values(values);
         }
+        prefs.set_vad_forced(vad_forced(settings, &self.parts.catalog));
     }
 
     fn show_shortcuts(&self, settings: &Settings) {
@@ -1162,6 +1171,7 @@ impl Inner {
             return;
         }
         self.take_pending_folder();
+        self.parts.desktop.before_delete_all();
         let left = self.delete_models_in_chosen_folder();
         let status = match (data::delete_all(&self.parts.paths.data_dir), left) {
             (Err(error), Some(left)) => format!("Delete failed: {error}. Also left {left}."),

@@ -342,6 +342,37 @@ fn a_dictation_during_hide_for_stays_hidden_but_keeps_its_state() {
 }
 
 #[test]
+fn with_the_pill_turned_off_a_dictation_stays_hidden_and_keeps_its_cues() {
+    let mut h = Harness::new(Edge::Bottom);
+    h.away();
+    h.pill.set_turned_off(true);
+
+    assert_eq!(
+        h.pill.set_state(PillState::ListeningPtt),
+        Some(Sound::Start)
+    );
+    assert_eq!(h.away().shown, PillState::Hidden);
+    assert_eq!(h.pill.state(), &PillState::ListeningPtt);
+
+    h.pill.set_turned_off(false);
+    assert_eq!(h.away().shown, PillState::ListeningPtt);
+}
+
+#[test]
+fn with_the_pill_turned_off_an_error_still_shows() {
+    let mut h = Harness::new(Edge::Bottom);
+    h.away();
+    h.pill.set_turned_off(true);
+    let error = PillState::Error {
+        reason: "No microphone found".into(),
+    };
+
+    h.pill.set_state(error.clone());
+
+    assert_eq!(h.away().shown, error);
+}
+
+#[test]
 fn capsules_grow_from_resting_to_hands_free() {
     let width = |state: PillState| state.capsule_size(Edge::Bottom).width;
     assert!(width(PillState::Resting) < width(PillState::Ready));
