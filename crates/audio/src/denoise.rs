@@ -76,16 +76,17 @@ impl Denoiser {
         self.pending.drain(..consumed);
 
         let mut cleaned = Vec::new();
-        let frames = self.upsampled.len() / DenoiseState::FRAME_SIZE;
         let mut output = [0.0; DenoiseState::FRAME_SIZE];
-        for frame in self.upsampled.chunks_exact(DenoiseState::FRAME_SIZE) {
+        let (frames, _) = self.upsampled.as_chunks::<{ DenoiseState::FRAME_SIZE }>();
+        let whole = size_of_val(frames) / size_of::<f32>();
+        for frame in frames {
             let input: Vec<f32> = frame.iter().map(|s| s * RNNOISE_SCALE).collect();
             self.state.process_frame(&mut output, &input);
             if !std::mem::take(&mut self.first_frame) {
                 cleaned.extend(output.iter().map(|s| s / RNNOISE_SCALE));
             }
         }
-        self.upsampled.drain(..frames * DenoiseState::FRAME_SIZE);
+        self.upsampled.drain(..whole);
         self.down.push(&cleaned)
     }
 }

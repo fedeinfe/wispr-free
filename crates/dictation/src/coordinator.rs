@@ -15,6 +15,7 @@ use wf_core::settings::{HistoryRetention, KeepModels, Settings};
 use wf_models::{Catalog, ModelStore};
 
 use crate::engines::Loaded;
+use crate::meeting::Meetings;
 use crate::plan::plan;
 use crate::session::{Pump, Session, SessionShared};
 use crate::worker::{self, Job};
@@ -38,6 +39,9 @@ pub(crate) enum Input {
     PasteRecent(usize),
     ForgetHistory(Sender<()>),
     Trial,
+    ToggleMeeting,
+    Meeting(bool),
+    Problem(String),
     AutoStop(u64),
     /// A dictation is over: inserted, abandoned or failed. `problem` is for the pill.
     Finished {
@@ -76,6 +80,8 @@ pub(crate) struct Coordinator {
     trial_next: bool,
     error: Option<(String, Duration)>,
     blocked: Option<String>,
+    meetings: Meetings,
+    meeting: bool,
     shown: PillState,
     unload_at: Option<Duration>,
     prune_at: Option<Duration>,
@@ -94,6 +100,13 @@ impl Coordinator {
         );
         let on_event = Arc::clone(&parts.on_event);
         let finished = inbox.clone();
+        let meetings = Meetings::spawn(
+            parts.meeting_room,
+            parts.meetings,
+            &parts.settings,
+            inbox.clone(),
+            Arc::clone(&parts.on_event),
+        );
         let (insertion, history) = (parts.insertion, parts.history);
         thread::Builder::new()
             .name("wf-insertion".into())
@@ -125,6 +138,8 @@ impl Coordinator {
             trial_next: false,
             error: None,
             blocked: None,
+            meetings,
+            meeting: false,
             shown: PillState::Resting,
             unload_at: None,
             prune_at: None,
@@ -191,6 +206,12 @@ impl Coordinator {
             Input::PasteLast => self.send_job(Job::PasteLast(self.paste_hint())),
             Input::PasteRecent(index) => self.send_job(Job::PasteRecent(index)),
             Input::ForgetHistory(done) => self.send_job(Job::Forget(done)),
+            Input::ToggleMeeting => self.meetings.toggle(),
+            Input::Meeting(active) => {
+                self.meeting = active;
+                (self.shared.on_event)(Event::Meeting(active));
+            }
+            Input::Problem(problem) => self.fail(problem),
             Input::Trial => {
                 let now = self.clock.now();
                 let commands = self.lock_machine().on_pill(PillInput::Click, now);
@@ -224,7 +245,7 @@ impl Coordinator {
                 Command::CapWarning => self.toast(CAP_HINT),
                 Command::PasteLast => self.send_job(Job::PasteLast(self.paste_hint())),
                 Command::CopyLast => self.send_job(Job::CopyLast),
-                Command::ToggleMeetingNotes => {}
+                Command::ToggleMeetingNotes => self.meetings.toggle(),
             }
         }
     }
@@ -371,6 +392,7 @@ impl Coordinator {
     fn on_settings(&mut self, settings: Settings) {
         let before = mem::replace(&mut self.settings, settings);
         let settings = &self.settings;
+        self.meetings.settings_changed(settings);
         self.lock_machine().set_bindings(settings.shortcuts.clone());
         if settings.pipeline.models_folder != before.pipeline.models_folder {
             self.store = ModelStore::configured(
@@ -426,6 +448,7 @@ impl Coordinator {
             (_, Some((reason, _)), _) | (_, None, Some(reason)) => PillState::Error {
                 reason: reason.clone(),
             },
+            _ if self.meeting => PillState::Meeting,
             _ => PillState::Resting,
         };
         if state != self.shown {

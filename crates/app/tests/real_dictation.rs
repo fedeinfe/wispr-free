@@ -21,7 +21,7 @@ use wf_core::pill::PillState;
 use wf_core::settings::{KeepModels, PipelineTier, Settings};
 use wf_dictation::probe::{ClipMicrophone, NoContext, TextLog, read_wav};
 use wf_dictation::remote::ChildEngines;
-use wf_dictation::{Dictation, Event, Parts, Report, SystemClock};
+use wf_dictation::{Dictation, Event, Parts, Report, SystemClock, SystemMeetingRoom};
 use wf_models::Catalog;
 
 const LONG_WAIT: Duration = Duration::from_secs(60);
@@ -109,7 +109,9 @@ fn start(settings: Settings, real_time: bool) -> RealFlow {
         catalog: Arc::new(Catalog::bundled()),
         default_models: models,
         history: data.path().join("history.sqlite3"),
+        meetings: data.path().join("meetings"),
         microphone: Arc::clone(&microphone) as _,
+        meeting_room: Arc::new(SystemMeetingRoom),
         engines: Arc::new(ChildEngines::new(PathBuf::from(env!(
             "CARGO_BIN_EXE_wispr-free"
         )))),

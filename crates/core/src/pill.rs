@@ -21,6 +21,12 @@ const EDGE_MARGIN: f64 = 8.0;
 const HOVER_SLOP: f64 = 6.0;
 /// Cursor travel that turns a press into a drag, in points.
 const DRAG_THRESHOLD: f64 = 4.0;
+/// The suggestion card's size and its gap from the capsule, in points.
+const CARD_SIZE: Size = Size {
+    width: 236.0,
+    height: 64.0,
+};
+const CARD_GAP: f64 = 8.0;
 /// Bar height in the Meeting capsule relative to the Listening one.
 const MEETING_BAR_SCALE: f32 = 0.6;
 
@@ -133,6 +139,8 @@ pub struct Frame {
     pub shown: PillState,
     /// Capsule within the window, in points.
     pub capsule: Rect,
+    /// The suggestion card within the window, when one is up.
+    pub card: Option<Rect>,
     /// New window position, when it changed.
     pub move_to: Option<Point>,
     /// Whether the window catches the mouse. Otherwise clicks pass through to what is below.
@@ -161,6 +169,7 @@ pub struct Pill {
     press: Option<Press>,
     /// The Show pill setting is off.
     turned_off: bool,
+    card: bool,
     hidden_until: Option<Duration>,
     now: Duration,
     cursor: Option<Point>,
@@ -177,6 +186,7 @@ impl Pill {
             hovered: false,
             press: None,
             turned_off: false,
+            card: false,
             hidden_until: None,
             now: Duration::ZERO,
             cursor: None,
@@ -209,6 +219,12 @@ impl Pill {
     /// the user has no other way to learn why nothing was typed.
     pub fn set_turned_off(&mut self, turned_off: bool) {
         self.turned_off = turned_off;
+    }
+
+    /// Shows or takes down the card that asks the user something. It catches the mouse like the
+    /// capsule does, and it shows even with the pill turned off: it only appears on request.
+    pub fn set_card(&mut self, shown: bool) {
+        self.card = shown;
     }
 
     /// Hides the pill for a while, whatever its state. Dictation carries on unseen.
@@ -266,10 +282,14 @@ impl Pill {
         let dragging = self
             .press
             .is_some_and(|press| press.gesture == Gesture::Dragging);
-        let hit_test =
-            shown != PillState::Hidden && (over_capsule || dragging || tick.cursor.is_none());
+        let card = self.card.then(|| self.card_rect());
+        let over_card = card.is_some_and(|card| self.cursor_within(card));
+        let hit_test = over_card
+            || (card.is_some() && tick.cursor.is_none())
+            || (shown != PillState::Hidden && (over_capsule || dragging || tick.cursor.is_none()));
         Frame {
             capsule: shown.capsule(self.edge),
+            card,
             shown,
             move_to,
             hit_test,
@@ -305,21 +325,50 @@ impl Pill {
 
     /// Whether the cursor is within `slop` points of the capsule shown now.
     fn cursor_near_capsule(&self, slop: f64) -> bool {
-        let Some(cursor) = self.cursor else {
-            return false;
-        };
-        let units = self.display.map_or(1.0, |d| d.units_per_point);
         let capsule = self.shown().capsule(self.edge);
-        let area = Rect {
+        self.cursor_within(Rect {
             x: capsule.x - slop,
             y: capsule.y - slop,
             width: capsule.width + 2.0 * slop,
             height: capsule.height + 2.0 * slop,
+        })
+    }
+
+    /// Whether the cursor is inside `area`, a rectangle of the window.
+    fn cursor_within(&self, area: Rect) -> bool {
+        let Some(cursor) = self.cursor else {
+            return false;
         };
+        let units = self.display.map_or(1.0, |d| d.units_per_point);
         area.contains(Point {
             x: (cursor.x - self.origin.x) / units,
             y: (cursor.y - self.origin.y) / units,
         })
+    }
+
+    /// Beside the capsule, on the side away from the screen edge.
+    fn card_rect(&self) -> Rect {
+        let Rect { x, y, width, .. } = self.state.capsule(self.edge);
+        let (card_x, card_y) = match self.edge {
+            Edge::Bottom => (
+                (WINDOW_SIZE.width - CARD_SIZE.width) / 2.0,
+                y - CARD_GAP - CARD_SIZE.height,
+            ),
+            Edge::Left => (
+                x + width + CARD_GAP,
+                (WINDOW_SIZE.height - CARD_SIZE.height) / 2.0,
+            ),
+            Edge::Right => (
+                x - CARD_GAP - CARD_SIZE.width,
+                (WINDOW_SIZE.height - CARD_SIZE.height) / 2.0,
+            ),
+        };
+        Rect {
+            x: card_x,
+            y: card_y,
+            width: CARD_SIZE.width,
+            height: CARD_SIZE.height,
+        }
     }
 
     fn shown(&self) -> PillState {

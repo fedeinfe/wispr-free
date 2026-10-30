@@ -5,6 +5,7 @@
 
 mod coordinator;
 mod engines;
+mod meeting;
 pub mod plan;
 pub mod probe;
 pub mod remote;
@@ -28,6 +29,7 @@ use wf_platform::insert::{InsertError, InsertOutcome, SystemInserter};
 use wf_platform::keys::KeySignal;
 
 pub use engines::Engines;
+pub use meeting::{MeetingRoom, MeetingTape, SystemMeetingRoom};
 
 use coordinator::{Coordinator, Input};
 
@@ -144,6 +146,11 @@ pub enum Event {
     Inserted(Report),
     /// The models are gone from memory, so this is a good moment to hand freed pages back.
     Unloaded,
+    /// A meeting recording started or stopped.
+    Meeting(bool),
+    /// A meeting app started using the mic. Offer to take notes, naming this app. Only the
+    /// user's answer, through [`Dictation::toggle_meeting`], starts anything.
+    SuggestMeeting(String),
 }
 
 /// How one dictation went.
@@ -163,7 +170,9 @@ pub struct Parts {
     /// Where models live unless the settings name a folder.
     pub default_models: PathBuf,
     pub history: PathBuf,
+    pub meetings: PathBuf,
     pub microphone: Arc<dyn Microphone>,
+    pub meeting_room: Arc<dyn MeetingRoom>,
     pub engines: Arc<dyn Engines>,
     pub context: Arc<dyn ContextSource + Send + Sync>,
     /// Takes a builder because the inserter should be made on the thread it lives on.
@@ -179,6 +188,7 @@ impl Parts {
         catalog: Arc<Catalog>,
         default_models: PathBuf,
         history: PathBuf,
+        meetings: PathBuf,
         executable: PathBuf,
         on_event: Arc<dyn Fn(Event) + Send + Sync>,
     ) -> Self {
@@ -187,7 +197,9 @@ impl Parts {
             catalog,
             default_models,
             history,
+            meetings,
             microphone: Arc::new(SystemMicrophone),
+            meeting_room: Arc::new(SystemMeetingRoom),
             engines: Arc::new(remote::ChildEngines::new(executable)),
             context: Arc::new(SystemContext),
             insertion: Box::new(|| Box::new(SystemInserter::system())),
@@ -305,6 +317,11 @@ impl Dictation {
         let (done, wait) = mpsc::channel();
         self.send(Input::ForgetHistory(done));
         let _ = wait.recv_timeout(FORGET_LIMIT);
+    }
+
+    /// Starts or stops the meeting notes.
+    pub fn toggle_meeting(&self) {
+        self.send(Input::ToggleMeeting);
     }
 
     /// Starts a real dictation that ends in [`Event::Trial`] rather than in the focused app.

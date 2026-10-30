@@ -15,6 +15,7 @@ wf-pipeline = { workspace = true, features = ["silero", "whisper", "sherpa", "ll
 wf-platform.workspace = true
 wf-models.workspace = true
 wf-history.workspace = true
+wf-meetings.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

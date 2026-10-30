@@ -30,6 +30,8 @@ const HIDDEN_POLL: Duration = Duration::from_millis(250);
 const DISPLAY_POLL: Duration = Duration::from_secs(1);
 const HIDE_DURATION: Duration = Duration::from_secs(60 * 60);
 const TOAST_DURATION: Duration = Duration::from_secs(4);
+/// How long a question stays up when nobody answers it.
+const CARD_SHOWN: Duration = Duration::from_secs(30);
 const MENU_LABEL_CHARS: usize = 48;
 
 /// The Language menu, with the code each entry stands for. Auto-detect has none.
@@ -51,6 +53,7 @@ pub enum PillEvent {
     SelectMicrophone(usize),
     SelectLanguage(usize),
     SelectPipelineQuality(usize),
+    TakeNotes,
     OpenSettings,
     Quit,
 }
@@ -126,6 +129,7 @@ struct Core {
     waveform: Waveform,
     prefs: Prefs,
     toast: Option<(String, Instant)>,
+    card_until: Option<Instant>,
     displays: Vec<Display>,
     started: Instant,
     last_poll: Instant,
@@ -158,6 +162,7 @@ impl PillController {
                     waveform: Waveform::new(),
                     prefs,
                     toast: None,
+                    card_until: None,
                     displays: Vec::new(),
                     started: now,
                     last_poll: now,
@@ -224,6 +229,20 @@ impl PillController {
     }
 
     /// The Recent transcripts menu.
+    /// Asks whether to take notes for a meeting in `app`. The card goes away by itself.
+    pub fn suggest_meeting(&self, app: String) {
+        self.inner.ui.set_card_app(app.into());
+        let mut core = self.inner.core.borrow_mut();
+        core.pill.set_card(true);
+        core.card_until = Some(Instant::now() + CARD_SHOWN);
+    }
+
+    pub fn hide_card(&self) {
+        let mut core = self.inner.core.borrow_mut();
+        core.pill.set_card(false);
+        core.card_until = None;
+    }
+
     pub fn set_recent(&self, transcripts: &[String]) {
         let labels = transcripts.iter().map(|text| menu_label(text));
         let labels: Vec<SharedString> = labels.collect();
@@ -274,6 +293,13 @@ impl PillController {
         ui.on_hide_for_an_hour(move || this.inner.core.borrow_mut().pill.hide_for(HIDE_DURATION));
 
         ui.on_cancel_clicked(forward(PillEvent::Cancel));
+        let this = self.clone();
+        ui.on_take_notes(move || {
+            this.hide_card();
+            this.emit(PillEvent::TakeNotes);
+        });
+        let this = self.clone();
+        ui.on_decline_notes(move || this.hide_card());
         ui.on_stop_clicked(forward(PillEvent::Stop));
         ui.on_paste_last(forward(PillEvent::PasteLast));
         ui.on_open_settings(forward(PillEvent::OpenSettings));
@@ -387,6 +413,17 @@ impl PillController {
         ui.set_capsule_y(frame.capsule.y as f32);
         ui.set_capsule_width(frame.capsule.width as f32);
         ui.set_capsule_height(frame.capsule.height as f32);
+        if core.card_until.is_some_and(|until| now >= until) {
+            core.card_until = None;
+            core.pill.set_card(false);
+        }
+        ui.set_card_shown(frame.card.is_some());
+        if let Some(card) = frame.card {
+            ui.set_card_x(card.x as f32);
+            ui.set_card_y(card.y as f32);
+            ui.set_card_width(card.width as f32);
+            ui.set_card_height(card.height as f32);
+        }
         if core.toast.as_ref().is_some_and(|(_, until)| now >= *until) {
             core.toast = None;
         }
@@ -401,7 +438,7 @@ impl PillController {
         }
 
         let poll = match frame.shown {
-            PillState::Hidden => HIDDEN_POLL,
+            PillState::Hidden if frame.card.is_none() => HIDDEN_POLL,
             _ if bar_scale.is_some() || frame.hit_test => FRAME_POLL,
             _ => CURSOR_POLL,
         };
@@ -483,6 +520,11 @@ mod tests {
         ui.set_capsule_width(148.0);
         ui.set_capsule_height(32.0);
         ui.set_bars(ModelRc::from(Rc::new(VecModel::from(vec![0.5_f32; 10]))));
+        ui.set_card_shown(true);
+        ui.set_card_x(42.0);
+        ui.set_card_y(8.0);
+        ui.set_card_width(236.0);
+        ui.set_card_height(64.0);
 
         let fired = Rc::new(RefCell::new(Vec::new()));
         let log = |name: &'static str| {
@@ -493,6 +535,8 @@ mod tests {
         ui.on_pill_released(log("released"));
         ui.on_cancel_clicked(log("cancel"));
         ui.on_stop_clicked(log("stop"));
+        ui.on_take_notes(log("take notes"));
+        ui.on_decline_notes(log("not now"));
 
         let element = ElementHandle::find_by_element_id(&ui, id)
             .next()
@@ -521,6 +565,14 @@ mod tests {
             ["cancel"]
         );
         assert_eq!(click(PillLook::Locked, "PillWindow::stop-button"), ["stop"]);
+        assert_eq!(
+            click(PillLook::Resting, "PillWindow::take-notes-button"),
+            ["take notes"]
+        );
+        assert_eq!(
+            click(PillLook::Resting, "PillWindow::decline-notes-button"),
+            ["not now"]
+        );
 
         let is_open = |look| {
             let (fired, ui) =

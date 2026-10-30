@@ -6329,6 +6329,7 @@ dependencies = [
  "wf-audio",
  "wf-core",
  "wf-history",
+ "wf-meetings",
  "wf-models",
  "wf-pipeline",
  "wf-platform",

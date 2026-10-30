@@ -61,7 +61,11 @@ fn run(args: &[String]) -> Result<(), slint::PlatformError> {
         .map(prefs::Prefs::load)
         .unwrap_or_default();
     let pill = PillController::new(prefs, prefs_path)?;
-    let flow = dictation::start(store.get(), &pill);
+    let flow = dictation::start(store.get(), &pill, &tray);
+    tray.on_toggle_meeting({
+        let flow = flow.clone();
+        move || flow.toggle_meeting()
+    });
 
     let apply_settings: Rc<dyn Fn(&Settings)> = {
         let pill = pill.clone();

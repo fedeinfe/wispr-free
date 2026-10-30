@@ -17,8 +17,12 @@ use wf_core::pill::PillState;
 use wf_core::settings::{KeepModels, PipelineTier, Settings};
 use wf_core::shortcut::{Bindings, Key, KeyEvent, Platform};
 use wf_dictation::plan::{AsrModel, LlmModel};
-use wf_dictation::{Clock, Dictation, Engines, Event, Insertion, MicStream, Microphone, Parts};
-use wf_models::{Catalog, ModelStore};
+use wf_dictation::{
+    Clock, Dictation, Engines, Event, Insertion, MeetingRoom, MeetingTape, MicStream, Microphone,
+    Parts,
+};
+use wf_meetings::{MeetingEvent, MicClient};
+use wf_models::Catalog;
 use wf_pipeline::{Asr, AsrOptions, Llm, LlmPrompt, PipelineError, SpeechSegment, Transcript, Vad};
 use wf_platform::context::{AppIdentity, Context, ContextDepth, ContextSource, Focus, TextAround};
 use wf_platform::insert::{CopyReason, InsertError, InsertOutcome, PasteChord};
@@ -419,6 +423,66 @@ impl Insertion for FakeInsertion {
     }
 }
 
+/// Keeps what a meeting would have recorded out of reach of the real devices.
+#[derive(Default)]
+pub struct FakeRoom {
+    pub started: AtomicUsize,
+    pub stopped: Arc<AtomicUsize>,
+    pub paths: Mutex<Vec<PathBuf>>,
+    pub refuse: AtomicBool,
+    pub clients: Mutex<Vec<MicClient>>,
+    pub playing: AtomicBool,
+    feed: Mutex<Option<Sender<MeetingEvent>>>,
+}
+
+impl FakeRoom {
+    pub fn send(&self, event: MeetingEvent) {
+        let feed = self.feed.lock().unwrap();
+        feed.as_ref().expect("a meeting is on").send(event).unwrap();
+    }
+}
+
+struct FakeTape {
+    events: Receiver<MeetingEvent>,
+    stopped: Arc<AtomicUsize>,
+}
+
+impl MeetingTape for FakeTape {
+    fn events(&self) -> &Receiver<MeetingEvent> {
+        &self.events
+    }
+
+    fn stop(self: Box<Self>) -> Result<(), String> {
+        self.stopped.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+impl MeetingRoom for FakeRoom {
+    fn record(&self, path: PathBuf, _ranking: Vec<String>) -> Result<Box<dyn MeetingTape>, String> {
+        if self.refuse.load(Ordering::SeqCst) {
+            return Err("the disk said no".into());
+        }
+        fs::write(&path, "pretend audio").unwrap();
+        self.paths.lock().unwrap().push(path);
+        self.started.fetch_add(1, Ordering::SeqCst);
+        let (feed, events) = mpsc::channel();
+        *self.feed.lock().unwrap() = Some(feed);
+        Ok(Box::new(FakeTape {
+            events,
+            stopped: Arc::clone(&self.stopped),
+        }))
+    }
+
+    fn mic_clients(&self) -> Vec<MicClient> {
+        self.clients.lock().unwrap().clone()
+    }
+
+    fn other_app_playing(&self) -> bool {
+        self.playing.load(Ordering::SeqCst)
+    }
+}
+
 pub struct FakeContext(pub Mutex<Context>);
 
 impl ContextSource for FakeContext {
@@ -460,8 +524,10 @@ pub const QWEN: &str = "qwen3-1.7b-q4_k_m";
 
 /// Rules only, on Parakeet with VAD, so most tests need no LLM.
 pub fn base_settings() -> Settings {
-    let mut settings = Settings::default();
-    settings.shortcuts = Bindings::default_for(Platform::MacOs);
+    let mut settings = Settings {
+        shortcuts: Bindings::default_for(Platform::MacOs),
+        ..Settings::default()
+    };
     settings.pipeline.tier = PipelineTier::Custom;
     settings.pipeline.asr_model = Some(PARAKEET.to_owned());
     settings.pipeline.vad_model = Some(SILERO.to_owned());
@@ -475,6 +541,7 @@ pub fn base_settings() -> Settings {
 pub struct Rig {
     pub dictation: Dictation,
     pub mic: Arc<FakeMic>,
+    pub room: Arc<FakeRoom>,
     pub probe: Arc<Probe>,
     pub log: Arc<InsertLog>,
     pub clock: Arc<FakeClock>,
@@ -499,6 +566,7 @@ impl Rig {
 
     pub fn with_models(settings: Settings, data: TempDir, models: PathBuf) -> Self {
         let mic = Arc::new(FakeMic::default());
+        let room = Arc::new(FakeRoom::default());
         let probe = Arc::new(Probe::default());
         let log = Arc::new(InsertLog::default());
         let clock = Arc::new(FakeClock::default());
@@ -511,7 +579,9 @@ impl Rig {
             catalog: Arc::new(Catalog::bundled()),
             default_models: models,
             history: data.path().join("history.sqlite3"),
+            meetings: data.path().join("meetings"),
             microphone: Arc::clone(&mic) as Arc<dyn Microphone>,
+            meeting_room: Arc::clone(&room) as Arc<dyn MeetingRoom>,
             engines: Arc::new(FakeEngines(Arc::clone(&probe))),
             context: Arc::clone(&context) as Arc<dyn ContextSource + Send + Sync>,
             insertion: Box::new(move || Box::new(FakeInsertion(insertion_log))),
@@ -523,6 +593,7 @@ impl Rig {
         Self {
             dictation,
             mic,
+            room,
             probe,
             log,
             clock,

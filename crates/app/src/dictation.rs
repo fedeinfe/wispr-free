@@ -8,13 +8,14 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use slint::{Timer, TimerMode};
+use slint::{Timer, TimerMode, Weak};
 use wf_core::settings::{PipelineTier, Settings, SettingsStore, data_dir};
 use wf_dictation::{Dictation, Event, Parts};
 use wf_history::History;
 use wf_models::{Catalog, ModelStore};
 use wf_platform::keys::{self, KeyListener};
 
+use crate::Tray;
 use crate::memory;
 use crate::pill::{LANGUAGES, PillController, PillEvent};
 use crate::settings_window::SettingsHost;
@@ -30,30 +31,32 @@ const PIPELINE_QUALITIES: [PipelineTier; 4] = [
     PipelineTier::Custom,
 ];
 
-/// Starts the flow on the real machine. Its events reach `pill` on the UI thread.
-pub fn start(settings: Settings, pill: &PillController) -> Dictation {
+/// Starts the flow on the real machine. Its events reach `pill` and `tray` on the UI thread.
+pub fn start(settings: Settings, pill: &PillController, tray: &Tray) -> Dictation {
     let data = data_dir().unwrap_or_else(|| PathBuf::from("wispr-free"));
     let default_models = ModelStore::default_root().unwrap_or_else(|| data.join("models"));
     let history = History::default_path().unwrap_or_else(|| data.join("history.sqlite3"));
+    let meetings = data.join("meetings");
     let executable = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("wispr-free"));
-    let on_event = deliver_to(pill);
+    let on_event = deliver_to(pill, tray.as_weak());
     Dictation::start(Parts::system(
         settings,
         Arc::new(Catalog::bundled()),
         default_models,
         history,
+        meetings,
         executable,
         on_event,
     ))
 }
 
 /// Returns the callback for the flow's threads. Events wait in a queue for the UI thread.
-pub fn deliver_to(pill: &PillController) -> Arc<dyn Fn(Event) + Send + Sync> {
+pub fn deliver_to(pill: &PillController, tray: Weak<Tray>) -> Arc<dyn Fn(Event) + Send + Sync> {
     let (events, inbox) = mpsc::channel();
     let target = pill.clone();
     pill.on_events_arrived(move || {
         while let Ok(event) = inbox.try_recv() {
-            show(&target, event);
+            show(&target, &tray, event);
         }
     });
     let window = pill.window();
@@ -66,13 +69,20 @@ pub fn deliver_to(pill: &PillController) -> Arc<dyn Fn(Event) + Send + Sync> {
     })
 }
 
-fn show(pill: &PillController, event: Event) {
+fn show(pill: &PillController, tray: &Weak<Tray>, event: Event) {
     match event {
         Event::Pill(state) => pill.set_state(state),
         Event::Level(level) => pill.set_level(level),
         Event::Toast(text) => pill.show_toast(text),
         Event::Recent(transcripts) => pill.set_recent(&transcripts),
         Event::Unloaded => memory::release_freed(),
+        Event::Meeting(active) => {
+            pill.hide_card();
+            if let Some(tray) = tray.upgrade() {
+                tray.set_in_meeting(active);
+            }
+        }
+        Event::SuggestMeeting(app) => pill.suggest_meeting(app),
         Event::Trial(_) | Event::Inserted(_) => {}
     }
 }
@@ -157,6 +167,7 @@ impl PillActions {
                     self.change(|settings| choose_tier(settings, tier, &catalog));
                 }
             }
+            PillEvent::TakeNotes => self.dictation.toggle_meeting(),
             PillEvent::OpenSettings => {
                 if let Err(error) = self.settings.open() {
                     eprintln!("could not open settings: {error}");
