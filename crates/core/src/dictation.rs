@@ -106,6 +106,8 @@ pub struct DictationMachine {
     paste_armed: bool,
     /// Keys whose press was swallowed, so their release is swallowed too.
     swallowed: Vec<Key>,
+    /// An earlier dictation is still being transcribed or inserted, so Cancel stays live.
+    processing: bool,
 }
 
 impl DictationMachine {
@@ -117,7 +119,25 @@ impl DictationMachine {
             latched: false,
             paste_armed: false,
             swallowed: Vec::new(),
+            processing: false,
         }
+    }
+
+    /// New shortcuts, for the next press. A dictation in progress carries on.
+    pub fn set_bindings(&mut self, bindings: Bindings) {
+        self.bindings = bindings;
+    }
+
+    /// Whether a finished recording is still on its way to insertion. The machine only knows about
+    /// capture, so the app says so: Cancel then stops that work too. A new dictation may start.
+    pub fn set_processing(&mut self, processing: bool) {
+        self.processing = processing;
+    }
+
+    /// Forgets the running dictation, with no command: the app gave up on it by itself.
+    pub fn abandon(&mut self) {
+        self.state = State::Idle;
+        self.latched = !self.held.is_empty();
     }
 
     pub fn on_key(&mut self, event: KeyEvent, now: Duration) -> Reaction {
@@ -239,9 +259,9 @@ impl DictationMachine {
     /// Returns whether the press was used by a shortcut.
     fn on_press(&mut self, key: Key, now: Duration, commands: &mut Vec<Command>) -> bool {
         let bindings = &self.bindings;
-        let dictating = self.state != State::Idle;
+        let cancellable = self.state != State::Idle || self.processing;
         // Push-to-talk keys are usually still down, so Cancel only needs to be among them.
-        if dictating && bindings.cancel.contains(key) && bindings.cancel.is_held_within(&self.held)
+        if cancellable && bindings.cancel.contains(key) && bindings.cancel.is_held_within(&self.held)
         {
             self.end(Command::Cancel(CancelReason::User), commands);
         } else if bindings.hands_free.is_held_exactly(&self.held) {
