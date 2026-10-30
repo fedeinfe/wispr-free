@@ -8,6 +8,7 @@
 
 mod capture;
 mod cpal_backend;
+mod denoise;
 mod devices;
 mod frames;
 mod level;
@@ -16,6 +17,7 @@ pub mod sounds;
 
 pub use capture::{AudioBackend, Capture, CaptureConfig, CaptureEvent, StreamFormat, StreamSink};
 pub use cpal_backend::{CpalBackend, open_stream};
+pub use denoise::Denoiser;
 pub use devices::{InputDevice, rank_devices};
 pub use frames::FrameConverter;
 pub use level::{LEVEL_WINDOW_MS, LevelMeter};

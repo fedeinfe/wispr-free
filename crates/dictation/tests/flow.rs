@@ -566,6 +566,23 @@ fn parakeet_can_take_the_whole_recording_with_vad_off() {
 }
 
 #[test]
+fn noise_suppression_runs_before_the_detector_when_it_is_on() {
+    let mut settings = base_settings();
+    settings.pipeline.denoise = true;
+    settings.pipeline.vad = false;
+    let rig = Rig::new(settings);
+    rig.probe.hears("cleaned");
+    let clip = speech();
+
+    rig.dictate(&clip);
+    rig.wait_inserted();
+
+    let clips = rig.probe.clips.lock().unwrap();
+    assert!(clips[0].samples().len() <= clip.samples().len() + FRAME_SAMPLES);
+    assert_ne!(clips[0].samples()[..4000], clip.samples()[..4000]);
+}
+
+#[test]
 fn a_long_dictation_reaches_asr_in_chunks_while_it_runs() {
     let rig = Rig::new(base_settings());
     rig.probe

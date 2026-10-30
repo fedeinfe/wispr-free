@@ -2,13 +2,14 @@
 //! text to insert. Audio flows the whole time, so ASR can start before the user stops. Frames wait
 //! in a channel while the engines load, so a first dictation loses nothing to the load.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{Receiver, RecvError, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use wf_audio::{CaptureEvent, LevelMeter};
+use wf_audio::{CaptureEvent, Denoiser, LevelMeter};
 use wf_core::audio::{AudioClip, SAMPLE_RATE_HZ};
 use wf_core::settings::{Settings, Style, StyleSettings};
 use wf_history::Timings;
@@ -162,6 +163,32 @@ pub(crate) struct Session {
     pub(crate) shared: Arc<SessionShared>,
 }
 
+/// The audio of one recording on its way to VAD, through RNNoise if that's on.
+struct Incoming<'a> {
+    heard: &'a Receiver<Audio>,
+    denoiser: Option<Denoiser>,
+    /// Frames the denoiser finished, waiting to be handed out.
+    ready: VecDeque<Vec<f32>>,
+}
+
+impl Incoming<'_> {
+    /// The next audio. An error means the recording was abandoned.
+    fn next(&mut self) -> Result<Audio, RecvError> {
+        loop {
+            if let Some(frame) = self.ready.pop_front() {
+                return Ok(Audio::Frame(frame));
+            }
+            let audio = self.heard.recv()?;
+            match (&mut self.denoiser, audio) {
+                (Some(denoiser), Audio::Frame(frame)) => {
+                    self.ready.extend(denoiser.process(&frame));
+                }
+                (_, audio) => return Ok(audio),
+            }
+        }
+    }
+}
+
 /// What came out of the engines for one recording.
 struct Heard {
     transcript: Transcript,
@@ -301,6 +328,21 @@ impl Session {
         }))
     }
 
+    fn incoming(&self) -> Result<Incoming<'_>, String> {
+        let denoiser = self
+            .settings
+            .pipeline
+            .denoise
+            .then(Denoiser::new)
+            .transpose()
+            .map_err(|error| format!("Couldn't start noise suppression: {error}"))?;
+        Ok(Incoming {
+            heard: &self.heard,
+            denoiser,
+            ready: VecDeque::new(),
+        })
+    }
+
     fn language(&self) -> Option<String> {
         match self.settings.general.languages.as_slice() {
             [only] => Some(only.clone()),
@@ -330,8 +372,9 @@ impl Session {
         let mut vad_time = Duration::ZERO;
         let mut auto_stopped = false;
         let failed = |error: PipelineError| describe("detect speech", &error);
+        let mut incoming = self.incoming()?;
         let released = loop {
-            match self.heard.recv() {
+            match incoming.next() {
                 Ok(Audio::Frame(frame)) => {
                     recording.note(&frame);
                     let started = Instant::now();
@@ -412,8 +455,9 @@ impl Session {
     ) -> Result<Option<Heard>, String> {
         let mut recording = Recording::default();
         let mut samples = Vec::new();
+        let mut incoming = self.incoming()?;
         let released = loop {
-            match self.heard.recv() {
+            match incoming.next() {
                 Ok(Audio::Frame(frame)) => {
                     recording.note(&frame);
                     samples.extend(frame);
