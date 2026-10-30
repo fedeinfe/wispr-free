@@ -261,7 +261,9 @@ impl DictationMachine {
         let bindings = &self.bindings;
         let cancellable = self.state != State::Idle || self.processing;
         // Push-to-talk keys are usually still down, so Cancel only needs to be among them.
-        if cancellable && bindings.cancel.contains(key) && bindings.cancel.is_held_within(&self.held)
+        if cancellable
+            && bindings.cancel.contains(key)
+            && bindings.cancel.is_held_within(&self.held)
         {
             self.end(Command::Cancel(CancelReason::User), commands);
         } else if bindings.hands_free.is_held_exactly(&self.held) {

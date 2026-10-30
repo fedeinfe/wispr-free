@@ -136,6 +136,8 @@ pub trait Clipboard {
 
 pub trait PasteKeys {
     fn send(&mut self, chord: PasteChord) -> Result<(), InsertError>;
+    /// Presses Enter, for the "press enter" voice command.
+    fn send_enter(&mut self) -> Result<(), InsertError>;
 }
 
 pub trait Sleep {
@@ -257,6 +259,17 @@ impl<C: Clipboard, K: PasteKeys, X: ContextSource, S: Sleep> Inserter<C, K, X, S
             chord,
             clipboard_restored,
         })
+    }
+
+    /// Presses Enter in the focused app. Call it after [`Self::insert`], which returns once the
+    /// app has had time to read the clipboard, so the Enter can't overtake the paste.
+    pub fn press_enter(&mut self) -> Result<(), InsertError> {
+        self.keys.send_enter()
+    }
+
+    /// Leaves `text` on the clipboard for good, for copy last.
+    pub fn copy(&mut self, text: &str) -> Result<(), InsertError> {
+        self.clipboard.write_text(text, false).map(|_| ())
     }
 }
 
