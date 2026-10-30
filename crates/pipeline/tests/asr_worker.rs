@@ -2,6 +2,7 @@
 //! results come back in order with their place in the recording.
 
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::thread;
 use std::time::Duration;
 
 use wf_core::audio::{AudioClip, SAMPLE_RATE_HZ};
@@ -39,7 +40,7 @@ impl Asr for LevelEcho {
     }
 }
 
-/// Doesn't finish a chunk until the test says so.
+/// Doesn't finish a chunk until the test says so, or drops its end of the gate.
 struct Gated {
     started: Sender<()>,
     release: Receiver<()>,
@@ -52,7 +53,7 @@ impl Asr for Gated {
         options: &AsrOptions,
     ) -> Result<Transcript, PipelineError> {
         self.started.send(()).unwrap();
-        self.release.recv().unwrap();
+        let _ = self.release.recv();
         LevelEcho.transcribe(clip, options)
     }
 }
@@ -217,12 +218,14 @@ fn cancelling_skips_what_is_queued_and_keeps_the_engine() {
     worker.submit((), chunk(200, 100, 0.75)).unwrap();
     on_start.recv().unwrap();
 
-    // Only the chunk already running needs releasing: the others must never start.
-    release.send(()).unwrap();
-    let mut asr = worker.cancel().unwrap();
+    // The first chunk holds the worker until cancel has had time to take effect. Releasing it
+    // any earlier lets the next chunk start, which cancel doesn't interrupt.
+    let cancelling = thread::spawn(move || worker.cancel());
+    thread::sleep(Duration::from_millis(200));
+    drop(release);
+    let mut asr = cancelling.join().unwrap().unwrap();
 
-    assert!(on_start.try_recv().is_err());
-    release.send(()).unwrap();
+    assert_eq!(on_start.try_iter().count(), 0);
     let transcript = asr
         .transcribe(&chunk(0, 100, 0.5).clip, &AsrOptions::default())
         .unwrap();
