@@ -39,6 +39,8 @@ pub enum Fallback {
     TooLong,
     /// At Light strength, too many words the speaker never said: an answer or a translation.
     NewContent,
+    /// At Light strength, the speaker's words are gone and nobody took them back.
+    LostContent,
     /// The speaker dictated a question and the reply no longer is one.
     Answered,
 }
@@ -391,6 +393,9 @@ fn check_reply<'a>(reply: &'a str, request: &CleanupRequest) -> Result<&'a str, 
     if request.strength == CleanupStrength::Light && adds_content(reply, request) {
         return Err(Fallback::NewContent);
     }
+    if request.strength == CleanupStrength::Light && loses_content(reply, input) {
+        return Err(Fallback::LostContent);
+    }
     if answers_question(reply, input) {
         return Err(Fallback::Answered);
     }
@@ -403,6 +408,15 @@ fn adds_content(reply: &str, request: &CleanupRequest) -> bool {
     let spoken = format!("{} {}", request.text, request.dictionary.join(" "));
     let (new, total) = rules::new_words(&spoken, reply);
     new * 3 > total
+}
+
+/// Light cleanup removes hesitations, not sentences: the model has turned "currently it makes a
+/// file, but it should copy" into "currently it copies". Formatting drops words one or two at a
+/// time, as "fifteen percent" becoming "15%" does, so this many in a row means it cut something.
+const LOST_IN_A_ROW: usize = 3;
+
+fn loses_content(reply: &str, input: &str) -> bool {
+    rules::longest_cut(input, reply) >= LOST_IN_A_ROW && !rules::has_correction_marker(input)
 }
 
 /// Words that open a question.

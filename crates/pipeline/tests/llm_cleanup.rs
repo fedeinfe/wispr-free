@@ -643,3 +643,54 @@ fn a_dictionary_word_cannot_open_a_tag() {
 
     assert_eq!(llm.prompts[0].user.matches("</dictionary>").count(), 1);
 }
+
+#[test]
+fn a_reply_that_cuts_what_the_speaker_said_is_refused() {
+    // Real dictations, with what the model made of them.
+    let cases = [
+        (
+            "Attualmente crea un file nel desktop con la roba copiata, ma in realtà dovrebbe copiarmelo nella clipboard, invece di creare un file.",
+            "Attualmente copia la roba nella clipboard, invece di creare un file.",
+        ),
+        (
+            "E tutti questi 2,54 GB sono contemporanei o solo quando inizio a parlare partono e aumenta?",
+            "E tutti questi 2,54 GB partono quando inizio a parlare e aumenta.",
+        ),
+    ];
+    for (input, reply) in cases {
+        let mut llm = CannedLlm::replying(reply);
+
+        let outcome = run(&mut llm, input);
+
+        assert_eq!(outcome.text, input);
+        assert!(
+            matches!(outcome.fallback, Some(Fallback::LostContent)),
+            "{reply}"
+        );
+    }
+}
+
+#[test]
+fn formatting_and_a_spoken_revision_lose_nothing() {
+    let cases = [
+        (
+            "La mia email è mario punto rossi chiocciola gmail punto com.",
+            "La mia email è mario.rossi@gmail.com.",
+        ),
+        (
+            "La batteria dura dodici virgola cinque ore e costa trenta euro.",
+            "La batteria dura 12,5 ore e costa 30 euro.",
+        ),
+        (
+            "Dipingiamo la porta di verde con la vernice vecchia, anzi no, di bianco.",
+            "Dipingiamo la porta di bianco.",
+        ),
+    ];
+    for (input, reply) in cases {
+        let mut llm = CannedLlm::replying(reply);
+
+        let outcome = run(&mut llm, input);
+
+        assert_eq!(outcome.text, reply, "{:?}", outcome.fallback);
+    }
+}

@@ -246,3 +246,60 @@ fn golden_cases_clean_to_the_expected_text() {
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
+
+#[test]
+fn hesitations_go_however_they_are_written() {
+    let cases = [
+        (
+            "Mmmh... oh... vorrei, eeeh, una pizza.",
+            "Vorrei una pizza.",
+        ),
+        ("Scarica ehm...tutti i video.", "Scarica tutti i video."),
+        ("Ehm, allora, hmmm, partiamo.", "Allora partiamo."),
+        ("Ah, ho capito.", "Ho capito."),
+        ("Ohhh, mhm, va bene.", "Va bene."),
+    ];
+    for (spoken, written) in cases {
+        assert_eq!(rule_cleanup(spoken, Some("it")), written, "{spoken}");
+    }
+}
+
+#[test]
+fn a_hesitation_is_not_a_word_that_looks_like_one() {
+    let cases = [
+        "Oh no, ho perso il treno.",
+        "Prendi la taglia M.",
+        "Mamma mia, che caldo.",
+        "Ho sentito un oh di stupore.",
+    ];
+    for spoken in cases {
+        assert_eq!(rule_cleanup(spoken, Some("it")), spoken);
+    }
+}
+
+#[test]
+fn pauses_become_the_punctuation_they_stand_for() {
+    let cases = [
+        // The user's own dictation.
+        (
+            "Scarica tutti i video, trascrivili... cioè, tutti no, ehm...scarica... quelli dell'ultimo mese.",
+            "Scarica tutti i video, trascrivili, cioè, tutti no, scarica, quelli dell'ultimo mese.",
+        ),
+        (
+            "Trascrivili e... Scarta quelli.",
+            "Trascrivili e scarta quelli.",
+        ),
+        ("Vorrei parlare con... Marco.", "Vorrei parlare con Marco."),
+        ("Ciao... come stai?", "Ciao, come stai?"),
+        ("Sta attivo... Misura un po'.", "Sta attivo. Misura un po'."),
+        ("E qualche cosa…", "E qualche cosa."),
+        ("Davvero...?", "Davvero?"),
+        (
+            "...trascrivili ...e poi ... basta",
+            "Trascrivili, e poi, basta.",
+        ),
+    ];
+    for (spoken, written) in cases {
+        assert_eq!(rule_cleanup(spoken, Some("it")), written, "{spoken}");
+    }
+}

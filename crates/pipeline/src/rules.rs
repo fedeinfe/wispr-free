@@ -6,7 +6,7 @@
 /// `None` or an unknown language applies every language's word lists.
 pub fn rule_cleanup(text: &str, language: Option<&str>) -> String {
     let lexicons = lexicons_for(language);
-    let mut words: Vec<Word> = text.split_whitespace().map(Word::parse).collect();
+    let mut words = parse_words(text);
     // Each pass only deletes words and one can expose work for another (collapsing
     // "diciamo diciamo," sets off a filler), so repeat until nothing changes.
     loop {
@@ -19,8 +19,32 @@ pub fn rule_cleanup(text: &str, language: Option<&str>) -> String {
             break;
         }
     }
+    close_pauses(&mut words);
     sentence_case(&mut words);
     render(&words)
+}
+
+/// The words of an ASR transcript. Whisper glues its pauses to the words around them, as in
+/// "ehm...scarica", so they're cut free before anything compares a word.
+fn parse_words(text: &str) -> Vec<Word> {
+    let text = text.replace('…', PAUSE).replace(PAUSE, "... ");
+    let mut words: Vec<Word> = Vec::new();
+    for word in text.split_whitespace().map(Word::parse) {
+        if word.key.is_empty() && word.prefix.chars().all(|c| c == '.') {
+            if let Some(last) = words.last_mut()
+                && !last.suffix.contains(PAUSE)
+            {
+                last.suffix.push_str(PAUSE);
+            }
+        } else if word.key.is_empty()
+            && let Some(last) = words.last_mut().filter(|last| last.suffix.ends_with(PAUSE))
+        {
+            last.suffix.push_str(&word.prefix);
+        } else {
+            words.push(word);
+        }
+    }
+    words
 }
 
 /// Whether the text contains a revision marker of any language ("oh no", "anzi"…).
@@ -43,6 +67,35 @@ pub fn new_words(text: &str, reply: &str) -> (usize, usize) {
         .filter(|word| !spoken.iter().any(|said| said.key == word.key))
         .count();
     (new, words.len())
+}
+
+/// Words that turn into digits and symbols, so a reply loses nothing by dropping them.
+const SPOKEN_FORMAT: &[&str] = &[
+    "punto",
+    "virgola",
+    "chiocciola",
+    "barra",
+    "percento",
+    "dot",
+    "point",
+    "slash",
+    "percent",
+];
+
+/// The most words of `text` gone from `reply` in a row. Numbers, short words and spoken formatting
+/// don't count, and a word survives inside another, as "rossi" does in "mario.rossi@gmail.com".
+pub fn longest_cut(text: &str, reply: &str) -> usize {
+    let reply = reply.to_lowercase();
+    let (mut run, mut longest) = (0, 0);
+    for word in text.split_whitespace().map(Word::parse) {
+        let key = word.key.as_str();
+        if key.chars().count() < 3 || is_number(key) || SPOKEN_FORMAT.contains(&key) {
+            continue;
+        }
+        run = if reply.contains(key) { 0 } else { run + 1 };
+        longest = longest.max(run);
+    }
+    longest
 }
 
 /// The first word, lowercase and without its punctuation.
@@ -72,8 +125,8 @@ struct Lexicon {
 const LEXICONS: &[Lexicon] = &[
     Lexicon {
         language: "en",
-        fillers: &["um", "umm", "uh", "uhh", "er", "erm", "hmm", "mm"],
-        filler_phrases: &["you know", "ah"],
+        fillers: &["um", "uh", "uhm", "er", "erm", "hm", "mh", "mhm"],
+        filler_phrases: &["you know", "ah", "oh"],
         edit_commands: &["scratch that"],
         edit_commands_at_pause: &["delete that", "never mind"],
         correction_markers: &[
@@ -83,8 +136,8 @@ const LEXICONS: &[Lexicon] = &[
     },
     Lexicon {
         language: "it",
-        fillers: &["ehm", "eh", "ehh", "uhm", "mmm", "mh"],
-        filler_phrases: &["diciamo", "tipo"],
+        fillers: &["ehm", "emh", "eh", "um", "uh", "uhm", "hm", "mh", "mhm"],
+        filler_phrases: &["diciamo", "tipo", "ah", "oh"],
         edit_commands: &[],
         edit_commands_at_pause: &[
             "cancella quello",
@@ -155,19 +208,40 @@ impl Word {
     }
 }
 
+/// Hesitations, whatever language they interrupt. See [`is_drawn_out`].
+const HESITATIONS: &[&str] = &[
+    "ah", "eh", "ehm", "emh", "hm", "m", "mh", "mhm", "oh", "uh", "uhm", "um",
+];
+
+/// A hesitation held for longer, as in "eeehm", "mmmh" or "ohhh". No word squeezes down to one.
+fn is_drawn_out(key: &str) -> bool {
+    let mut squeezed: Vec<char> = key.chars().collect();
+    squeezed.dedup();
+    let squeezed = String::from_iter(squeezed);
+    squeezed.len() < key.len() && HESITATIONS.contains(&squeezed.as_str())
+}
+
+/// Whether a revision of several words starts at `i`, as "oh, no" does. Its first word isn't a
+/// filler, even set off.
+fn revision_at(words: &[Word], i: usize, lexicons: &[&Lexicon]) -> bool {
+    lexicons
+        .iter()
+        .flat_map(|l| l.correction_markers)
+        .any(|marker| marker.contains(' ') && keys_at(words, i, marker).is_some())
+}
+
 fn remove_fillers(words: &mut Vec<Word>, lexicons: &[&Lexicon]) {
     let mut i = 0;
     while i < words.len() {
-        let filler = lexicons
-            .iter()
-            .any(|l| l.fillers.contains(&words[i].key.as_str()))
-            .then_some(1);
+        let key = words[i].key.as_str();
+        let filler =
+            (lexicons.iter().any(|l| l.fillers.contains(&key)) || is_drawn_out(key)).then_some(1);
         let span = filler.or_else(|| {
             lexicons
                 .iter()
                 .flat_map(|l| l.filler_phrases)
                 .filter_map(|p| phrase_at(words, i, p))
-                .find(|&n| set_off(words, i, n))
+                .find(|&n| set_off(words, i, n) && !revision_at(words, i, lexicons))
         });
         match span {
             Some(n) => remove_span(words, i, n),
@@ -216,7 +290,8 @@ fn remove_span(words: &mut Vec<Word>, i: usize, n: usize) {
 /// `removed`: a sentence end moves onto the previous word, and a span set off by commas
 /// (", uh,") takes both commas with it.
 fn absorb_punctuation(previous: &mut Word, removed: &str) {
-    if previous.ends_sentence() {
+    // A pause belongs to the hesitation it came with.
+    if previous.ends_sentence() || removed.contains(PAUSE) {
         return;
     }
     let removed_end = removed.trim_start_matches(',');
@@ -389,6 +464,57 @@ const NUMBER_WORDS: &[&str] = &[
 
 fn is_number(key: &str) -> bool {
     !key.is_empty() && (key.chars().all(|c| c.is_ascii_digit()) || NUMBER_WORDS.contains(&key))
+}
+
+/// How Whisper writes a hesitation.
+const PAUSE: &str = "...";
+
+/// A phrase can't end on these, so a pause after one is the speaker looking for the next word.
+const OPEN_WORDS: &[&str] = &[
+    "di", "a", "da", "in", "con", "su", "per", "tra", "fra", "il", "lo", "la", "l", "i", "gli",
+    "le", "un", "una", "uno", "the", "an", "to", "of", "with", "for",
+];
+/// [`OPEN_WORDS`] that join clauses, so a capital after their pause is Whisper's and not a name.
+const CONNECTIVES: &[&str] = &["e", "ed", "o", "ma", "che", "and", "or", "but", "that"];
+
+/// Writes each pause as the punctuation it stands for: nothing inside a phrase, a sentence end
+/// where Whisper went on with a capital, and otherwise a comma.
+fn close_pauses(words: &mut [Word]) {
+    for i in 0..words.len() {
+        if !words[i].suffix.contains(PAUSE) {
+            continue;
+        }
+        let key = words[i].key.as_str();
+        let (open, connective) = (OPEN_WORDS.contains(&key), CONNECTIVES.contains(&key));
+        let closing = match words.get_mut(i + 1) {
+            None => ".",
+            Some(next) if connective => {
+                next.core = lowercase_start(&next.core);
+                ""
+            }
+            Some(_) if open => "",
+            Some(next) if next.core.starts_with(char::is_uppercase) => ".",
+            Some(_) => ",",
+        };
+        let rest = words[i].suffix.replace(PAUSE, "");
+        words[i].suffix = if rest.is_empty() {
+            closing.to_owned()
+        } else {
+            rest
+        };
+    }
+}
+
+/// Lowers a first letter, leaving "I" and acronyms as they are.
+fn lowercase_start(word: &str) -> String {
+    let mut chars = word.chars();
+    match (chars.next(), chars.next()) {
+        (Some(first), Some(second)) if !second.is_uppercase() => first
+            .to_lowercase()
+            .chain(word[first.len_utf8()..].chars())
+            .collect(),
+        _ => word.to_owned(),
+    }
 }
 
 /// Capitalizes each sentence start and ends the text with a period if it has no final mark.
