@@ -12,14 +12,13 @@ use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardTypeString, NSPa
 use objc2_application_services::AXIsProcessTrusted;
 use objc2_core_foundation::{CFData, CFRetained, CFType};
 use objc2_core_graphics::{
-    CGEvent, CGEventField, CGEventFilterMask, CGEventFlags, CGEventSource, CGEventSourceStateID,
+    CGEvent, CGEventFilterMask, CGEventFlags, CGEventSource, CGEventSourceStateID,
     CGEventSuppressionState, CGEventTapLocation, CGKeyCode,
 };
 use objc2_foundation::{NSArray, NSData, NSString, NSThread};
 
 use super::{
     ChangeMark, Clipboard, ClipboardItem, ClipboardSnapshot, InsertError, PasteChord, PasteKeys,
-    SYNTHETIC_EVENT_MARKER,
 };
 
 /// nspasteboard.org markers that tell clipboard managers to skip an entry.
@@ -149,11 +148,6 @@ impl PasteKeys for SystemPasteKeys {
                 .ok_or_else(|| InsertError::Keystroke("no keyboard event".into()))?;
             // Explicit flags, so a modifier still held from the shortcut can't change the chord.
             CGEvent::set_flags(Some(&event), CGEventFlags::MaskCommand);
-            CGEvent::set_integer_value_field(
-                Some(&event),
-                CGEventField::EventSourceUserData,
-                SYNTHETIC_EVENT_MARKER,
-            );
             CGEvent::post(CGEventTapLocation::SessionEventTap, Some(&event));
         }
         Ok(())

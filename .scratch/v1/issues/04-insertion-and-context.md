@@ -16,11 +16,13 @@ Done:
 - `wf-platform::context`: `Context` (app identity, window title, `Focus`, `TextAround`), ±500 chars around the cursor, selection capped at 2000 chars, UTF-16 windowing that survives split surrogate pairs. Password fields are never read.
 - macOS: NSPasteboard (all types of all items, nspasteboard.org transient/concealed markers), CGEvent Cmd+V with the key looked up for the current layout, AX context.
 - Windows: SendInput, arboard + `GetClipboardSequenceNumber`, UI Automation context. Linux: XTest, wtype/ydotool on Wayland, arboard, X11 EWMH app and title.
-- `insertion_probe` example for manual checks. `SYNTHETIC_EVENT_MARKER` tags the keystroke so ticket 03's capture can ignore it.
+- `insertion_probe` example for manual checks.
+- Merged with ticket 03: its capture ignores our paste by source PID on macOS and by the injected flag on Windows, so no event tag is needed.
 - Tests (test-first): 9 on `Inserter`, 4 on the context text window, 9 in-module on role mapping and Wayland arguments, plus 1 `#[ignore]`d real-pasteboard round trip.
 
 Verified on macOS (Apple Silicon):
 - Real clipboard round trip (`system_clipboard`, run with `--ignored`): multi-format restore, transient markers, change detection. The user's clipboard text hash matched before and after.
+- A created `CGEvent` carries our PID in field 41, which is what ticket 03's filter compares (checked without posting).
 - Layout key lookup on the Italian layout: V key found on the main thread; off the main thread with no run loop it falls back after the timeout without crashing.
 - AX read of the frontmost app runs and returns an app id, without printing its content.
 
@@ -37,3 +39,4 @@ Needs manual verification (the done-when is **not** proven yet):
 - With a non-text control focused (Finder list), the outcome should be `Copied`.
 - A clipboard manager, if installed, should not record the dictated text.
 - Everything on Windows and Linux, including Shift+Insert in terminals and clipboard managers skipping the text.
+- Linux with ydotool: the paste goes through uinput, which ticket 03's evdev reader doesn't filter, so check it doesn't disturb the dictation state.

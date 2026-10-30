@@ -24,10 +24,6 @@ mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::SystemPasteKeys;
 
-/// Tags the synthetic paste keystroke so the global key capture (ticket 03) can ignore it:
-/// `kCGEventSourceUserData` on macOS, `dwExtraInfo` on Windows.
-pub const SYNTHETIC_EVENT_MARKER: i64 = 0x7766_7073; // "wfps"
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Os {
     MacOs,

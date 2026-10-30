@@ -7,7 +7,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_INSERT, VK_SHIFT, VK_V,
 };
 
-use super::{InsertError, PasteChord, PasteKeys, SYNTHETIC_EVENT_MARKER};
+use super::{InsertError, PasteChord, PasteKeys};
 
 pub struct SystemPasteKeys;
 
@@ -45,7 +45,7 @@ fn key_input(key: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> INPUT {
                 wScan: 0,
                 dwFlags: flags,
                 time: 0,
-                dwExtraInfo: SYNTHETIC_EVENT_MARKER as usize,
+                dwExtraInfo: 0,
             },
         },
     }
