@@ -7,7 +7,19 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-# Per-OS deps (objc2 / windows / x11rb, evdev, wayland layer-shell) arrive with tickets 03, 04 and 05
-# under [target.'cfg(...)'.dependencies].
+# Per-OS deps (objc2 / x11rb, wayland layer-shell) arrive with tickets 04 and 05. macOS key capture
+# links the system frameworks directly.
 [dependencies]
 wf-core.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev.workspace = true
