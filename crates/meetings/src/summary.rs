@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use wf_pipeline::cleanup::escape_tags;
 use wf_pipeline::rules::new_words;
-use wf_pipeline::{Llm, LlmPrompt};
+use wf_pipeline::{Llm, LlmPrompt, PipelineError};
 
 use crate::Error;
 use crate::store::{Meeting, SUMMARY_NOTES, Stage, StageState, read_json, write_json};
@@ -334,7 +334,11 @@ fn call(
         return Err(Error::Cancelled);
     }
     prompt.deadline = Some(Instant::now() + options.timeout);
-    Ok(llm.generate(&prompt, &mut |_| {})?)
+    llm.generate(&prompt, &mut |_| {})
+        .map_err(|error| match error {
+            PipelineError::Cancelled => Error::Cancelled,
+            error => error.into(),
+        })
 }
 
 /// Cuts the transcript at line ends, each piece up to `budget` characters. Earlier chunks don't
@@ -1285,6 +1289,16 @@ fn from_notes(notes: Notes, transcript_hash: String) -> Summary {
         partial: true,
         transcript_hash,
     }
+}
+
+/// What a summary says, in the shape the model read its notes in, each line with where it was said.
+pub(crate) fn render_summary(summary: &Summary) -> String {
+    let notes = Notes {
+        key_points: summary.key_points.clone(),
+        decisions: summary.decisions.clone(),
+        action_items: summary.action_items.clone(),
+    };
+    format!("TL;DR: {}\n{}", summary.tldr, notes.render())
 }
 
 /// Replaces "Speaker N" labels with names, whole labels only: "Speaker 1" never touches

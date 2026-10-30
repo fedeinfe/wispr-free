@@ -92,10 +92,50 @@ impl Transcript {
         lines.into_iter().map(|(_, line)| line).collect()
     }
 
+    /// What the Transcript tab shows: every segment and gap in time order, the way [`lines`]
+    /// orders them. A citation points at one of these.
+    ///
+    /// [`lines`]: Self::lines
+    pub fn rows(&self, names: &SpeakerNames) -> Vec<TranscriptRow> {
+        let segments = self.segments.iter().map(|segment| TranscriptRow {
+            at_ms: segment.start_ms,
+            speaker: segment.speaker,
+            name: segment.display_name(names),
+            text: segment.text.clone(),
+            gap: false,
+        });
+        let gaps = self.gaps.iter().map(|gap| {
+            let seconds = gap.end_ms.saturating_sub(gap.start_ms).div_ceil(1_000);
+            TranscriptRow {
+                at_ms: gap.start_ms,
+                speaker: None,
+                name: label(gap.channel, None),
+                text: format!("Not transcribed, {seconds} s"),
+                gap: true,
+            }
+        });
+        let mut rows: Vec<TranscriptRow> = segments.chain(gaps).collect();
+        rows.sort_by_key(|row| row.at_ms);
+        rows
+    }
+
     pub(crate) fn sort(&mut self) {
         self.segments.sort_by_key(|s| (s.start_ms, s.channel));
         self.gaps.sort_by_key(|g| (g.start_ms, g.channel));
     }
+}
+
+/// One line of the transcript as the user reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptRow {
+    pub at_ms: u64,
+    /// The voice, for renaming. `None` on You, on Others before diarization, and on a gap.
+    pub speaker: Option<SpeakerId>,
+    /// With any rename applied.
+    pub name: String,
+    pub text: String,
+    /// No text here yet: `text` says how much is missing.
+    pub gap: bool,
 }
 
 /// `[mm:ss]`. Minutes keep counting past the hour, so citations stay one shape.

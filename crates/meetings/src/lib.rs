@@ -3,8 +3,10 @@
 //! summary (16), and meeting chat (17).
 
 mod align;
+mod chat;
 mod detect;
 mod diarize;
+mod library;
 mod live;
 mod mic_clients;
 mod ogg;
@@ -19,8 +21,16 @@ mod transcript;
 mod writer;
 
 pub use align::{Channel, StereoAligner, StereoFrame};
+pub use chat::{
+    AnswerBlock, ChatOptions, ChatPrompt, ChatSource, ChatTurn, Citation, ParsedAnswer, ask,
+    chat_prompt, parse_answer, suggested_questions,
+};
 pub use detect::{MeetingApp, MeetingDetector, MicClient, classify_client, parse_pw_dump};
 pub use diarize::{Turn, assign_speakers, split_at_turns, stable_turns};
+pub use library::{
+    MeetingDetail, MeetingEntry, SearchHit, SearchIndex, export_file_name, export_markdown,
+    meeting_detail, meeting_entries, write_export,
+};
 pub use live::{LiveEngines, LiveEvent, LiveOptions, LiveTranscript};
 pub use mic_clients::{mic_clients, other_app_playing};
 pub use process::{MeetingEngines, MeetingPlan, ProcessOptions, ProcessProgress, finish_meeting};
@@ -38,7 +48,8 @@ pub use summary::{
 };
 pub use system_audio::SystemAudioBackend;
 pub use transcript::{
-    Gap, GapReason, Segment, SpeakerId, SpeakerNames, Transcript, parse_timestamp, timestamp,
+    Gap, GapReason, Segment, SpeakerId, SpeakerNames, Transcript, TranscriptRow, parse_timestamp,
+    timestamp,
 };
 pub use writer::MeetingWriter;
 
