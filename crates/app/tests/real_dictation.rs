@@ -191,6 +191,18 @@ fn fillers_come_out_clean_on_balanced() {
 
 #[test]
 #[ignore = "needs models"]
+fn fillers_come_out_clean_on_high() {
+    let flow = start(tier(PipelineTier::High), false);
+    let clip = spoken(FILLERS, flow.data.path());
+
+    let (text, report) = flow.dictate(with_pauses(&clip));
+
+    println!("high: {text:?} {report:?}");
+    assert_eq!(text, "So I think we should ship it.");
+}
+
+#[test]
+#[ignore = "needs models"]
 fn fillers_come_out_clean_on_lite_with_the_llm_off() {
     let flow = start(tier(PipelineTier::Lite), false);
     let clip = spoken(FILLERS, flow.data.path());
@@ -237,10 +249,23 @@ fn a_self_correction_resolves_on_balanced() {
 
 #[test]
 #[ignore = "needs models"]
+fn a_self_correction_resolves_on_high() {
+    let flow = start(tier(PipelineTier::High), false);
+    let clip = spoken(CORRECTION, flow.data.path());
+
+    let (text, report) = flow.dictate(with_pauses(&clip));
+
+    println!("high: {text:?} {report:?}");
+    assert_eq!(text, "I like the blue one.");
+}
+
+#[test]
+#[ignore = "needs models"]
 fn latency_of_a_ten_second_clip() {
     let clip = fixture("speech_mid_phrase_en");
     let ten_seconds = AudioClip::new(clip.samples()[..160_000].to_vec());
     for (name, settings) in [
+        ("high", tier(PipelineTier::High)),
         ("balanced", tier(PipelineTier::Balanced)),
         ("lite", tier(PipelineTier::Lite)),
     ] {

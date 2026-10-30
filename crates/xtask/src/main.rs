@@ -1,6 +1,7 @@
 //! `cargo xtask eval --model model.gguf` scores LLM cleanup against `eval/cleanup.toml`.
-//! Flags: `--rules-only` scores rule cleanup alone, `--dev` skips the holdout cases, and
-//! `--cpu` keeps every layer off the GPU. `cargo xtask bundle` is in [`xtask::bundle`].
+//! Flags: `--rules-only` scores rule cleanup alone, `--dev` skips the holdout cases, `--cpu` keeps
+//! every layer off the GPU, and `--no-language` withholds each case's language, which is what
+//! cleanup gets from Parakeet on auto-detect. `cargo xtask bundle` is in [`xtask::bundle`].
 //!
 //! `cargo xtask-meeting meeting-fixture --out dir` builds the 30-minute meeting with macOS `say`.
 //! `cargo xtask-meeting meeting-run --fixture dir --models dir --out dir` runs it through every
@@ -27,7 +28,10 @@ use xtask::eval::{self, Report, RulesOnly, TARGET};
 fn main() -> anyhow::Result<ExitCode> {
     let mut args = std::env::args().skip(1);
     let Some(task) = args.next() else {
-        bail!("usage: cargo xtask eval [--model model.gguf] [--rules-only] [--dev] [--cpu]");
+        bail!(
+            "usage: cargo xtask eval [--model model.gguf] [--rules-only] [--dev] [--cpu] \
+             [--no-language]"
+        );
     };
     match task.as_str() {
         "eval" => {}
@@ -42,13 +46,14 @@ fn main() -> anyhow::Result<ExitCode> {
     }
 
     let mut model = std::env::var("WF_LLM_MODEL").ok();
-    let (mut rules_only, mut dev, mut cpu) = (false, false, false);
+    let (mut rules_only, mut dev, mut cpu, mut no_language) = (false, false, false, false);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--model" => model = Some(args.next().context("--model needs a path")?),
             "--rules-only" => rules_only = true,
             "--dev" => dev = true,
             "--cpu" => cpu = true,
+            "--no-language" => no_language = true,
             other => bail!("unknown flag {other:?}"),
         }
     }
@@ -57,12 +62,22 @@ fn main() -> anyhow::Result<ExitCode> {
     if dev {
         cases.retain(|case| !case.holdout);
     }
-    let report = if rules_only {
+    // The report still splits by the language really spoken.
+    let spoken: Vec<_> = cases.iter().map(|case| case.language.clone()).collect();
+    if no_language {
+        for case in &mut cases {
+            case.language = None;
+        }
+    }
+    let mut report = if rules_only {
         eval::run(&cases, &mut RulesOnly)
     } else {
         let model = model.context("set --model or WF_LLM_MODEL to a GGUF file")?;
         eval_with_model(&cases, &model, cpu)?
     };
+    for (result, language) in report.results.iter_mut().zip(spoken) {
+        result.language = language;
+    }
     print!("{}", report.render());
     Ok(if report.score() >= TARGET {
         ExitCode::SUCCESS
