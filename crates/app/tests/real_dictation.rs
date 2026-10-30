@@ -6,6 +6,7 @@
 //! them at run time, into a temp folder. Its voices can't be committed (see the fixtures README).
 #![cfg(target_os = "macos")]
 
+use std::collections::HashSet;
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
@@ -232,6 +233,98 @@ fn latency_of_a_ten_second_clip() {
             );
         }
     }
+}
+
+/// Ticket 07 asked for one long clip before Parakeet may run without VAD: at that point nothing
+/// splits the recording at pauses, and a transducer's memory grows with its input.
+#[test]
+#[ignore = "needs models"]
+fn parakeet_keeps_up_with_a_ten_minute_clip_without_vad() {
+    let script = long_script(1_750);
+    let folder = tempfile::tempdir().unwrap();
+    let clip = spoken(&script, folder.path());
+    let minutes = clip.duration().as_secs_f32() / 60.0;
+
+    let mut settings = tier(PipelineTier::Lite);
+    settings.pipeline.vad = false;
+    let flow = start(settings, false);
+    let (text, report) = flow.dictate(clip);
+
+    let heard = |text: &str| -> HashSet<String> { words(text).into_iter().collect() };
+    let said = words(&script);
+    let known = heard(&text);
+    let recall = said.iter().filter(|word| known.contains(*word)).count() as f32;
+    let recall = recall / said.len() as f32;
+    let tail = said
+        .iter()
+        .rev()
+        .take(40)
+        .filter(|word| known.contains(*word));
+    println!(
+        "{minutes:.1} min: release to paste {:?}, {} of {} words back, recall {recall:.3}",
+        report.release_to_insert,
+        words(&text).len(),
+        said.len(),
+    );
+    assert!(recall > 0.95, "recall {recall}");
+    assert!(tail.count() >= 36, "the end of the recording got lost");
+}
+
+/// About `count` words that don't repeat in order, the way nothing else in the fixtures does.
+fn long_script(count: usize) -> String {
+    const WHO: [&str; 6] = [
+        "the engineer",
+        "my sister",
+        "our neighbour",
+        "the driver",
+        "a student",
+        "the mayor",
+    ];
+    const DID: [&str; 6] = [
+        "carried",
+        "painted",
+        "repaired",
+        "described",
+        "photographed",
+        "ordered",
+    ];
+    const WHAT: [&str; 6] = [
+        "a wooden table",
+        "the broken window",
+        "an old bicycle",
+        "the yellow boat",
+        "a small garden",
+        "the kitchen door",
+    ];
+    const WHEN: [&str; 6] = [
+        "before breakfast",
+        "after the storm",
+        "on Tuesday morning",
+        "during the holiday",
+        "late last night",
+        "in early spring",
+    ];
+    let mut script = String::new();
+    let mut seed = 7_usize;
+    while script.split_whitespace().count() < count {
+        let mut pick = |choices: &[&'static str; 6]| {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            choices[(seed >> 16) % 6]
+        };
+        let (who, did, what, when) = (pick(&WHO), pick(&DID), pick(&WHAT), pick(&WHEN));
+        script.push_str(&format!("{who} {did} {what} {when}. "));
+    }
+    script
+}
+
+fn words(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .map(|word| {
+            word.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase()
+        })
+        .filter(|word| !word.is_empty())
+        .collect()
 }
 
 #[test]
