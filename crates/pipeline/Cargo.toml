@@ -14,7 +14,21 @@ wf-core.workspace = true
 thiserror.workspace = true
 sherpa-onnx = { workspace = true, optional = true }
 llama-cpp-2 = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
+whisper-rs = { workspace = true, optional = true }
 
 [features]
 silero = ["dep:sherpa-onnx"]
+sherpa = ["dep:sherpa-onnx", "dep:tempfile"]
+whisper = ["dep:whisper-rs"]
 llama = ["dep:llama-cpp-2"]
+metal = ["whisper-rs?/metal", "llama-cpp-2?/metal"]
+cuda = ["whisper-rs?/cuda", "llama-cpp-2?/cuda"]
+vulkan = ["whisper-rs?/vulkan", "llama-cpp-2?/vulkan"]
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[example]]
+name = "asr"
+required-features = ["whisper", "sherpa", "silero"]

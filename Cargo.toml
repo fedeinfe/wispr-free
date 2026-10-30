@@ -46,9 +46,10 @@ objc2-screen-capture-kit = "0.3.2"
 block2 = "0.6.2"
 
 # Inference (ADR-0003). GPU backends are features: whisper-rs/llama-cpp-2 `metal`, `cuda`, `vulkan`.
+# llama.cpp must stay `dynamic-link`: its ggml can't share a binary with whisper.cpp's.
 sherpa-onnx = "2.0.1"
 whisper-rs = "0.16.0"
-llama-cpp-2 = { version = "0.1.160", default-features = false }
+llama-cpp-2 = { version = "0.1.160", default-features = false, features = ["dynamic-link"] }
 
 # Platform: insertion and context (ticket 04). objc2 0.6 / windows 0.62 / x11rb 0.13 match
 # what Slint already pulls in.

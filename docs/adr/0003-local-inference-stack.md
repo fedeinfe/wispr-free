@@ -33,4 +33,14 @@ Refinements made while verifying:
 
 - Native C/C++ dependencies (whisper.cpp, llama.cpp, onnxruntime) complicate cross-compiling. CI builds on each OS natively.
 - GPU backends are cargo features. Release builds: Metal on macOS; CPU + Vulkan on Windows and Linux, with CUDA as an optional build.
-- `whisper-rs-sys` and `llama-cpp-sys-2` each vendor and statically link their own ggml, so the same `ggml_*` symbols appear twice. On macOS the linker keeps one copy silently (verified: a probe binary linking all three engines builds and runs). This risks a ggml version mismatch at runtime and may be a hard "multiple definition" error with GNU ld. Tickets 07 and 09 must resolve it: build both against one ggml (`llama-cpp-2` has `system-ggml`), keep the ggml revisions aligned, or run one engine out of process.
+- **llama.cpp is built as a shared library (`llama-cpp-2/dynamic-link`); whisper.cpp stays static.** `whisper-rs-sys` vendors ggml 0.9.5 and `llama-cpp-sys-2` vendors ggml 0.26.0, about 530 duplicate symbols with different enums and struct layouts, and neither crate offers a way to share one copy (`whisper-rs-sys` doesn't expose `WHISPER_USE_SYSTEM_GGML`). Linked statically they fail: macOS `ld` keeps one copy of each symbol and llama.cpp aborts on its first context (`GGML_ASSERT(a->op == GGML_OP_FLASH_ATTN_EXT)`), and GNU `ld` refuses with `multiple definition`. Ticket 01's probe linked and started but never ran inference, so it missed this.
+- Each engine now has its own ggml in one process, which needs two linker settings in `.cargo/config.toml`. On Linux `-Wl,--exclude-libs,ALL` keeps the executable's static ggml out of its dynamic symbol table; without it `libllama.so` binds to the older copy and aborts the same way, even though it links cleanly. An rpath to the executable's folder lets the binary start outside `cargo run`, which hides a missing one by setting the library path.
+- **The app is no longer a single file** (spec goal 4). `libllama`, `libllama-common` and `libggml*` (15 MB on macOS with Metal) ship beside the binary, or in `Contents/Frameworks` with a matching rpath in the app bundle. Ticket 18 packages them.
+
+| Linked with both engines | macOS arm64 (Metal) | Linux arm64 (CPU, GNU ld) | Windows |
+|---|---|---|---|
+| Both static | links, llama.cpp aborts | link error | not tested |
+| llama.cpp shared | works | links, llama.cpp aborts | not tested |
+| llama.cpp shared + `.cargo/config.toml` | **works** | **works** | not tested |
+
+"Works" means real inference through whisper.cpp, llama.cpp and sherpa-onnx in one process, in both orders, with text output checked. Windows is the open risk: `ggml.lib` would exist both as a static library and as an import library, so check it the first time Windows builds both engines. If the shared library ever stops being enough, the fallback is running llama.cpp in a helper process.
