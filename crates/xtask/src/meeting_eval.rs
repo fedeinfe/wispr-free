@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use wf_meetings::{ActionItem, Summary};
 
 const SCRIPT: &str = include_str!("../eval/meeting.toml");
+const HOLDOUT: &str = include_str!("../eval/meeting_holdout.toml");
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -16,6 +17,10 @@ pub struct MeetingScript {
     /// Who is on the mic. Everyone else shares the system channel.
     pub you: String,
     pub voices: BTreeMap<String, String>,
+    /// Phrases for where a discussion started and didn't end. A summary presenting one of these
+    /// as the outcome is wrong, however many right lines sit next to it.
+    #[serde(default)]
+    pub stale: Vec<String>,
     #[serde(default)]
     pub decisions: Vec<KnownDecision>,
     #[serde(default)]
@@ -53,6 +58,11 @@ pub struct KnownAction {
 impl MeetingScript {
     pub fn bundled() -> anyhow::Result<Self> {
         toml::from_str(SCRIPT).context("eval/meeting.toml")
+    }
+
+    /// Kept out of prompt tuning. Transcript only, there's no audio for it.
+    pub fn holdout() -> anyhow::Result<Self> {
+        toml::from_str(HOLDOUT).context("eval/meeting_holdout.toml")
     }
 
     /// (who, what they say) in order.
@@ -93,6 +103,8 @@ pub struct Score {
     /// Summary lines that match nothing known. Not all wrong: read them.
     pub extra_decisions: Vec<String>,
     pub extra_actions: Vec<String>,
+    /// Decision lines, and the TL;DR, that still give an outcome the meeting took back.
+    pub stale: Vec<String>,
 }
 
 impl Score {
@@ -140,7 +152,15 @@ impl Score {
                 action.line.as_deref().unwrap_or("-")
             );
         }
-        let _ = writeln!(text, "lines matching nothing known:");
+        let _ = writeln!(text, "stale outcomes still shown: {}", self.stale.len());
+        for line in &self.stale {
+            let _ = writeln!(text, "  ! {line}");
+        }
+        let _ = writeln!(
+            text,
+            "lines matching nothing known: {}",
+            self.extra_decisions.len() + self.extra_actions.len()
+        );
         for line in self.extra_decisions.iter().chain(&self.extra_actions) {
             let _ = writeln!(text, "  ? {line}");
         }
@@ -196,6 +216,21 @@ pub fn score_summary(script: &MeetingScript, summary: &Summary) -> Score {
             },
         });
     }
+    let is_stale = |line: &str| {
+        let line = line.to_lowercase();
+        script
+            .stale
+            .iter()
+            .any(|phrase| line.contains(phrase.as_str()))
+    };
+    score.stale = summary
+        .decisions
+        .iter()
+        .map(|item| item.text.as_str())
+        .chain(std::iter::once(summary.tldr.as_str()))
+        .filter(|line| is_stale(line))
+        .map(str::to_owned)
+        .collect();
     score.extra_decisions = summary
         .decisions
         .iter()

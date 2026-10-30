@@ -9,6 +9,7 @@
 # where they were settled, and three of them change on the way.
 
 you = "Elena"
+stale = ["november 4", "paddle", "three projects", "android 9", "android 10"]
 
 [voices]
 Elena = "Samantha"

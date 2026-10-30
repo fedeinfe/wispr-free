@@ -7,7 +7,8 @@
 //! stage on the Balanced tier and scores the summary. Flags: `--realtime` paces the audio like
 //! a real meeting, `--tier lite|balanced|high` picks another tier.
 //! `meeting-summary` and `meeting-diarize` redo one stage on the newest meeting in `--out`, for
-//! tuning. `meeting-diarize` takes `--threshold`, `--shift` and `--embedding`.
+//! tuning. `meeting-diarize` takes `--threshold`, `--shift` and `--embedding`. `meeting-holdout`
+//! summarizes a transcript the prompts were never tuned on.
 
 use std::process::ExitCode;
 
@@ -21,7 +22,8 @@ fn main() -> anyhow::Result<ExitCode> {
     };
     match task.as_str() {
         "eval" => {}
-        "meeting-fixture" | "meeting-run" | "meeting-summary" | "meeting-diarize" => {
+        "meeting-fixture" | "meeting-run" | "meeting-summary" | "meeting-diarize"
+        | "meeting-holdout" => {
             return meeting_task(&task, args);
         }
         _ => bail!("unknown task {task:?}"),
@@ -97,7 +99,7 @@ fn meeting_run(
     out: &std::path::Path,
 ) -> anyhow::Result<ExitCode> {
     use wf_models::Tier;
-    use xtask::meeting_run::{RunOptions, rediarize, resummarize, run};
+    use xtask::meeting_run::{RunOptions, holdout, rediarize, resummarize, run};
 
     let path = |flag: &str| -> anyhow::Result<std::path::PathBuf> {
         Ok(flags
@@ -123,6 +125,7 @@ fn meeting_run(
     };
     let report = match task {
         "meeting-summary" => resummarize(&options)?,
+        "meeting-holdout" => holdout(&options)?,
         "meeting-diarize" => rediarize(
             &options,
             number("--threshold")?,

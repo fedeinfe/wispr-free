@@ -52,9 +52,10 @@ pub fn read_wav(path: &Path) -> anyhow::Result<Vec<f32>> {
         let size = u32::from_le_bytes(bytes[at + 4..at + 8].try_into()?) as usize;
         if &bytes[at..at + 4] == b"data" {
             let end = (at + 8 + size).min(bytes.len());
-            return Ok(bytes[at + 8..end]
-                .chunks_exact(2)
-                .map(|pair| f32::from(i16::from_le_bytes([pair[0], pair[1]])) / 32_768.0)
+            let (samples, _) = bytes[at + 8..end].as_chunks::<2>();
+            return Ok(samples
+                .iter()
+                .map(|&sample| f32::from(i16::from_le_bytes(sample)) / 32_768.0)
                 .collect());
         }
         at += 8 + size + size % 2;

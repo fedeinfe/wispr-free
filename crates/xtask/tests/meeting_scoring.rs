@@ -7,6 +7,7 @@ fn script() -> MeetingScript {
     toml::from_str(
         r#"
         you = "Elena"
+        stale = ["november 4"]
         [voices]
         Elena = "Samantha"
         [script]
@@ -167,6 +168,21 @@ fn lines_about_nothing_known_are_listed_as_extras() {
 
     assert_eq!(score.extra_decisions, ["We bought a boat."]);
     assert_eq!(score.extra_actions, ["paint the boat"]);
+}
+
+/// A right line doesn't make up for the wrong one beside it, and the TL;DR is read first.
+#[test]
+fn an_outcome_the_meeting_took_back_is_counted_even_next_to_the_right_one() {
+    let mut summary = summary(
+        &["We ship on November 18.", "Keep November 4 on the board."],
+        Vec::new(),
+    );
+    summary.tldr = "Version three ships on November 4.".to_owned();
+
+    let score = score_summary(&script(), &summary);
+
+    assert_eq!(score.decisions_right(), 1);
+    assert_eq!(score.stale.len(), 2);
 }
 
 #[test]

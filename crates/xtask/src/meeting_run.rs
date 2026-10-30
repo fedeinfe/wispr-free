@@ -12,9 +12,9 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use wf_core::audio::FRAME_SAMPLES;
 use wf_meetings::{
-    Channel, LiveEngines, LiveEvent, LiveOptions, LiveTranscript, Meeting, MeetingEngines,
+    Channel, LiveEngines, LiveEvent, LiveLog, LiveOptions, LiveTranscript, Meeting, MeetingEngines,
     MeetingPlan, MeetingStore, MeetingWriter, ProcessOptions, ProcessProgress, Segment, SpeakerId,
-    Stage, StereoFrame, SummaryMode, SummaryOptions, TimelineFrame, Transcript, Turn,
+    Stage, StereoFrame, Summary, SummaryMode, SummaryOptions, TimelineFrame, Transcript, Turn,
     finish_meeting, generate_summary, stable_turns,
 };
 use wf_models::{Catalog, ModelEntry, ModelFile, Tier};
@@ -383,9 +383,53 @@ pub fn resummarize(options: &RunOptions) -> anyhow::Result<String> {
         &mut |_| {},
     )?;
     let summary = meeting.summary()?.unwrap_or(summary);
+    Ok(render_summary(&summary, &script, started.elapsed()))
+}
+
+/// Summarizes the holdout transcript. There's no audio, so it goes straight into a live log with
+/// the labels diarization would have left, 8 s to a turn.
+pub fn holdout(options: &RunOptions) -> anyhow::Result<String> {
+    let script = MeetingScript::holdout()?;
+    let store = MeetingStore::new(&options.out);
+    let mut meeting = store.create()?;
+    let mut log = LiveLog::open(&meeting)?;
+    for (n, (who, text)) in script.turns().iter().enumerate() {
+        let start_ms = n as u64 * 8_000;
+        let speaker = who.strip_prefix('S').and_then(|n| n.parse().ok());
+        log.segment(&Segment {
+            channel: if speaker.is_some() {
+                Channel::Others
+            } else {
+                Channel::You
+            },
+            speaker: speaker.map(SpeakerId),
+            start_ms,
+            end_ms: start_ms + 7_000,
+            text: text.clone(),
+        })?;
+    }
+    let mut engines = RealEngines::new(&options.models, options.tier);
+    let id = meeting.record().id.clone();
+    let mut llm = LoggedLlm {
+        inner: engines.llm()?,
+        path: options.out.join(&id).join("llm.log"),
+    };
+    let started = Instant::now();
+    let summary = generate_summary(
+        &mut meeting,
+        &mut llm,
+        SummaryMode::Regenerate,
+        &SummaryOptions::default(),
+        &AtomicBool::new(false),
+        &mut |_| {},
+    )?;
+    Ok(render_summary(&summary, &script, started.elapsed()))
+}
+
+fn render_summary(summary: &Summary, script: &MeetingScript, spent: Duration) -> String {
     let mut report = format!(
         "{:.1} s, partial {}\nTITLE {:?}\nTLDR {}\n",
-        started.elapsed().as_secs_f64(),
+        spent.as_secs_f64(),
         summary.partial,
         summary.title,
         summary.tldr
@@ -393,8 +437,8 @@ pub fn resummarize(options: &RunOptions) -> anyhow::Result<String> {
     for item in &summary.key_points {
         let _ = writeln!(report, "key point: {}", item.text);
     }
-    report.push_str(&score_summary(&script, &summary).render());
-    Ok(report)
+    report.push_str(&score_summary(script, summary).render());
+    report
 }
 
 /// Runs diarization alone on the newest meeting's audio, for choosing its settings.
