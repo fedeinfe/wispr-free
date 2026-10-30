@@ -1,6 +1,7 @@
 //! Engines in child processes (ADR-0005). Native engines don't give their memory back when dropped,
 //! so an engine lives in its own short-lived process and unloading it ends that process. The same
 //! wall keeps a crash in an engine, such as a read from an unplugged drive, away from the app.
+//! There are four kinds of host: VAD, ASR, LLM and diarization.
 //!
 //! [`serve`] is the child's side, and [`ChildEngines`] the app's. A message is a JSON header and
 //! raw samples, each with a length in front. One call runs at a time.
@@ -15,10 +16,13 @@ use std::time::{Duration, Instant};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use wf_core::audio::AudioClip;
-use wf_pipeline::{Asr, AsrOptions, Llm, LlmPrompt, PipelineError, SpeechSegment, Transcript, Vad};
+use wf_pipeline::{
+    Asr, AsrOptions, Diarizer, Llm, LlmPrompt, PipelineError, SpeakerTurn, SpeechSegment,
+    Transcript, Vad,
+};
 
 use crate::engines::Engines;
-use crate::plan::{AsrModel, LlmModel};
+use crate::plan::{AsrModel, DiarizerModel, LlmModel};
 
 /// The argument that turns the app's binary into an engine host.
 pub const ENGINE_HOST_ARG: &str = "--engine-host";
@@ -29,7 +33,14 @@ pub enum EngineSpec {
     Silero(PathBuf),
     Whisper(PathBuf),
     Sherpa(PathBuf),
-    Llama { file: PathBuf, in_ram: bool },
+    Llama {
+        file: PathBuf,
+        in_ram: bool,
+    },
+    Diarizer {
+        segmentation: PathBuf,
+        embedding: PathBuf,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,6 +62,8 @@ enum Call {
         /// How long from now the caller will wait.
         timeout_ms: Option<u64>,
     },
+    /// The samples follow the header.
+    Diarize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -66,6 +79,8 @@ enum Reply {
     },
     Token(String),
     Completion(String),
+    /// Start and end in milliseconds, and the engine's number for the voice.
+    Turns(Vec<(u64, u64, u32)>),
     Failed(Failure),
 }
 
@@ -81,6 +96,7 @@ impl From<PipelineError> for Failure {
         match error {
             PipelineError::ModelMissing(model) => Self::ModelMissing(model),
             PipelineError::Timeout => Self::Timeout,
+            PipelineError::Cancelled => Self::Engine("cancelled".to_owned()),
             PipelineError::Engine(message) => Self::Engine(message),
         }
     }
@@ -144,6 +160,7 @@ pub enum Hosted {
     Vad(Box<dyn Vad>),
     Asr(Box<dyn Asr>),
     Llm(Box<dyn Llm>),
+    Diarizer(Box<dyn Diarizer>),
 }
 
 pub type LoadEngine = dyn FnMut(&EngineSpec) -> Result<Hosted, PipelineError>;
@@ -229,6 +246,20 @@ fn answer(
             }
             match result {
                 Ok(text) => Reply::Completion(text),
+                Err(error) => failed(error),
+            }
+        }
+        (Call::Diarize, Some(Hosted::Diarizer(diarizer))) => {
+            match diarizer.diarize(&AudioClip::new(samples)) {
+                Ok(turns) => Reply::Turns(
+                    turns
+                        .iter()
+                        .map(|turn| {
+                            let (start, end) = (turn.start.as_millis(), turn.end.as_millis());
+                            (start as u64, end as u64, turn.speaker)
+                        })
+                        .collect(),
+                ),
                 Err(error) => failed(error),
             }
         }
@@ -393,6 +424,24 @@ impl Llm for RemoteLlm {
     }
 }
 
+struct RemoteDiarizer(Connection);
+
+impl Diarizer for RemoteDiarizer {
+    fn diarize(&mut self, clip: &AudioClip) -> Result<Vec<SpeakerTurn>, PipelineError> {
+        match self.0.call(&Call::Diarize, clip.samples())? {
+            Reply::Turns(turns) => Ok(turns
+                .into_iter()
+                .map(|(start, end, speaker)| SpeakerTurn {
+                    start: Duration::from_millis(start),
+                    end: Duration::from_millis(end),
+                    speaker,
+                })
+                .collect()),
+            _ => Err(self.0.unexpected()),
+        }
+    }
+}
+
 /// [`Engines`] that run in hosts started from `executable`, the app's own binary.
 pub struct ChildEngines {
     executable: PathBuf,
@@ -461,6 +510,14 @@ impl Engines for ChildEngines {
         Ok(Box::new(RemoteLlm(self.start(spec, "cleanup")?)))
     }
 
+    fn diarizer(&self, model: &DiarizerModel) -> Result<Box<dyn Diarizer>, PipelineError> {
+        let spec = EngineSpec::Diarizer {
+            segmentation: model.segmentation.clone(),
+            embedding: model.embedding.clone(),
+        };
+        Ok(Box::new(RemoteDiarizer(self.start(spec, "speaker")?)))
+    }
+
     fn interrupt(&self) {
         let running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
         running
@@ -469,10 +526,15 @@ impl Engines for ChildEngines {
             .filter(|process| process.busy.load(Ordering::SeqCst))
             .for_each(|process| process.kill());
     }
+
+    fn scope(&self) -> Arc<dyn Engines> {
+        Arc::new(Self::new(self.executable.clone()))
+    }
 }
 
 /// Loads the real engines. Runs in the host process.
 pub fn load_engine(spec: &EngineSpec) -> Result<Hosted, PipelineError> {
+    use wf_pipeline::diarization::{DiarizationConfig, SherpaDiarizer};
     use wf_pipeline::llama::{LlamaConfig, LlamaEngine};
     use wf_pipeline::sherpa::SherpaAsr;
     use wf_pipeline::silero::SileroVad;
@@ -488,6 +550,13 @@ pub fn load_engine(spec: &EngineSpec) -> Result<Hosted, PipelineError> {
                 ..LlamaConfig::new(file)
             })?))
         }
+        EngineSpec::Diarizer {
+            segmentation,
+            embedding,
+        } => Hosted::Diarizer(Box::new(SherpaDiarizer::new(&DiarizationConfig::new(
+            segmentation,
+            embedding,
+        ))?)),
     })
 }
 
@@ -556,11 +625,33 @@ mod tests {
         }
     }
 
+    /// One voice for the first half of the clip, another for the rest.
+    struct TwoVoices;
+
+    impl Diarizer for TwoVoices {
+        fn diarize(&mut self, clip: &AudioClip) -> Result<Vec<SpeakerTurn>, PipelineError> {
+            let half = clip.duration() / 2;
+            Ok(vec![
+                SpeakerTurn {
+                    start: Duration::ZERO,
+                    end: half,
+                    speaker: 0,
+                },
+                SpeakerTurn {
+                    start: half,
+                    end: clip.duration(),
+                    speaker: 1,
+                },
+            ])
+        }
+    }
+
     fn load(spec: &EngineSpec) -> Result<Hosted, PipelineError> {
         match spec {
             EngineSpec::Silero(_) => Ok(Hosted::Vad(Box::new(ScriptedVad))),
             EngineSpec::Whisper(_) => Ok(Hosted::Asr(Box::new(EchoLengthAsr))),
             EngineSpec::Llama { .. } => Ok(Hosted::Llm(Box::new(TwoTokenLlm))),
+            EngineSpec::Diarizer { .. } => Ok(Hosted::Diarizer(Box::new(TwoVoices))),
             EngineSpec::Sherpa(dir) => Err(PipelineError::ModelMissing(dir.display().to_string())),
         }
     }
@@ -653,6 +744,23 @@ mod tests {
         assert!(matches!(first, Reply::Token(token) if token == "he"));
         assert!(matches!(host.reply(), Reply::Token(token) if token == "llo"));
         assert!(matches!(host.reply(), Reply::Completion(text) if text == "hello"));
+    }
+
+    #[test]
+    fn who_speaks_when_comes_back_with_its_times() {
+        let mut host = Host::start();
+        host.load(EngineSpec::Diarizer {
+            segmentation: "s".into(),
+            embedding: "e".into(),
+        });
+
+        let second = vec![0.0; 16_000];
+        let reply = host.call(Call::Diarize, &second);
+
+        let Reply::Turns(turns) = reply else {
+            panic!("{reply:?}");
+        };
+        assert_eq!(turns, [(0, 500, 0), (500, 1_000, 1)]);
     }
 
     #[test]

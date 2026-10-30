@@ -6,24 +6,27 @@ use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 use wf_audio::CaptureEvent;
-use wf_core::audio::{AudioClip, FRAME_SAMPLES};
+use wf_core::audio::{AudioClip, FRAME_MS, FRAME_SAMPLES};
 use wf_core::pill::PillState;
 use wf_core::settings::{KeepModels, PipelineTier, Settings};
 use wf_core::shortcut::{Bindings, Key, KeyEvent, Platform};
-use wf_dictation::plan::{AsrModel, LlmModel};
+use wf_dictation::plan::{AsrModel, DiarizerModel, LlmModel};
 use wf_dictation::{
     Clock, Dictation, Engines, Event, Insertion, MeetingRoom, MeetingTape, MicStream, Microphone,
     Parts,
 };
-use wf_meetings::{MeetingEvent, MicClient};
+use wf_meetings::{MeetingEvent, MeetingWriter, MicClient, StereoFrame, TimelineFrame};
 use wf_models::Catalog;
-use wf_pipeline::{Asr, AsrOptions, Llm, LlmPrompt, PipelineError, SpeechSegment, Transcript, Vad};
+use wf_pipeline::{
+    Asr, AsrOptions, Diarizer, Llm, LlmPrompt, PipelineError, SpeakerTurn, SpeechSegment,
+    Transcript, Vad,
+};
 use wf_platform::context::{AppIdentity, Context, ContextDepth, ContextSource, Focus, TextAround};
 use wf_platform::insert::{CopyReason, InsertError, InsertOutcome, PasteChord};
 use wf_platform::keys::KeySignal;
@@ -227,10 +230,14 @@ pub struct Probe {
     pub vad_loads: AtomicUsize,
     pub asr_loads: AtomicUsize,
     pub llm_loads: AtomicUsize,
+    pub diarizer_loads: AtomicUsize,
     pub vad_alive: AtomicUsize,
     pub asr_alive: AtomicUsize,
     pub llm_alive: AtomicUsize,
+    pub diarizer_alive: AtomicUsize,
     pub interrupts: AtomicUsize,
+    /// Interrupts of anything but the dictation's own engines.
+    pub scoped_interrupts: AtomicUsize,
     pub asr_model: Mutex<Option<AsrModel>>,
     pub llm_model: Mutex<Option<LlmModel>>,
     pub clips: Mutex<Vec<AudioClip>>,
@@ -242,7 +249,11 @@ pub struct Probe {
     pub llm_prompts: Mutex<Vec<String>>,
     pub asr_gate: Gate,
     pub llm_gate: Gate,
+    pub diarizer_gate: Gate,
     pub fail_asr_load: AtomicBool,
+    pub fail_diarizer: AtomicBool,
+    /// Answers the summary's prompts with what they ask for.
+    pub writes_summaries: AtomicBool,
 }
 
 impl Probe {
@@ -315,14 +326,28 @@ impl Llm for FakeLlm {
     fn generate(
         &mut self,
         prompt: &LlmPrompt,
-        _on_token: &mut dyn FnMut(&str),
+        on_token: &mut dyn FnMut(&str),
     ) -> Result<String, PipelineError> {
         self.probe
             .llm_prompts
             .lock()
             .unwrap()
-            .push(prompt.user.clone());
+            .push(format!("{}\n{}", prompt.system, prompt.user));
+        on_token("streaming ");
+        let interrupts = self.probe.scoped_interrupts.load(Ordering::SeqCst);
         self.probe.llm_gate.pass();
+        if self.probe.scoped_interrupts.load(Ordering::SeqCst) > interrupts {
+            return Err(PipelineError::Engine("the model was killed".into()));
+        }
+        if self.probe.writes_summaries.load(Ordering::SeqCst) {
+            let notes = "KEY POINTS\n- we ship on friday\nDECISIONS\n- none\nACTIONS\n- none";
+            if prompt.system.contains("TITLE:") {
+                return Ok("TITLE: The launch\nTLDR: we ship on friday".to_owned());
+            }
+            if prompt.system.contains("KEY POINTS") {
+                return Ok(notes.to_owned());
+            }
+        }
         let reply = self.probe.llm_reply.lock().unwrap().clone();
         reply.ok_or_else(|| PipelineError::Engine("the model fell over".into()))
     }
@@ -334,7 +359,37 @@ impl Drop for FakeLlm {
     }
 }
 
-pub struct FakeEngines(pub Arc<Probe>);
+/// One voice all the way through.
+struct FakeDiarizer {
+    probe: Arc<Probe>,
+}
+
+impl Diarizer for FakeDiarizer {
+    fn diarize(&mut self, clip: &AudioClip) -> Result<Vec<SpeakerTurn>, PipelineError> {
+        let interrupts = self.probe.scoped_interrupts.load(Ordering::SeqCst);
+        self.probe.diarizer_gate.pass();
+        if self.probe.scoped_interrupts.load(Ordering::SeqCst) > interrupts {
+            return Err(PipelineError::Engine("the speaker engine stopped".into()));
+        }
+        if self.probe.fail_diarizer.load(Ordering::SeqCst) {
+            return Err(PipelineError::Engine("the speakers got mixed up".into()));
+        }
+        Ok(vec![SpeakerTurn {
+            start: Duration::ZERO,
+            end: clip.duration(),
+            speaker: 0,
+        }])
+    }
+}
+
+impl Drop for FakeDiarizer {
+    fn drop(&mut self) {
+        self.probe.diarizer_alive.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// `false` for the engines of a dictation, `true` for every scope cut from them.
+pub struct FakeEngines(pub Arc<Probe>, pub bool);
 
 impl Engines for FakeEngines {
     fn vad(&self, _model: &Path) -> Result<Box<dyn Vad>, PipelineError> {
@@ -369,10 +424,27 @@ impl Engines for FakeEngines {
         }))
     }
 
+    fn diarizer(&self, _model: &DiarizerModel) -> Result<Box<dyn Diarizer>, PipelineError> {
+        self.0.diarizer_loads.fetch_add(1, Ordering::SeqCst);
+        self.0.diarizer_alive.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::new(FakeDiarizer {
+            probe: Arc::clone(&self.0),
+        }))
+    }
+
     fn interrupt(&self) {
-        self.0.interrupts.fetch_add(1, Ordering::SeqCst);
-        self.0.asr_gate.open();
-        self.0.llm_gate.open();
+        if self.1 {
+            self.0.scoped_interrupts.fetch_add(1, Ordering::SeqCst);
+            self.0.llm_gate.open();
+            self.0.diarizer_gate.open();
+        } else {
+            self.0.interrupts.fetch_add(1, Ordering::SeqCst);
+            self.0.asr_gate.open();
+        }
+    }
+
+    fn scope(&self) -> Arc<dyn Engines> {
+        Arc::new(Self(Arc::clone(&self.0), true))
     }
 }
 
@@ -423,7 +495,11 @@ impl Insertion for FakeInsertion {
     }
 }
 
-/// Keeps what a meeting would have recorded out of reach of the real devices.
+type Writer = Arc<Mutex<Option<MeetingWriter>>>;
+type Timeline = Arc<Mutex<Option<SyncSender<TimelineFrame>>>>;
+
+/// Keeps what a meeting would have recorded out of reach of the real devices. The file is real,
+/// because what follows the recording reads it.
 #[derive(Default)]
 pub struct FakeRoom {
     pub started: AtomicUsize,
@@ -433,6 +509,9 @@ pub struct FakeRoom {
     pub clients: Mutex<Vec<MicClient>>,
     pub playing: AtomicBool,
     feed: Mutex<Option<Sender<MeetingEvent>>>,
+    timeline: Timeline,
+    writer: Writer,
+    frames: AtomicUsize,
 }
 
 impl FakeRoom {
@@ -440,11 +519,45 @@ impl FakeRoom {
         let feed = self.feed.lock().unwrap();
         feed.as_ref().expect("a meeting is on").send(event).unwrap();
     }
+
+    /// Plays both channels into the file and the live transcript, as the recorder would.
+    pub fn play(&self, you: &AudioClip, others: &AudioClip) {
+        let padded = |clip: &AudioClip, at: usize| {
+            let samples = clip.samples();
+            let mut frame = samples[at.min(samples.len())..]
+                .iter()
+                .take(FRAME_SAMPLES)
+                .copied()
+                .collect::<Vec<_>>();
+            frame.resize(FRAME_SAMPLES, 0.0);
+            frame
+        };
+        let longest = you.samples().len().max(others.samples().len());
+        for at in (0..longest).step_by(FRAME_SAMPLES) {
+            let frame = StereoFrame {
+                you: padded(you, at),
+                others: padded(others, at),
+            };
+            let mut writer = self.writer.lock().unwrap();
+            let writer = writer.as_mut().expect("a meeting is on");
+            writer.write_frame(&frame.you, &frame.others).unwrap();
+            let index = self.frames.fetch_add(1, Ordering::SeqCst) as u64;
+            if let Some(timeline) = &*self.timeline.lock().unwrap() {
+                let _ = timeline.send(TimelineFrame { index, frame });
+            }
+        }
+    }
+
+    pub fn played(&self) -> Duration {
+        Duration::from_millis(self.frames.load(Ordering::SeqCst) as u64 * u64::from(FRAME_MS))
+    }
 }
 
 struct FakeTape {
     events: Receiver<MeetingEvent>,
     stopped: Arc<AtomicUsize>,
+    writer: Writer,
+    timeline: Timeline,
 }
 
 impl MeetingTape for FakeTape {
@@ -452,18 +565,31 @@ impl MeetingTape for FakeTape {
         &self.events
     }
 
-    fn stop(self: Box<Self>) -> Result<(), String> {
+    fn stop(self: Box<Self>) -> Result<Duration, String> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
-        Ok(())
+        self.timeline.lock().unwrap().take();
+        let writer = self.writer.lock().unwrap().take();
+        writer
+            .expect("a meeting is on")
+            .finish()
+            .map_err(|error| error.to_string())
     }
 }
 
 impl MeetingRoom for FakeRoom {
-    fn record(&self, path: PathBuf, _ranking: Vec<String>) -> Result<Box<dyn MeetingTape>, String> {
+    fn record(
+        &self,
+        path: PathBuf,
+        _ranking: Vec<String>,
+        timeline: Option<SyncSender<TimelineFrame>>,
+    ) -> Result<Box<dyn MeetingTape>, String> {
         if self.refuse.load(Ordering::SeqCst) {
             return Err("the disk said no".into());
         }
-        fs::write(&path, "pretend audio").unwrap();
+        let writer = MeetingWriter::create(&path).map_err(|error| error.to_string())?;
+        *self.writer.lock().unwrap() = Some(writer);
+        *self.timeline.lock().unwrap() = timeline;
+        self.frames.store(0, Ordering::SeqCst);
         self.paths.lock().unwrap().push(path);
         self.started.fetch_add(1, Ordering::SeqCst);
         let (feed, events) = mpsc::channel();
@@ -471,6 +597,8 @@ impl MeetingRoom for FakeRoom {
         Ok(Box::new(FakeTape {
             events,
             stopped: Arc::clone(&self.stopped),
+            writer: Arc::clone(&self.writer),
+            timeline: Arc::clone(&self.timeline),
         }))
     }
 
@@ -521,6 +649,8 @@ pub const PARAKEET: &str = "parakeet-tdt-0.6b-v3-int8";
 pub const WHISPER: &str = "whisper-small-q8_0";
 pub const SILERO: &str = "silero-vad-v5";
 pub const QWEN: &str = "qwen3-1.7b-q4_k_m";
+pub const SEGMENTATION: &str = "pyannote-segmentation-3.0-int8";
+pub const EMBEDDING: &str = "eres2net-voxceleb";
 
 /// Rules only, on Parakeet with VAD, so most tests need no LLM.
 pub fn base_settings() -> Settings {
@@ -552,7 +682,10 @@ pub struct Rig {
 
 impl Rig {
     pub fn new(settings: Settings) -> Self {
-        Self::build(settings, &[PARAKEET, WHISPER, SILERO, QWEN])
+        Self::build(
+            settings,
+            &[PARAKEET, WHISPER, SILERO, QWEN, SEGMENTATION, EMBEDDING],
+        )
     }
 
     pub fn build(settings: Settings, installed: &[&str]) -> Self {
@@ -582,7 +715,7 @@ impl Rig {
             meetings: data.path().join("meetings"),
             microphone: Arc::clone(&mic) as Arc<dyn Microphone>,
             meeting_room: Arc::clone(&room) as Arc<dyn MeetingRoom>,
-            engines: Arc::new(FakeEngines(Arc::clone(&probe))),
+            engines: Arc::new(FakeEngines(Arc::clone(&probe), false)),
             context: Arc::clone(&context) as Arc<dyn ContextSource + Send + Sync>,
             insertion: Box::new(move || Box::new(FakeInsertion(insertion_log))),
             clock: Arc::clone(&clock) as Arc<dyn Clock>,

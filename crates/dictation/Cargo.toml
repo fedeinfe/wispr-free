@@ -11,7 +11,7 @@ publish.workspace = true
 [dependencies]
 wf-core.workspace = true
 wf-audio.workspace = true
-wf-pipeline = { workspace = true, features = ["silero", "whisper", "sherpa", "llama"] }
+wf-pipeline = { workspace = true, features = ["silero", "whisper", "sherpa", "diarization", "llama"] }
 wf-platform.workspace = true
 wf-models.workspace = true
 wf-history.workspace = true

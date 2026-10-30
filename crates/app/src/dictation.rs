@@ -93,7 +93,7 @@ fn show(pill: &PillController, tray: &Weak<Tray>, event: Event) {
             }
         }
         Event::SuggestMeeting(app) => pill.suggest_meeting(app),
-        Event::Trial(_) | Event::Inserted(_) => {}
+        Event::Trial(_) | Event::Inserted(_) | Event::Meetings(_) => {}
     }
 }
 

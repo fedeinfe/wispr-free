@@ -5,7 +5,8 @@
 use std::path::PathBuf;
 
 use wf_core::settings::{PipelineTier, Settings};
-use wf_models::{Catalog, Engine, ModelEntry, ModelStatus, ModelStore, Tier};
+use wf_meetings::MeetingPlan;
+use wf_models::{Catalog, Engine, ModelEntry, ModelKind, ModelStatus, ModelStore, Tier};
 
 /// The tier's own stages and models, or `None` for Custom.
 pub fn preset_tier(tier: PipelineTier) -> Option<Tier> {
@@ -66,6 +67,13 @@ pub struct LlmModel {
     pub in_ram: bool,
 }
 
+/// Diarization's two files.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DiarizerModel {
+    pub segmentation: PathBuf,
+    pub embedding: PathBuf,
+}
+
 /// The files one dictation runs on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
@@ -79,20 +87,9 @@ pub struct Plan {
 
 /// Works out the [`Plan`]. The error is written for the pill's tooltip.
 pub fn plan(settings: &Settings, catalog: &Catalog, store: &ModelStore) -> Result<Plan, String> {
-    if !store.available() {
-        return Err(format!(
-            "Models folder not connected: {}",
-            store.root().display()
-        ));
-    }
+    check_folder(store)?;
     let [asr, vad, llm] = effective_models(settings, catalog);
-    let asr = installed(asr.as_deref(), "speech", catalog, store)?;
-    let asr_dir = store.model_dir(&asr.id);
-    let asr_model = match asr.engine {
-        Engine::WhisperCpp => AsrModel::Whisper(asr_dir.join(&asr.files[0].name)),
-        Engine::SherpaOnnx => AsrModel::Sherpa(asr_dir),
-        Engine::LlamaCpp => return Err(format!("{} can't transcribe", asr.name)),
-    };
+    let asr_model = asr_model(asr.as_deref(), catalog, store)?;
     let vad = if vad_on(settings, catalog) {
         let vad = installed(vad.as_deref(), "voice detection", catalog, store)?;
         Some(store.model_dir(&vad.id).join(&vad.files[0].name))
@@ -104,13 +101,7 @@ pub fn plan(settings: &Settings, catalog: &Catalog, store: &ModelStore) -> Resul
     let (llm, llm_problem) = match llm.filter(|_| wants_llm) {
         None => (None, None),
         Some(id) => match installed(Some(&id), "cleanup", catalog, store) {
-            Ok(model) => {
-                let llm = LlmModel {
-                    file: store.model_dir(&model.id).join(&model.files[0].name),
-                    in_ram: settings.pipeline.models_folder.is_some(),
-                };
-                (Some(llm), None)
-            }
+            Ok(model) => (Some(llm_model(model, settings, store)), None),
             Err(problem) => (None, Some(problem)),
         },
     };
@@ -120,6 +111,120 @@ pub fn plan(settings: &Settings, catalog: &Catalog, store: &ModelStore) -> Resul
         llm,
         llm_problem,
     })
+}
+
+fn asr_model(id: Option<&str>, catalog: &Catalog, store: &ModelStore) -> Result<AsrModel, String> {
+    let asr = installed(id, "speech", catalog, store)?;
+    let dir = store.model_dir(&asr.id);
+    match asr.engine {
+        Engine::WhisperCpp => Ok(AsrModel::Whisper(dir.join(&asr.files[0].name))),
+        Engine::SherpaOnnx => Ok(AsrModel::Sherpa(dir)),
+        Engine::LlamaCpp => Err(format!("{} can't transcribe", asr.name)),
+    }
+}
+
+fn llm_model(model: &ModelEntry, settings: &Settings, store: &ModelStore) -> LlmModel {
+    LlmModel {
+        file: store.model_dir(&model.id).join(&model.files[0].name),
+        in_ram: settings.pipeline.models_folder.is_some(),
+    }
+}
+
+/// The language to hold ASR and the summary to: the one in "My languages", if it names just one.
+pub fn single_language(settings: &Settings) -> Option<String> {
+    match settings.general.languages.as_slice() {
+        [only] => Some(only.clone()),
+        _ => None,
+    }
+}
+
+/// Diarization's two models, or none when the tier doesn't diarize. A Custom tier has no choice of
+/// them, so it takes the catalog's first.
+pub fn speaker_model_ids(settings: &Settings, catalog: &Catalog) -> Vec<String> {
+    match preset_tier(settings.pipeline.tier) {
+        Some(tier) => catalog
+            .speaker_models_for_tier(tier)
+            .into_iter()
+            .map(|model| model.id.clone())
+            .collect(),
+        None => [ModelKind::Segmentation, ModelKind::Embedding]
+            .into_iter()
+            .filter_map(|kind| catalog.first_of_kind(kind))
+            .map(|model| model.id.clone())
+            .collect(),
+    }
+}
+
+/// Which stages run after a meeting: what the tier can do and the user wants. The summary and the
+/// chat need an LLM, but not LLM cleanup, so turning cleanup off leaves them on.
+pub fn meeting_plan(settings: &Settings, catalog: &Catalog) -> MeetingPlan {
+    let meetings = &settings.meetings;
+    let preset = preset_tier(settings.pipeline.tier).map(|tier| catalog.preset(tier));
+    let [.., llm] = effective_models(settings, catalog);
+    MeetingPlan {
+        refine: meetings.refine_pass && preset.is_none_or(|preset| preset.meeting_refine),
+        diarize: meetings.diarization && !speaker_model_ids(settings, catalog).is_empty(),
+        summarize: llm.is_some(),
+        keep_audio: meetings.keep_audio,
+    }
+}
+
+/// What a meeting transcribes on. It always needs VAD, whatever the dictation pipeline does.
+pub fn meeting_speech(
+    settings: &Settings,
+    catalog: &Catalog,
+    store: &ModelStore,
+) -> Result<(AsrModel, PathBuf), String> {
+    check_folder(store)?;
+    let [asr, vad, _] = effective_models(settings, catalog);
+    let asr = asr_model(asr.as_deref(), catalog, store)?;
+    let vad = vad.or_else(|| Some(catalog.first_of_kind(ModelKind::Vad)?.id.clone()));
+    let vad = installed(vad.as_deref(), "voice detection", catalog, store)?;
+    Ok((asr, store.model_dir(&vad.id).join(&vad.files[0].name)))
+}
+
+/// What the summary and the chat run on.
+pub fn meeting_llm(
+    settings: &Settings,
+    catalog: &Catalog,
+    store: &ModelStore,
+) -> Result<LlmModel, String> {
+    check_folder(store)?;
+    let [.., llm] = effective_models(settings, catalog);
+    let model = installed(llm.as_deref(), "summary", catalog, store)?;
+    Ok(llm_model(model, settings, store))
+}
+
+/// What tells the voices apart.
+pub fn meeting_diarizer(
+    settings: &Settings,
+    catalog: &Catalog,
+    store: &ModelStore,
+) -> Result<DiarizerModel, String> {
+    check_folder(store)?;
+    let ids = speaker_model_ids(settings, catalog);
+    let [segmentation, embedding] = ids.as_slice() else {
+        return Err("No speaker models chosen".to_owned());
+    };
+    let file = |id: &str| -> Result<PathBuf, String> {
+        let model = installed(Some(id), "speaker", catalog, store)?;
+        Ok(store.model_dir(&model.id).join(&model.files[0].name))
+    };
+    Ok(DiarizerModel {
+        segmentation: file(segmentation)?,
+        embedding: file(embedding)?,
+    })
+}
+
+fn check_folder(store: &ModelStore) -> Result<(), String> {
+    if store.available() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Models folder not connected: {}",
+            store.root().display()
+        ))
+    }
 }
 
 fn installed<'a>(

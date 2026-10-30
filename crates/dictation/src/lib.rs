@@ -6,6 +6,7 @@
 mod coordinator;
 mod engines;
 mod meeting;
+mod meeting_work;
 pub mod plan;
 pub mod probe;
 pub mod remote;
@@ -29,9 +30,14 @@ use wf_platform::insert::{InsertError, InsertOutcome, SystemInserter};
 use wf_platform::keys::KeySignal;
 
 pub use engines::Engines;
-pub use meeting::{MeetingRoom, MeetingTape, SystemMeetingRoom};
+pub use meeting::{
+    ChatUpdate, MeetingNews, MeetingRoom, MeetingTape, MeetingsStatus, SystemMeetingRoom,
+};
+pub use meeting_work::{ChatRun, WorkStep};
+pub use wf_meetings::SummaryMode;
 
 use coordinator::{Coordinator, Input};
+use meeting::Meetings;
 
 /// An insertion holds the history's thread for about half a second.
 const FORGET_LIMIT: Duration = Duration::from_secs(2);
@@ -151,6 +157,8 @@ pub enum Event {
     /// A meeting app started using the mic. Offer to take notes, naming this app. Only the
     /// user's answer, through [`Dictation::toggle_meeting`], starts anything.
     SuggestMeeting(String),
+    /// Something the Meetings window shows.
+    Meetings(MeetingNews),
 }
 
 /// How one dictation went.
@@ -221,6 +229,7 @@ struct Shared {
     machine: Arc<Mutex<DictationMachine>>,
     clock: Arc<dyn Clock>,
     keys_paused: AtomicBool,
+    meetings: Meetings,
 }
 
 impl Drop for Shared {
@@ -237,6 +246,7 @@ impl Dictation {
         let (inbox, queue) = mpsc::channel();
         let clock = Arc::clone(&parts.clock);
         let coordinator = Coordinator::new(parts, Arc::clone(&machine), inbox.clone());
+        let meetings = coordinator.meetings();
         thread::Builder::new()
             .name("wf-dictation".into())
             .spawn(move || coordinator.run(queue))
@@ -247,6 +257,7 @@ impl Dictation {
                 machine,
                 clock,
                 keys_paused: AtomicBool::new(false),
+                meetings,
             }),
         }
     }
@@ -322,6 +333,44 @@ impl Dictation {
     /// Starts or stops the meeting notes.
     pub fn toggle_meeting(&self) {
         self.send(Input::ToggleMeeting);
+    }
+
+    /// Records more of a meeting that already ended.
+    pub fn resume_meeting(&self, id: &str) {
+        self.shared.meetings.resume(id);
+    }
+
+    /// Runs the stages a meeting never finished, such as after a crash.
+    pub fn finish_meeting(&self, id: &str) {
+        self.shared.meetings.finish_stages(id);
+    }
+
+    /// Writes the summary again, from scratch or reusing what hasn't changed.
+    pub fn summarize_meeting(&self, id: &str, mode: SummaryMode) {
+        self.shared.meetings.write_summary(id, mode);
+    }
+
+    /// Stops the work on a meeting. What's done stays.
+    pub fn cancel_meeting_work(&self, id: &str) {
+        self.shared.meetings.cancel_work(id);
+    }
+
+    /// Asks a question about a meeting. The answer arrives as [`MeetingNews::Chat`].
+    pub fn ask_meeting(&self, id: &str, question: &str) -> ChatRun {
+        self.shared.meetings.ask(id, question)
+    }
+
+    /// Which meeting is recording and which are being worked on.
+    pub fn meetings_status(&self) -> MeetingsStatus {
+        self.shared.meetings.status()
+    }
+
+    /// Finishes a running recording, for when the app is going away. Waits for at most `limit`.
+    /// What doesn't make it in time is recovered from the file at the next launch.
+    pub fn close_meetings(&self, limit: Duration) {
+        let (done, wait) = mpsc::channel();
+        self.send(Input::CloseMeetings(done));
+        let _ = wait.recv_timeout(limit);
     }
 
     /// Starts a real dictation that ends in [`Event::Trial`] rather than in the focused app.

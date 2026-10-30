@@ -22,8 +22,8 @@ use wf_pipeline::{Asr, AsrOptions, PipelineError, Transcript, Vad};
 use wf_platform::context::{Context, ContextDepth, ContextSource, Focus, TextAround};
 
 use crate::coordinator::Input;
-use crate::engines::{Engines, Loaded, Ready};
-use crate::plan::Plan;
+use crate::engines::{Engines, LlmSlot, Loaded, Ready};
+use crate::plan::{Plan, single_language};
 use crate::worker::{Insert, Job};
 use crate::{Event, Microphone};
 
@@ -41,6 +41,7 @@ const SILENT_MIC: &str = "The microphone sends only silence. Check its permissio
 pub(crate) struct SessionShared {
     pub(crate) engines: Arc<dyn Engines>,
     pub(crate) loaded: Mutex<Loaded>,
+    pub(crate) llm: Arc<LlmSlot>,
     pub(crate) context: Arc<dyn ContextSource + Send + Sync>,
     pub(crate) jobs: Sender<Job>,
     pub(crate) inbox: Sender<Input>,
@@ -249,11 +250,12 @@ impl Session {
     fn dictate(&self, context: &Context) -> Result<Option<Insert>, String> {
         // One dictation at a time on the engines. A later one records in the meantime.
         let mut loaded = self.lock_engines();
+        self.shared.llm.prepare(self.plan.llm.as_ref());
         let Ready { vad, asr } = loaded
             .prepare(&self.plan, &self.shared.engines)
             .map_err(|error| describe("load the models", &error))?;
         let options = AsrOptions {
-            language: self.language(),
+            language: single_language(&self.settings),
             bias_words: bias_words(&self.settings.style.dictionary, context.text.as_ref()),
         };
         let heard = match vad {
@@ -271,7 +273,8 @@ impl Session {
         let chosen_style = style_for(style, category);
         let cleaned = rule_cleanup(&heard.transcript.text, language);
         let mut cleanup_fallback = None;
-        let text = match loaded.llm() {
+        let host = self.plan.llm.as_ref().and(self.shared.llm.host());
+        let text = match host {
             Some(mut host) => {
                 let request = CleanupRequest {
                     text: &cleaned,
@@ -341,13 +344,6 @@ impl Session {
             denoiser,
             ready: VecDeque::new(),
         })
-    }
-
-    fn language(&self) -> Option<String> {
-        match self.settings.general.languages.as_slice() {
-            [only] => Some(only.clone()),
-            _ => None,
-        }
     }
 
     /// VAD on: chunks reach ASR as they close.
