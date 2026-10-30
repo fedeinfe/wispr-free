@@ -14,7 +14,7 @@ use slint::{Timer, TimerMode};
 use wf_core::audio::AudioClip;
 use wf_core::dictation::PillInput;
 use wf_core::pill::{PillState, Sound};
-use wf_dictation::probe::{ClipMicrophone, NoContext, TextLog, read_wav};
+use wf_dictation::probe::{ClipMicrophone, NoContext, NoMedia, TextLog, read_wav};
 use wf_dictation::{Dictation, Parts};
 
 use crate::mic_levels::MicLevels;
@@ -51,6 +51,7 @@ impl ClipRun {
         let log = self.log.clone();
         parts.microphone = Arc::clone(&self.microphone) as _;
         parts.context = Arc::new(NoContext);
+        parts.media = Arc::new(NoMedia);
         parts.insertion = Box::new(move || Box::new(log));
     }
 

@@ -16,12 +16,13 @@ thiserror.workspace = true
 directories.workspace = true
 
 # Insertion + context (04): NSPasteboard, CGEvent paste, AX focused-text reads. Pill overlay (05):
-# NSPanel swap, screens, cursor and Esc state.
+# NSPanel swap, screens, cursor and Esc state. Media while dictating (20): the output's mute.
 [target.'cfg(target_os = "macos")'.dependencies]
 block2.workspace = true
 objc2.workspace = true
 dispatch2.workspace = true
 objc2-foundation.workspace = true
+objc2-core-audio.workspace = true
 objc2-core-foundation.workspace = true
 objc2-app-kit.workspace = true
 objc2-core-graphics.workspace = true

@@ -21,7 +21,7 @@ use wf_core::dictation::PillInput;
 use wf_core::pill::PillState;
 use wf_core::settings::{KeepModels, PipelineTier, Settings};
 use wf_dictation::plan::preset_tier;
-use wf_dictation::probe::{ClipMicrophone, NoContext, TextLog, read_wav};
+use wf_dictation::probe::{ClipMicrophone, NoContext, NoMedia, TextLog, read_wav};
 use wf_dictation::remote::ChildEngines;
 use wf_dictation::{Dictation, Event, Parts, Report, SystemClock, SystemMeetingRoom};
 use wf_models::{Catalog, ModelEntry, Tier};
@@ -119,6 +119,8 @@ fn start(settings: Settings, real_time: bool) -> RealFlow {
             "CARGO_BIN_EXE_wispr-free"
         )))),
         context: Arc::new(NoContext),
+        media: Arc::new(NoMedia),
+        media_note: data.path().join("media-note.json"),
         insertion: Box::new(move || Box::new(insertion)),
         clock: Arc::new(SystemClock::default()),
         on_event: Arc::new(move |event| {

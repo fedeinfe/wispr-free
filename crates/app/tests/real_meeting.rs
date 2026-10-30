@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use wf_core::audio::AudioClip;
 use wf_core::dictation::PillInput;
 use wf_core::settings::{KeepModels, PipelineTier, Settings};
-use wf_dictation::probe::{ClipMicrophone, ClipRoom, NoContext, TextLog, read_wav};
+use wf_dictation::probe::{ClipMicrophone, ClipRoom, NoContext, NoMedia, TextLog, read_wav};
 use wf_dictation::remote::ChildEngines;
 use wf_dictation::{
     ChatRun, ChatUpdate, Dictation, Event, MeetingNews, Parts, SummaryMode, SystemClock, WorkStep,
@@ -149,6 +149,8 @@ fn start(settings: Settings, you: AudioClip, others: AudioClip, pace: f32) -> Re
             "CARGO_BIN_EXE_wispr-free"
         )))),
         context: Arc::new(NoContext),
+        media: Arc::new(NoMedia),
+        media_note: data.path().join("media-note.json"),
         insertion: Box::new(move || Box::new(insertion)),
         clock: Arc::new(SystemClock::default()),
         on_event: Arc::new(move |event| {

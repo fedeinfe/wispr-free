@@ -9,12 +9,15 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use wf_core::dictation::{CancelReason, Command, DictationMachine, Mode, PillInput};
+use wf_core::dictation::{
+    CancelReason, Command, DictationMachine, Mode, PillInput, STRAY_KEY_WINDOW,
+};
 use wf_core::pill::PillState;
-use wf_core::settings::{HistoryRetention, KeepModels, Settings};
+use wf_core::settings::{HistoryRetention, KeepModels, MediaWhileDictating, Settings};
 use wf_models::{Catalog, ModelStore};
 
 use crate::engines::{LlmSlot, Loaded};
+use crate::media;
 use crate::meeting::{Meetings, Office};
 use crate::plan::plan;
 use crate::session::{NOTHING_HEARD, Pump, Session, SessionShared, part_at_fault};
@@ -27,6 +30,10 @@ const ERROR_SHOWN: Duration = Duration::from_secs(6);
 const KEEP_LOADED_FOR: Duration = Duration::from_secs(5 * 60);
 /// How often expired history is removed while the app sits idle.
 const PRUNE_EVERY: Duration = Duration::from_secs(60 * 60);
+/// A tap ends within two tap windows and a stray key within this, so by now the press is a real
+/// dictation. Pausing a player isn't free like a mute, so a press that turns out to be nothing
+/// shouldn't cost a skip in the music.
+const PAUSE_AFTER: Duration = STRAY_KEY_WINDOW;
 
 const STRAY_KEY_HINT: &str = "Dictation discarded: another key was pressed";
 const CAP_HINT: &str = "One minute of dictation left";
@@ -45,6 +52,8 @@ pub(crate) enum Input {
     ToggleMeeting,
     /// Closes any recording for good, and says when that's done.
     CloseMeetings(Sender<()>),
+    /// Puts media back for good, and says when that's done.
+    CloseMedia(Sender<()>),
     Meeting(bool),
     /// Meeting work let go of the model.
     LlmReturned,
@@ -66,6 +75,15 @@ struct Recording {
     locked: Arc<AtomicBool>,
 }
 
+/// What this recording has done to media so far.
+#[derive(Clone, Copy, PartialEq)]
+enum Quiet {
+    Off,
+    /// A pause, once this time comes.
+    PauseAt(Duration),
+    On,
+}
+
 /// A recording that ended and is on its way to insertion.
 struct InFlight {
     id: u64,
@@ -81,6 +99,10 @@ pub(crate) struct Coordinator {
     store: ModelStore,
     microphone: Arc<dyn Microphone>,
     shared: Arc<SessionShared>,
+    media: Sender<media::Job>,
+    quiet: Quiet,
+    /// The app is quitting, so media stays as it is.
+    media_closed: bool,
     next_id: u64,
     recording: Option<Recording>,
     in_flight: Vec<InFlight>,
@@ -130,6 +152,13 @@ impl Coordinator {
             .name("wf-insertion".into())
             .spawn(move || worker::run(queue, insertion(), history, finished, on_event))
             .expect("the insertion thread starts");
+        let (media, media_jobs) = mpsc::channel();
+        let (control, note) = (parts.media, parts.media_note);
+        let on_event = Arc::clone(&parts.on_event);
+        thread::Builder::new()
+            .name("wf-media".into())
+            .spawn(move || media::run(media_jobs, control, note, on_event))
+            .expect("the media thread starts");
 
         let retention = parts.settings.privacy.history_retention;
         let _ = jobs.send(Job::SetRetention(retention));
@@ -151,6 +180,9 @@ impl Coordinator {
             store,
             microphone: parts.microphone,
             shared,
+            media,
+            quiet: Quiet::Off,
+            media_closed: false,
             next_id: 0,
             recording: None,
             in_flight: Vec::new(),
@@ -188,9 +220,11 @@ impl Coordinator {
                 Err(RecvTimeoutError::Timeout) => {}
             }
             self.on_time();
+            self.keep_media();
             self.show();
         }
         self.stop_recording(Pump::DISCARD);
+        self.keep_media();
     }
 
     fn lock_machine(&self) -> MutexGuard<'_, DictationMachine> {
@@ -201,7 +235,11 @@ impl Coordinator {
         let now = self.clock.now();
         let error = self.error.as_ref().map(|(_, until)| *until);
         let machine = self.lock_machine().next_deadline();
-        [machine, error, self.unload_at, self.prune_at]
+        let pause = match self.quiet {
+            Quiet::PauseAt(at) => Some(at),
+            _ => None,
+        };
+        [machine, error, self.unload_at, self.prune_at, pause]
             .into_iter()
             .flatten()
             .min()
@@ -234,6 +272,11 @@ impl Coordinator {
             Input::ForgetHistory(done) => self.send_job(Job::Forget(done)),
             Input::ToggleMeeting => self.meetings.toggle(),
             Input::CloseMeetings(done) => self.meetings.close(done),
+            Input::CloseMedia(done) => {
+                self.media_closed = true;
+                self.quiet = Quiet::Off;
+                self.send_media(media::Job::Close(done));
+            }
             Input::LlmReturned => self.after_use(),
             Input::Meeting(active) => {
                 self.meeting = active;
@@ -336,6 +379,46 @@ impl Coordinator {
             cancel,
             locked,
         });
+        self.quiet_media();
+    }
+
+    /// Applies the media setting to the recording that just started. Not during a meeting: the
+    /// user would miss the call, and the Others channel might go silent.
+    fn quiet_media(&mut self) {
+        if self.media_closed || self.meeting || self.quiet != Quiet::Off {
+            return;
+        }
+        match self.settings.media.while_dictating {
+            MediaWhileDictating::Nothing => {}
+            MediaWhileDictating::Mute => {
+                self.send_media(media::Job::Mute);
+                self.quiet = Quiet::On;
+            }
+            MediaWhileDictating::Pause => {
+                self.quiet = Quiet::PauseAt(self.clock.now() + PAUSE_AFTER);
+            }
+        }
+    }
+
+    /// Media stays quiet for as long as the mic is open. This looks at the recording, not at what
+    /// ended it, so no way of ending one can leave media quiet.
+    fn keep_media(&mut self) {
+        match (self.quiet, self.recording.is_some()) {
+            (Quiet::PauseAt(at), true) if self.clock.now() >= at => {
+                self.send_media(media::Job::Pause);
+                self.quiet = Quiet::On;
+            }
+            (Quiet::PauseAt(_), false) => self.quiet = Quiet::Off,
+            (Quiet::On, false) => {
+                self.send_media(media::Job::Release);
+                self.quiet = Quiet::Off;
+            }
+            _ => {}
+        }
+    }
+
+    fn send_media(&self, job: media::Job) {
+        let _ = self.media.send(job);
     }
 
     /// Ends a dictation that can't go on, with the keys possibly still down.
@@ -467,6 +550,10 @@ impl Coordinator {
     fn on_settings(&mut self, settings: Settings) {
         let before = mem::replace(&mut self.settings, settings);
         let settings = &self.settings;
+        let chosen = settings.media.while_dictating;
+        if chosen == MediaWhileDictating::Pause && chosen != before.media.while_dictating {
+            self.send_media(media::Job::AskPlayers);
+        }
         self.meetings.settings_changed(settings);
         self.lock_machine().set_bindings(settings.shortcuts.clone());
         if settings.pipeline.models_folder != before.pipeline.models_folder {
