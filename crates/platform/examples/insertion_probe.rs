@@ -55,7 +55,7 @@ fn counts(text: &TextAround) -> [usize; 3] {
 
 /// Saves, writes, restores. Sends no keystroke, so it is safe to run anywhere.
 fn clipboard_round_trip() {
-    let mut clipboard = SystemClipboard;
+    let mut clipboard = SystemClipboard::new();
     let saved = clipboard.snapshot().expect("snapshot");
     clipboard
         .write_text("wispr-free probe", true)

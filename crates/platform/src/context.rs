@@ -7,8 +7,18 @@ use std::ops::Range;
 mod ax_role;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(any(target_os = "windows", test))]
+mod uia_role;
 #[cfg(target_os = "macos")]
 pub use macos::{SystemContext, accessibility_trusted};
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+pub use self::windows::{SystemContext, accessibility_trusted};
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::{SystemContext, accessibility_trusted};
 
 /// Who has keyboard focus. `id` is the bundle id (macOS), executable name (Windows) or
 /// WM_CLASS / app name (Linux).
@@ -66,7 +76,7 @@ impl TextAround {
     }
 }
 
-/// The UTF-16 ranges to read around a selection (AX and UIA index text in UTF-16 units).
+/// The UTF-16 ranges to read around a selection (AX indexes text in UTF-16 units).
 /// Each side is twice the character cap, which covers it even for all-surrogate text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Utf16Window {

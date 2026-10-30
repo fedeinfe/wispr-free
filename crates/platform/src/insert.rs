@@ -7,8 +7,22 @@ use crate::context::{AppIdentity, ContextDepth, ContextSource, Focus, SystemCont
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(any(target_os = "linux", test))]
+mod wayland;
 #[cfg(target_os = "macos")]
 pub use macos::{SystemClipboard, SystemPasteKeys};
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+mod arboard_clipboard;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+pub use arboard_clipboard::SystemClipboard;
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+pub use self::windows::SystemPasteKeys;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::SystemPasteKeys;
 
 /// Tags the synthetic paste keystroke so the global key capture (ticket 03) can ignore it:
 /// `kCGEventSourceUserData` on macOS, `dwExtraInfo` on Windows.
@@ -257,7 +271,7 @@ pub type SystemInserter = Inserter<SystemClipboard, SystemPasteKeys, SystemConte
 impl SystemInserter {
     pub fn system() -> Self {
         Self::new(
-            SystemClipboard,
+            SystemClipboard::new(),
             SystemPasteKeys,
             SystemContext,
             ThreadSleep,

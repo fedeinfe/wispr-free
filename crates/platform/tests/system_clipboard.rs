@@ -27,7 +27,7 @@ fn without_markers(snapshot: &ClipboardSnapshot) -> ClipboardSnapshot {
 #[test]
 #[ignore = "swaps the real clipboard for a moment"]
 fn snapshot_write_restore_round_trip() {
-    let mut clipboard = SystemClipboard;
+    let mut clipboard = SystemClipboard::new();
     let original = clipboard.snapshot().unwrap();
 
     // Everything is observed first and asserted last, so a failure can't lose the user's data.
