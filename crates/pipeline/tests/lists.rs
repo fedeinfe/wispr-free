@@ -106,6 +106,22 @@ fn items_introduced_with_an_article_count_too() {
             "There are three bugs: the first is that login fails, the second one is that the button is gone, the third is the home page.",
             "There are three bugs:\n1. login fails\n2. the button is gone\n3. the home page",
         ),
+        (
+            "Ciao ragazzi, come state? Oggi vorrei fare queste tre cose. La prima è andare a fare la spesa, la seconda organizzare tutto e poi la terza andare a mangiare.",
+            "Ciao ragazzi, come state? Oggi vorrei fare queste tre cose:\n1. andare a fare la spesa\n2. organizzare tutto\n3. andare a mangiare",
+        ),
+        (
+            "Ho queste tre cose: la prima il login, la seconda il bottone e la terza la home.",
+            "Ho queste tre cose:\n1. il login\n2. il bottone\n3. la home",
+        ),
+        (
+            "Ho queste due cose da fare: la prima è il login e poi la seconda è il bottone.",
+            "Ho queste due cose da fare:\n1. il login\n2. il bottone",
+        ),
+        (
+            "Fix these three bugs: the first is login, the second is the button, and then the third is the home page.",
+            "Fix these three bugs:\n1. login\n2. the button\n3. the home page",
+        ),
     ];
     for (spoken, written) in cases {
         let cleaned = rule_cleanup(spoken, Some("it"));
@@ -138,6 +154,9 @@ fn ordinary_sentences_stay_sentences() {
         "Il primo è arrivato Marco, il secondo è arrivato Luca, il terzo è arrivato Gino.",
         "Queste tre cose non mi piacciono per niente.",
         "Queste cose succedono, lo so.",
+        "Ho due figli, la prima fa il liceo e la seconda l'università.",
+        "Il primo piatto era buono e il secondo no.",
+        "Ho comprato due biglietti, il primo è per me e il secondo per Anna.",
     ];
     for sentence in cases {
         assert_eq!(format_lists(sentence), None, "{sentence}");

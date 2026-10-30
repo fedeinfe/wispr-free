@@ -92,7 +92,17 @@ const LIST_NOUNS: &[&str] = &[
 /// In the lead-in, these and a count announce a list, which lets two counted items be enough.
 const ANNOUNCING: &[&str] = &["questi", "queste", "these", "seguenti", "following"];
 
-const JOINERS: &[&str] = &["e", "ed", "and", "poi", "then", "infine", "finally"];
+const JOINERS: &[&str] = &[
+    "e",
+    "ed",
+    "and",
+    "poi",
+    "quindi",
+    "dopodiché",
+    "then",
+    "infine",
+    "finally",
+];
 
 /// The transcript with its list written out, or `None` when it isn't one.
 pub fn format_lists(text: &str) -> Option<String> {
@@ -158,6 +168,8 @@ struct Marker {
     end: usize,
     /// An article and no "è che", as in "il secondo no": it needs the lead-in to announce a list.
     weak: bool,
+    /// An article after "e" or "poi" rather than a break, as in "e poi la terza".
+    joined: bool,
 }
 
 /// Where the words that lead into an item end, after the ordinal at `words[i]`, and whether they
@@ -197,6 +209,7 @@ fn marker(text: &str, words: &[Word], i: usize) -> Option<Marker> {
                 start,
                 end: next.end,
                 weak: false,
+                joined: false,
             });
         }
         let opener = (word.text == "prima" && next_is("di"))
@@ -211,18 +224,23 @@ fn marker(text: &str, words: &[Word], i: usize) -> Option<Marker> {
                 start: word.start,
                 end: opener.end,
                 weak: false,
+                joined: false,
             });
         }
         let (end, closed) = after_ordinal(words, i);
-        if let Some(article) = previous.filter(|word| ARTICLES.contains(&word.text.as_str()))
-            && (closed || after_a_break(text, article.start))
-        {
-            return Some(Marker {
-                value,
-                start: article.start,
-                end,
-                weak: !closed,
-            });
+        if let Some(article) = previous.filter(|word| ARTICLES.contains(&word.text.as_str())) {
+            let broken = closed || after_a_break(text, article.start);
+            let before_article = i.checked_sub(2).map(|p| words[p].text.as_str());
+            let joined = !broken && before_article.is_some_and(|word| JOINERS.contains(&word));
+            if broken || joined {
+                return Some(Marker {
+                    value,
+                    start: article.start,
+                    end,
+                    weak: !closed,
+                    joined,
+                });
+            }
         }
         let adjective = !after_a_break(text, word.start)
             && previous.is_some_and(|word| NOT_BEFORE_A_MARKER.contains(&word.text.as_str()));
@@ -239,6 +257,7 @@ fn marker(text: &str, words: &[Word], i: usize) -> Option<Marker> {
             start: word.start,
             end,
             weak: false,
+            joined: false,
         });
     }
 
@@ -250,6 +269,7 @@ fn marker(text: &str, words: &[Word], i: usize) -> Option<Marker> {
             start: word.start,
             end: next.end,
             weak: false,
+            joined: false,
         });
     }
 
@@ -263,6 +283,7 @@ fn marker(text: &str, words: &[Word], i: usize) -> Option<Marker> {
             start: word.start,
             end: word.end + 1,
             weak: false,
+            joined: false,
         });
     }
 
@@ -272,6 +293,7 @@ fn marker(text: &str, words: &[Word], i: usize) -> Option<Marker> {
         start: word.start,
         end: word.end,
         weak: false,
+        joined: false,
     })
 }
 
@@ -347,6 +369,11 @@ fn numbered(text: &str, words: &[Word]) -> Option<String> {
     };
     let weak = found.iter().any(|marker| marker.weak);
     if found.len() < 2 || ((found.len() == 2 || weak) && !announced()) {
+        return None;
+    }
+    // "Ho due figli, la prima… e la seconda…" is a sentence, even with its count.
+    let joined = found.iter().any(|marker| marker.joined);
+    if found.len() == 2 && joined && announcement(text, words).is_none() {
         return None;
     }
 
