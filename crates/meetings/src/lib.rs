@@ -23,7 +23,7 @@ mod writer;
 pub use align::{Channel, StereoAligner, StereoFrame};
 pub use chat::{
     AnswerBlock, ChatOptions, ChatPrompt, ChatSource, ChatTurn, Citation, ParsedAnswer, ask,
-    chat_prompt, parse_answer, suggested_questions,
+    chat_prompt, parse_answer, row_at, suggested_questions,
 };
 pub use detect::{MeetingApp, MeetingDetector, MicClient, classify_client, parse_pw_dump};
 pub use diarize::{Turn, assign_speakers, split_at_turns, stable_turns};
@@ -44,7 +44,7 @@ pub use store::{
 pub use summary::{
     ActionItem, Item, Notes, ParsedSummary, Summary, SummaryMode, SummaryOptions, SummaryProgress,
     TranscriptChunk, generate_summary, parse_notes, parse_summary, rename_speaker_labels,
-    transcript_chunks,
+    transcript_chunks, transcript_hash,
 };
 pub use system_audio::SystemAudioBackend;
 pub use transcript::{

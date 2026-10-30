@@ -152,6 +152,11 @@ fn model_index(ids: &[String], model: Option<&String>) -> i32 {
     model.map_or(-1, |model| index_of(ids, model))
 }
 
+/// The theme as the windows' `Prefs.values` hold it.
+pub fn theme_index(settings: &Settings) -> i32 {
+    index_of(&THEMES, &settings.general.theme)
+}
+
 pub fn values_of(settings: &Settings, catalog: &Catalog, choices: &ModelChoices) -> SettingsValues {
     let [asr, vad, llm] = effective_models(settings, catalog);
     SettingsValues {

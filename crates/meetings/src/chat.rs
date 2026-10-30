@@ -659,7 +659,7 @@ fn citation_times(inner: &str) -> Option<Vec<u64>> {
 
 /// A citation names the line that starts at that second, and nothing near it: a model that's a
 /// second off is as likely to be a line off.
-fn row_at(rows: &[TranscriptRow], at_ms: u64) -> Option<usize> {
+pub fn row_at(rows: &[TranscriptRow], at_ms: u64) -> Option<usize> {
     rows.iter()
         .position(|row| !row.gap && row.at_ms / 1_000 == at_ms / 1_000)
 }

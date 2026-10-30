@@ -395,7 +395,7 @@ fn chunk_key(chunk: &TranscriptChunk, options: &SummaryOptions) -> String {
 }
 
 /// A fingerprint of what the transcript says. Stable across builds, unlike `DefaultHasher`.
-fn transcript_hash(transcript: &Transcript) -> String {
+pub fn transcript_hash(transcript: &Transcript) -> String {
     let lines: Vec<String> = transcript
         .segments
         .iter()

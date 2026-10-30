@@ -80,6 +80,11 @@ pub struct ChatRun {
 }
 
 impl ChatRun {
+    /// `cancel` is what stops it.
+    pub fn new(run: u64, cancel: Arc<AtomicBool>) -> Self {
+        Self { run, cancel }
+    }
+
     pub fn stop(&self) {
         self.cancel.store(true, Ordering::SeqCst);
     }

@@ -5,6 +5,7 @@ export component Tray inherits SystemTrayIcon {
     in property <bool> debug-menu;
     in property <bool> in-meeting;
     callback toggle-meeting();
+    callback open-meetings();
     callback open-settings();
     callback quit();
     callback debug-state(PillLook);
@@ -77,6 +78,10 @@ export component Tray inherits SystemTrayIcon {
                 title: "Use real mic level";
                 activated => { root.debug-mic-level(); }
             }
+        }
+        MenuItem {
+            title: "Meetings…";
+            activated => { root.open-meetings(); }
         }
         MenuItem {
             title: "Settings…";

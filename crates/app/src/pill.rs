@@ -54,6 +54,7 @@ pub enum PillEvent {
     SelectLanguage(usize),
     SelectPipelineQuality(usize),
     TakeNotes,
+    OpenMeetings,
     OpenSettings,
     Quit,
 }
@@ -302,6 +303,7 @@ impl PillController {
         ui.on_decline_notes(move || this.hide_card());
         ui.on_stop_clicked(forward(PillEvent::Stop));
         ui.on_paste_last(forward(PillEvent::PasteLast));
+        ui.on_open_meetings(forward(PillEvent::OpenMeetings));
         ui.on_open_settings(forward(PillEvent::OpenSettings));
         ui.on_quit(forward(PillEvent::Quit));
         ui.on_paste_recent(forward_index(PillEvent::PasteRecent));
