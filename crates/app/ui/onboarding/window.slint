@@ -175,6 +175,8 @@ component ModelsStepPage inherits Page {
         }
     }
 
+    ModelsFolderCard { }
+
     Card {
         title: "What it downloads";
         hint: Prefs.models-in-use-summary != "" ? Prefs.models-in-use-summary + " to download" : "Everything is downloaded.";
@@ -201,8 +203,6 @@ component ModelsStepPage inherits Page {
     if Prefs.model-error != "": ErrorText {
         text: Prefs.model-error;
     }
-
-    ModelsFolderCard { }
 }
 
 // A part the trial proves.
