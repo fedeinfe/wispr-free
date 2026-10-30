@@ -1,0 +1,105 @@
+# Holdout for the summary prompts (ticket 16): a shorter meeting in another domain, transcript
+# only, with its scoring fixed before the first run. Prompts were not tuned against it. If you
+# tune against it, it stops meaning anything: write a new one.
+#
+# `S1` to `S3` are the labels the model sees for the Others channel, as after diarization.
+# Run with `cargo xtask-meeting meeting-holdout --models dir --out dir`.
+
+you = "Nadia"
+stale = ["riverside", "june 7", "forty five", "45"]
+
+[voices]
+Nadia = "-"
+S1 = "-"
+S2 = "-"
+S3 = "-"
+
+[[decisions]]
+id = "venue"
+all = [["harbour hall"]]
+not = ["riverside"]
+
+[[decisions]]
+id = "date"
+all = [["june 14", "14th of june", "14 june"]]
+
+[[decisions]]
+id = "ticket-price"
+all = [["ticket", "price"], ["35", "thirty five", "thirty-five"]]
+not = ["45", "forty five"]
+
+[[decisions]]
+id = "catering"
+all = [["vegetarian"]]
+
+[[decisions]]
+id = "volunteers"
+all = [["volunteer"], ["twelve", "12"]]
+
+[[actions]]
+id = "book-venue"
+owner = "Speaker 1"
+task = [["deposit", "book", "contract"]]
+due = ["wednesday"]
+
+[[actions]]
+id = "poster"
+owner = "Speaker 2"
+task = [["poster"]]
+due = ["may 2", "second of may", "2nd of may"]
+
+[[actions]]
+id = "sponsors"
+owner = "Nadia"
+task = [["sponsor"]]
+due = ["friday"]
+
+[[actions]]
+id = "insurance"
+owner = "Speaker 3"
+task = [["insurance"]]
+due = []
+
+[[actions]]
+id = "caterer-menu"
+owner = "Nadia"
+task = [["menu", "caterer"]]
+due = ["next monday", "monday"]
+
+[script]
+turns = [
+  ["Nadia", "Thanks for staying on. We have the summer book fair to plan, so today it is the venue, the date, ticket prices, food, and who does what."],
+  ["S1", "Before we begin, the parking at the school was a nightmare this morning. It took me twenty minutes."],
+  ["S2", "It is always like that on market days."],
+  ["Nadia", "Let us start with the venue. Last year we used the Riverside Centre, and I had assumed we would go back there."],
+  ["S1", "I looked at it. The Riverside Centre went up by a third, and they will not let us sell food inside any more."],
+  ["S3", "What about the Harbour Hall? It is smaller, but it has a kitchen and a loading door."],
+  ["S2", "The light in there is lovely as well, and you can walk from the station."],
+  ["Nadia", "How much is it?"],
+  ["S1", "About two thousand for the day, against three thousand for Riverside."],
+  ["Nadia", "Okay, I was going to say Riverside, but that settles it. We go with the Harbour Hall this year."],
+  ["S1", "Good. I will pay the deposit and sign the contract by Wednesday."],
+  ["Nadia", "Now the date. The committee suggested June 7, but that is the same day as the marathon."],
+  ["S3", "Half the town will be closed off. We would lose all the families."],
+  ["S2", "The 14th is free, as far as I can tell. There is nothing at the hall either."],
+  ["Nadia", "Then June 14 it is."],
+  ["S2", "I can start the poster now that we have a date. You will have the poster by the second of May."],
+  ["S3", "Do we want a logo from the sponsors on it? Last time we forgot one and it was awkward."],
+  ["Nadia", "Good point. I will call the sponsors and confirm who is in by Friday, and I will send you the list."],
+  ["S1", "Tickets. Last year it was forty five, and people complained that it was too much for a family."],
+  ["S2", "We could do something for children, maybe a free pass with every adult. We have talked about it for years, I am only mentioning it."],
+  ["S3", "Let us think about that one next year. It complicates the door."],
+  ["Nadia", "I would drop the price to thirty five. With the cheaper hall, we still break even at about three hundred people."],
+  ["S1", "That works on my numbers. Thirty five."],
+  ["Nadia", "Food. The caterer we used last year offered a mixed menu, or a vegetarian one that costs a bit less."],
+  ["S3", "A lot of people asked for vegetarian last time. And there is no meat smell in the book stalls."],
+  ["S2", "Vegetarian is fine with me."],
+  ["Nadia", "Then the menu is vegetarian. I will ask the caterer for the final menu by next Monday."],
+  ["S1", "How many helpers do we need on the day?"],
+  ["S3", "Two at the door, four for the stalls, and some to set up. We had twelve volunteers last time and that was about right."],
+  ["Nadia", "Agreed, let us ask for twelve volunteers again."],
+  ["S3", "One more thing. The hall wants proof that we have insurance. I will sort out the insurance for the day."],
+  ["Nadia", "Thank you. A friend of mine says that we should ignore the budget and print a thousand posters. I told her no."],
+  ["S2", "Ha. Tell her thanks. Anything else?"],
+  ["Nadia", "No, that is it. Thanks everyone, see you at the next one."],
+]

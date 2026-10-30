@@ -1,6 +1,14 @@
 //! `cargo xtask eval --model model.gguf` scores LLM cleanup against `eval/cleanup.toml`.
 //! Flags: `--rules-only` scores rule cleanup alone, `--dev` skips the holdout cases, and
 //! `--cpu` keeps every layer off the GPU.
+//!
+//! `cargo xtask-meeting meeting-fixture --out dir` builds the 30-minute meeting with macOS `say`.
+//! `cargo xtask-meeting meeting-run --fixture dir --models dir --out dir` runs it through every
+//! stage on the Balanced tier and scores the summary. Flags: `--realtime` paces the audio like
+//! a real meeting, `--tier lite|balanced|high` picks another tier.
+//! `meeting-summary` and `meeting-diarize` redo one stage on the newest meeting in `--out`, for
+//! tuning. `meeting-diarize` takes `--threshold`, `--shift` and `--embedding`. `meeting-holdout`
+//! summarizes a transcript the prompts were never tuned on.
 
 use std::process::ExitCode;
 
@@ -12,8 +20,13 @@ fn main() -> anyhow::Result<ExitCode> {
     let Some(task) = args.next() else {
         bail!("usage: cargo xtask eval [--model model.gguf] [--rules-only] [--dev] [--cpu]");
     };
-    if task != "eval" {
-        bail!("unknown task {task:?}");
+    match task.as_str() {
+        "eval" => {}
+        "meeting-fixture" | "meeting-run" | "meeting-summary" | "meeting-diarize"
+        | "meeting-holdout" => {
+            return meeting_task(&task, args);
+        }
+        _ => bail!("unknown task {task:?}"),
     }
 
     let mut model = std::env::var("WF_LLM_MODEL").ok();
@@ -44,6 +57,95 @@ fn main() -> anyhow::Result<ExitCode> {
     } else {
         ExitCode::FAILURE
     })
+}
+
+fn meeting_task(task: &str, mut args: impl Iterator<Item = String>) -> anyhow::Result<ExitCode> {
+    let mut flags = std::collections::HashMap::new();
+    let mut realtime = false;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--realtime" => realtime = true,
+            "--fixture" | "--models" | "--out" | "--tier" | "--threshold" | "--shift"
+            | "--embedding" => {
+                let value = args
+                    .next()
+                    .with_context(|| format!("{arg} needs a value"))?;
+                flags.insert(arg, value);
+            }
+            other => bail!("unknown flag {other:?}"),
+        }
+    }
+    let out = flags.get("--out").context("set --out to a folder")?;
+    let out = std::path::Path::new(out);
+    if task == "meeting-fixture" {
+        let script = xtask::meeting_eval::MeetingScript::bundled()?;
+        let truth = xtask::meeting_fixture::build(&script, out)?;
+        println!(
+            "{} turns, {:.1} min, in {}",
+            truth.turns.len(),
+            truth.length_ms as f64 / 60_000.0,
+            out.display()
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+    meeting_run(task, &flags, realtime, out)
+}
+
+#[cfg(feature = "meeting")]
+fn meeting_run(
+    task: &str,
+    flags: &std::collections::HashMap<String, String>,
+    realtime: bool,
+    out: &std::path::Path,
+) -> anyhow::Result<ExitCode> {
+    use wf_models::Tier;
+    use xtask::meeting_run::{RunOptions, holdout, rediarize, resummarize, run};
+
+    let path = |flag: &str| -> anyhow::Result<std::path::PathBuf> {
+        Ok(flags
+            .get(flag)
+            .with_context(|| format!("set {flag} to a folder"))?
+            .into())
+    };
+    let tier = match flags.get("--tier").map(String::as_str) {
+        None | Some("balanced") => Tier::Balanced,
+        Some("lite") => Tier::Lite,
+        Some("high") => Tier::High,
+        Some(other) => bail!("unknown tier {other:?}"),
+    };
+    let options = RunOptions {
+        fixture: flags.get("--fixture").map(Into::into).unwrap_or_default(),
+        models: path("--models")?,
+        out: out.to_owned(),
+        tier,
+        realtime,
+    };
+    let number = |flag: &str| -> anyhow::Result<Option<f32>> {
+        Ok(flags.get(flag).map(|text| text.parse()).transpose()?)
+    };
+    let report = match task {
+        "meeting-summary" => resummarize(&options)?,
+        "meeting-holdout" => holdout(&options)?,
+        "meeting-diarize" => rediarize(
+            &options,
+            number("--threshold")?,
+            number("--shift")?,
+            flags.get("--embedding").map(Into::into),
+        )?,
+        _ => run(&options)?,
+    };
+    println!("{report}");
+    Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(not(feature = "meeting"))]
+fn meeting_run(
+    _task: &str,
+    _flags: &std::collections::HashMap<String, String>,
+    _realtime: bool,
+    _out: &std::path::Path,
+) -> anyhow::Result<ExitCode> {
+    bail!("built without the `meeting` feature; run it through `cargo xtask-meeting`")
 }
 
 #[cfg(feature = "llama")]

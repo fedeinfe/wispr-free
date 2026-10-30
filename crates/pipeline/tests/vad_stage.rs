@@ -79,6 +79,31 @@ fn chunks_of(recording: &AudioClip, options: &VadOptions) -> Vec<AudioClip> {
 }
 
 #[test]
+fn flushing_closes_a_short_chunk_and_the_next_one_starts_after_it() {
+    let mut vad = LoudIsSpeech::default();
+    let mut live = LiveVad::new(&mut vad, VadOptions::default());
+    let first = live
+        .push(&audio(&[(VOICE, 1_000), (QUIET, 1_000)]))
+        .unwrap();
+    assert!(first.chunks.is_empty(), "shorter than the minimum");
+
+    let flushed = live.flush().expect("a chunk was open");
+    assert!(live.flush().is_none(), "nothing left");
+
+    assert_eq!(flushed.start, Duration::ZERO);
+    let next = live
+        .push(&audio(&[(VOICE, 1_000), (QUIET, 1_000)]))
+        .unwrap();
+    assert!(next.chunks.is_empty());
+    let rest = live.finish().unwrap();
+    assert!(
+        rest[0].start >= flushed.clip.duration(),
+        "{:?}",
+        rest[0].start
+    );
+}
+
+#[test]
 fn a_silent_recording_has_no_chunks() {
     let silent = clip(&[(QUIET, 5_000)]);
 

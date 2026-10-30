@@ -98,6 +98,60 @@ fn an_8_gb_machine_recommends_lite_and_downloads_only_lites_models() {
 }
 
 #[test]
+fn a_tier_that_diarizes_also_downloads_its_speaker_models() {
+    let server = TestServer::start();
+    let vad = server.file("/vad.onnx", &payload(1_000));
+    let asr = server.file("/asr.bin", &payload(2_000));
+    let segmentation = server.file("/segmentation.onnx", &payload(300));
+    let embedding = server.file("/embedding.onnx", &payload(400));
+    let tier = |name: &str| {
+        format!(
+            "[tiers.{name}]\ndenoise = false\nvad = true\nllm_cleanup = false\n\
+             meeting_refine = true\ndiarization = true\nvad_model = \"vad\"\nasr_model = \"asr\"\n\
+             segmentation_model = \"segmentation\"\nspeaker_model = \"embedding\"\n"
+        )
+    };
+    let speaker = |id: &str, file: &ModelFile| {
+        entry(id, id, "sherpa-onnx", file).replace("[[models", "[[speaker_models")
+    };
+    let toml = [
+        "schema = 1\nversion = \"test\"\n".to_owned(),
+        tier("lite"),
+        tier("balanced"),
+        tier("high"),
+        entry("vad", "vad", "sherpa-onnx", &vad),
+        entry("asr", "asr", "whisper.cpp", &asr),
+        speaker("segmentation", &segmentation),
+        speaker("embedding", &embedding),
+    ]
+    .concat();
+    let catalog = Catalog::from_toml(&toml).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let store = ModelStore::new(dir.path());
+
+    let mut last = Progress::default();
+    store
+        .install_tier(
+            &catalog,
+            Tier::Balanced,
+            &AtomicBool::new(false),
+            &mut |p| last = p,
+        )
+        .unwrap();
+
+    assert_eq!(
+        last,
+        Progress {
+            downloaded: 3_700,
+            total: 3_700
+        }
+    );
+    for model in catalog.speaker_models_for_tier(Tier::Balanced) {
+        assert_eq!(store.status(model), ModelStatus::Installed);
+    }
+}
+
+#[test]
 fn installing_a_tier_again_fetches_nothing_and_upgrading_fetches_only_the_difference() {
     let server = TestServer::start();
     let catalog = catalog_on(&server);

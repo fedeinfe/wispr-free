@@ -1,6 +1,6 @@
 //! The bundled, versioned model manifest and its tier presets (spec §6).
 
-use wf_models::{Catalog, ModelKind, Tier};
+use wf_models::{Catalog, ModelKind, SpeakerModelKind, Tier};
 
 #[test]
 fn lite_preset_is_rules_only_with_silero_and_a_small_asr_model() {
@@ -147,4 +147,84 @@ fn bundled_models_stay_candidates_until_the_benchmark_picks_defaults() {
             .iter()
             .all(|m| m.candidate && m.download_size() > 0)
     );
+}
+
+#[test]
+fn balanced_and_high_diarize_with_a_segmentation_and_an_embedding_model() {
+    let catalog = Catalog::bundled();
+    for tier in [Tier::Balanced, Tier::High] {
+        let preset = catalog.preset(tier);
+        assert!(preset.meeting_refine && preset.diarization, "{tier:?}");
+        let kinds: Vec<SpeakerModelKind> = catalog
+            .speaker_models_for_tier(tier)
+            .iter()
+            .map(|m| m.kind)
+            .collect();
+        assert_eq!(
+            kinds,
+            [SpeakerModelKind::Segmentation, SpeakerModelKind::Embedding]
+        );
+    }
+}
+
+#[test]
+fn lite_downloads_no_speaker_models() {
+    let catalog = Catalog::bundled();
+    assert!(!catalog.preset(Tier::Lite).diarization);
+    assert!(catalog.speaker_models_for_tier(Tier::Lite).is_empty());
+}
+
+#[test]
+fn every_speaker_model_has_an_open_license_and_a_pinned_checksum() {
+    let catalog = Catalog::bundled();
+    assert!(!catalog.speaker_models.is_empty());
+    for model in &catalog.speaker_models {
+        assert!(
+            ["MIT", "Apache-2.0"].contains(&model.license.as_str()),
+            "{}: {}",
+            model.id,
+            model.license
+        );
+        assert!(model.candidate && model.download_size() > 0, "{}", model.id);
+    }
+}
+
+/// [`manifest`] plus a speaker model on Lite.
+fn with_speaker_slot(segmentation: &str) -> String {
+    let speaker = |id: &str, kind: &str| {
+        format!(
+            "[[speaker_models]]\nid = \"{id}\"\nname = \"{id}\"\nkind = \"{kind}\"\n\
+             engine = \"sherpa-onnx\"\nlicense = \"MIT\"\nlanguages = [\"*\"]\nram_mb = 1\n\
+             [[speaker_models.files]]\nname = \"m.onnx\"\nurl = \"https://example.org/m\"\n\
+             size = 1\nsha256 = \"{SHA}\"\n"
+        )
+    };
+    let slots = format!(
+        "diarization = true\nsegmentation_model = \"{segmentation}\"\n\
+         speaker_model = \"embedding\"\n"
+    );
+    format!(
+        "{}{}{}",
+        valid().replacen("diarization = false\n", &slots, 1),
+        speaker("segmentation", "segmentation"),
+        speaker("embedding", "embedding"),
+    )
+}
+
+#[test]
+fn diarization_slots_parse_when_they_name_the_right_kinds() {
+    let catalog = Catalog::from_toml(&with_speaker_slot("segmentation")).unwrap();
+    assert_eq!(catalog.speaker_models_for_tier(Tier::Lite).len(), 2);
+}
+
+#[test]
+fn a_diarization_slot_must_name_a_model_of_its_kind() {
+    assert!(Catalog::from_toml(&with_speaker_slot("embedding")).is_err());
+    assert!(Catalog::from_toml(&with_speaker_slot("nope")).is_err());
+}
+
+#[test]
+fn diarization_needs_both_speaker_models() {
+    let toml = with_speaker_slot("segmentation").replacen("speaker_model = \"embedding\"\n", "", 1);
+    assert!(Catalog::from_toml(&toml).is_err());
 }

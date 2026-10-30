@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use wf_core::audio::{AudioClip, SAMPLE_RATE_HZ};
 use wf_pipeline::vad::LiveChunk;
-use wf_pipeline::worker::{AsrWorker, ChunkTranscript};
+use wf_pipeline::worker::{AsrWorker, ChunkTranscript, FailedChunk};
 use wf_pipeline::{Asr, AsrOptions, PipelineError, Transcript};
 
 fn chunk(start_ms: u64, ms: usize, level: f32) -> LiveChunk {
@@ -252,4 +252,63 @@ fn a_dead_engine_is_an_error_not_a_hang() {
     let error = worker.finish().err().unwrap();
 
     assert!(matches!(error, PipelineError::Engine(_)), "{error}");
+}
+
+/// A meeting has to know how far behind the model is, to stop queueing before memory runs out.
+#[test]
+fn the_backlog_counts_audio_until_its_chunk_is_done() {
+    let (asr, on_start, release) = gated();
+    let worker = AsrWorker::spawn(asr, AsrOptions::default());
+    assert_eq!(worker.backlog(), Duration::ZERO);
+
+    worker.submit((), chunk(0, 2_000, 0.25)).unwrap();
+    worker.submit((), chunk(2_000, 3_000, 0.5)).unwrap();
+    on_start.recv().unwrap();
+    assert_eq!(worker.backlog(), Duration::from_secs(5));
+
+    release.send(()).unwrap();
+    on_start.recv().unwrap();
+    assert_eq!(worker.backlog(), Duration::from_secs(3));
+
+    release.send(()).unwrap();
+    let (_results, _asr) = worker.finish().unwrap();
+}
+
+#[test]
+fn a_chunk_with_no_words_still_leaves_the_backlog() {
+    let (asr, on_start, release) = gated();
+    let worker = AsrWorker::spawn(asr, AsrOptions::default());
+
+    worker.submit((), chunk(0, 1_000, 0.0)).unwrap();
+    on_start.recv().unwrap();
+    release.send(()).unwrap();
+    worker.submit((), chunk(1_000, 1_000, 0.5)).unwrap();
+    on_start.recv().unwrap();
+
+    assert_eq!(worker.backlog(), Duration::from_secs(1));
+    release.send(()).unwrap();
+    let (_results, _asr) = worker.finish().unwrap();
+}
+
+/// An error alone doesn't say where the hole in the transcript is.
+#[test]
+fn a_failed_chunk_reports_its_label_and_place() {
+    let worker = AsrWorker::spawn(Box::new(LevelEcho), AsrOptions::default());
+    worker.submit("system", chunk(2_000, 500, -1.0)).unwrap();
+    worker.submit("mic", chunk(3_000, 500, 0.5)).unwrap();
+
+    while worker.backlog() > Duration::ZERO {
+        thread::yield_now();
+    }
+
+    assert_eq!(
+        worker.failed(),
+        [FailedChunk {
+            source: "system",
+            start: Duration::from_millis(2_000),
+            end: Duration::from_millis(2_500),
+        }]
+    );
+    assert!(worker.failed().is_empty(), "each failure comes out once");
+    let (_results, _asr) = worker.finish().unwrap();
 }

@@ -17,6 +17,10 @@ pub struct Catalog {
     pub version: String,
     tiers: Tiers,
     pub models: Vec<ModelEntry>,
+    /// Diarization's models. A list of their own: [`ModelKind`] is matched exhaustively in
+    /// Settings, so they join [`Self::models`] once that page can label them.
+    #[serde(default)]
+    pub speaker_models: Vec<SpeakerModelEntry>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -40,6 +44,10 @@ pub struct TierPreset {
     pub asr_model: String,
     /// Also used for meeting summaries and chat.
     pub llm_model: Option<String>,
+    /// Finds who speaks when. Set exactly when `diarization` is on, like `speaker_model`.
+    pub segmentation_model: Option<String>,
+    /// Tells the voices apart.
+    pub speaker_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
@@ -48,6 +56,14 @@ pub enum ModelKind {
     Vad,
     Asr,
     Llm,
+}
+
+/// The two models diarization needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SpeakerModelKind {
+    Segmentation,
+    Embedding,
 }
 
 /// The runtime that loads the model's files (ADR-0003).
@@ -63,11 +79,11 @@ pub enum Engine {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ModelEntry {
+pub struct ModelEntry<K = ModelKind> {
     /// Stable key, also the model's folder name in the store.
     pub id: String,
     pub name: String,
-    pub kind: ModelKind,
+    pub kind: K,
     pub engine: Engine,
     /// SPDX-style identifier shown on the Models page.
     pub license: String,
@@ -83,6 +99,8 @@ pub struct ModelEntry {
     pub files: Vec<ModelFile>,
 }
 
+pub type SpeakerModelEntry = ModelEntry<SpeakerModelKind>;
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelFile {
@@ -94,7 +112,7 @@ pub struct ModelFile {
     pub sha256: String,
 }
 
-impl ModelEntry {
+impl<K> ModelEntry<K> {
     pub fn download_size(&self) -> u64 {
         self.files.iter().map(|f| f.size).sum()
     }
@@ -136,28 +154,10 @@ impl Catalog {
         }
         let mut ids = HashSet::new();
         for model in &self.models {
-            if !ids.insert(model.id.as_str()) {
-                return invalid(format!("duplicate model id {}", model.id));
-            }
-            if !is_plain_file_name(&model.id) {
-                return invalid(format!("model id {:?} is not a folder name", model.id));
-            }
-            if model.files.is_empty() {
-                return invalid(format!("{} has no files", model.id));
-            }
-            let mut names = HashSet::new();
-            for file in &model.files {
-                let at = format!("{}/{}", model.id, file.name);
-                if !is_plain_file_name(&file.name) || !names.insert(file.name.as_str()) {
-                    return invalid(format!("bad or duplicate file name {:?}", file.name));
-                }
-                if !is_sha256_hex(&file.sha256) {
-                    return invalid(format!("{at}: sha256 must be 64 lowercase hex digits"));
-                }
-                if !is_allowed_url(&file.url) {
-                    return invalid(format!("{at}: url must be https (ADR-0004)"));
-                }
-            }
+            validate_entry(model, &mut ids)?;
+        }
+        for model in &self.speaker_models {
+            validate_entry(model, &mut ids)?;
         }
         for tier in [Tier::Lite, Tier::Balanced, Tier::High] {
             self.validate_preset(tier)?;
@@ -169,6 +169,8 @@ impl Catalog {
         let preset = self.preset(tier);
         if preset.vad != preset.vad_model.is_some()
             || preset.llm_cleanup != preset.llm_model.is_some()
+            || preset.diarization != preset.segmentation_model.is_some()
+            || preset.diarization != preset.speaker_model.is_some()
         {
             return invalid(format!(
                 "{tier:?}: a stage is on without a model, or off with one"
@@ -189,11 +191,26 @@ impl Catalog {
                 Some(_) => {}
             }
         }
+        let speaker_slots = [
+            (&preset.segmentation_model, SpeakerModelKind::Segmentation),
+            (&preset.speaker_model, SpeakerModelKind::Embedding),
+        ];
+        for (id, kind) in speaker_slots {
+            let Some(id) = id else { continue };
+            match self.speaker_model(id) {
+                Some(model) if model.kind == kind => {}
+                _ => return invalid(format!("{tier:?} has no {kind:?} model {id}")),
+            }
+        }
         Ok(())
     }
 
     pub fn model(&self, id: &str) -> Option<&ModelEntry> {
         self.models.iter().find(|m| m.id == id)
+    }
+
+    pub fn speaker_model(&self, id: &str) -> Option<&SpeakerModelEntry> {
+        self.speaker_models.iter().find(|m| m.id == id)
     }
 
     pub fn preset(&self, tier: Tier) -> &TierPreset {
@@ -211,6 +228,16 @@ impl Catalog {
             .filter_map(|id| self.model(id))
             .collect()
     }
+
+    /// What a tier downloads on top of [`Self::models_for_tier`]: segmentation, then embedding.
+    pub fn speaker_models_for_tier(&self, tier: Tier) -> Vec<&SpeakerModelEntry> {
+        let preset = self.preset(tier);
+        [&preset.segmentation_model, &preset.speaker_model]
+            .into_iter()
+            .flatten()
+            .filter_map(|id| self.speaker_model(id))
+            .collect()
+    }
 }
 
 /// A manifest that doesn't parse or doesn't hold together.
@@ -220,6 +247,37 @@ pub struct CatalogError(String);
 
 fn invalid<T>(reason: String) -> Result<T, CatalogError> {
     Err(CatalogError(reason))
+}
+
+/// Everything about an entry that doesn't depend on its kind. `ids` spans both model lists,
+/// because the id is also the folder name.
+fn validate_entry<'a, K>(
+    model: &'a ModelEntry<K>,
+    ids: &mut HashSet<&'a str>,
+) -> Result<(), CatalogError> {
+    if !ids.insert(model.id.as_str()) {
+        return invalid(format!("duplicate model id {}", model.id));
+    }
+    if !is_plain_file_name(&model.id) {
+        return invalid(format!("model id {:?} is not a folder name", model.id));
+    }
+    if model.files.is_empty() {
+        return invalid(format!("{} has no files", model.id));
+    }
+    let mut names = HashSet::new();
+    for file in &model.files {
+        let at = format!("{}/{}", model.id, file.name);
+        if !is_plain_file_name(&file.name) || !names.insert(file.name.as_str()) {
+            return invalid(format!("bad or duplicate file name {:?}", file.name));
+        }
+        if !is_sha256_hex(&file.sha256) {
+            return invalid(format!("{at}: sha256 must be 64 lowercase hex digits"));
+        }
+        if !is_allowed_url(&file.url) {
+            return invalid(format!("{at}: url must be https (ADR-0004)"));
+        }
+    }
+    Ok(())
 }
 
 /// One path component that can't escape the model folder on any OS.

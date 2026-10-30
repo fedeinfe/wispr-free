@@ -34,7 +34,7 @@ pub(crate) fn has_correction_marker(text: &str) -> bool {
 
 /// Counts the words in `reply` and how many of them the speaker never said, ignoring case and
 /// punctuation. A bare list dash is not a word.
-pub(crate) fn new_words(text: &str, reply: &str) -> (usize, usize) {
+pub fn new_words(text: &str, reply: &str) -> (usize, usize) {
     let spoken: Vec<Word> = text.split_whitespace().map(Word::parse).collect();
     let words = reply.split_whitespace().map(Word::parse);
     let words: Vec<Word> = words.filter(|word| !word.key.is_empty()).collect();

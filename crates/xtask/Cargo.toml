@@ -10,9 +10,23 @@ publish.workspace = true
 
 [features]
 llama = ["wf-pipeline/llama"]
+meeting = [
+    "llama",
+    "wf-pipeline/sherpa",
+    "wf-pipeline/silero",
+    "wf-pipeline/whisper",
+    "wf-pipeline/diarization",
+]
 
 [dependencies]
+wf-core.workspace = true
+wf-meetings.workspace = true
+wf-models.workspace = true
 wf-pipeline.workspace = true
 anyhow.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
