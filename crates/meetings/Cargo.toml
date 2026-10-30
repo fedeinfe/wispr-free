@@ -12,3 +12,9 @@ publish.workspace = true
 wf-core.workspace = true
 wf-audio.workspace = true
 wf-pipeline.workspace = true
+opus.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+ogg.workspace = true
