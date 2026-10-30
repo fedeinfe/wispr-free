@@ -125,6 +125,8 @@ pub fn format_bytes(bytes: u64) -> String {
     let bytes = bytes as f64;
     if bytes >= GB {
         format!("{:.1} GB", bytes / GB)
+    } else if bytes >= 10.0 * MB {
+        format!("{:.0} MB", bytes / MB)
     } else {
         format!("{:.1} MB", bytes / MB)
     }

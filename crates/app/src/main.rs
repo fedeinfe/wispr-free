@@ -9,12 +9,9 @@ use wispr_free::settings_window::SettingsHost;
 use wispr_free::{Tray, select_renderer};
 
 fn main() -> Result<(), slint::PlatformError> {
-    let mut args = std::env::args().skip(1);
-    let open_settings = args.any(|arg| arg == "--settings");
-    if std::env::args()
-        .skip(1)
-        .any(|arg| arg == "--version" || arg == "-V")
-    {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let open_settings = args.iter().any(|arg| arg == "--settings");
+    if args.iter().any(|arg| arg == "--version" || arg == "-V") {
         println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         return Ok(());
     }

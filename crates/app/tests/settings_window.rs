@@ -8,10 +8,12 @@ use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use i_slint_backend_testing::{
     AccessibleRole, ElementHandle, init_no_event_loop, mock_elapsed_time,
 };
+use slint::platform::PointerEventButton;
 use slint::platform::WindowEvent;
 use slint::{ComponentHandle, LogicalSize, Model, SharedString};
 use wf_audio::InputDevice;
@@ -22,7 +24,8 @@ use wf_core::shortcut::{Action, Bindings, Combo, KeyEvent, Platform};
 use wf_models::{Catalog, ModelStore};
 use wf_platform::keys::KeySignal;
 use wispr_free::settings_window::{
-    Desktop, Event, Mailbox, Paths, SettingsController, SettingsHost, SettingsParts,
+    Desktop, Event, Mailbox, Paths, RECORDING_IDLE_LIMIT, SettingsController, SettingsHost,
+    SettingsParts,
 };
 use wispr_free::{Prefs, ReplacementRow, SettingsWindow, SnippetRow};
 
@@ -298,6 +301,78 @@ fn a_choice_made_in_a_list_persists_across_a_restart() {
 }
 
 #[test]
+fn a_choice_picked_from_a_dropdown_is_saved() {
+    let harness = Harness::new();
+    harness.go_to(GENERAL);
+
+    harness
+        .element("Theme")
+        .mock_single_click(PointerEventButton::Left);
+    let option = ElementHandle::find_by_accessible_label(harness.window(), "Dark")
+        .next()
+        .expect("the list is open");
+    option.mock_single_click(PointerEventButton::Left);
+
+    assert_eq!(harness.saved().general.theme, Theme::Dark);
+    assert_eq!(harness.prefs().get_values().theme, 2);
+}
+
+#[test]
+fn text_typed_into_a_field_is_saved() {
+    let harness = Harness::new();
+    harness.go_to(MEETINGS);
+
+    harness
+        .element("Summary template")
+        .set_accessible_value("Decisions first.");
+
+    assert_eq!(
+        harness.saved().meetings.summary_template,
+        "Decisions first."
+    );
+}
+
+#[test]
+fn text_typed_into_a_replacement_row_is_saved() {
+    let harness = Harness::new();
+    harness.go_to(STYLE);
+    harness.prefs().invoke_add_replacement();
+
+    harness.element("Wrong").set_accessible_value("wisper");
+    harness.element("Right").set_accessible_value("Whisper");
+
+    let expected = Replacement {
+        wrong: "wisper".into(),
+        right: "Whisper".into(),
+    };
+    assert_eq!(harness.saved().style.replacements, [expected]);
+}
+
+#[test]
+fn a_stepper_changes_a_number_within_its_limits() {
+    let harness = Harness::new();
+    harness.go_to(MEETINGS);
+
+    harness
+        .element("Maximum length")
+        .invoke_accessible_increment_action();
+    assert_eq!(harness.saved().meetings.max_length_minutes, 255);
+
+    harness.go_to(PIPELINE);
+    let silence = harness.element("Silence before stopping");
+    silence.invoke_accessible_increment_action();
+    assert_eq!(
+        harness.saved().pipeline.vad_auto_stop_seconds,
+        3,
+        "off until the auto-stop is on"
+    );
+
+    harness.click("Stop hands-free after silence");
+    silence.invoke_accessible_increment_action();
+    assert_eq!(harness.saved().pipeline.vad_auto_stop_seconds, 4);
+}
+
+#[test]
 fn a_stage_toggle_turns_the_tier_on_the_page_to_custom() {
     let harness = Harness::new();
     harness.go_to(PIPELINE);
@@ -413,6 +488,28 @@ fn the_stop_button_aborts_the_recording() {
 
     assert_eq!(harness.prefs().get_recording_action(), -1);
     assert!(!harness.desktop.capturing_keys());
+}
+
+#[test]
+fn a_forgotten_recording_gives_the_keyboard_back() {
+    let harness = Harness::new();
+    harness.go_to(GENERAL);
+    harness.click("Change Push-to-talk");
+
+    mock_elapsed_time(RECORDING_IDLE_LIMIT - Duration::from_secs(1));
+    harness.key(KeyEvent::press(Ctrl(Left)));
+    harness.key(KeyEvent::release(Char('Q')));
+    mock_elapsed_time(RECORDING_IDLE_LIMIT - Duration::from_secs(1));
+    assert!(harness.desktop.capturing_keys(), "a key restarts the wait");
+
+    mock_elapsed_time(Duration::from_secs(2));
+
+    assert!(!harness.desktop.capturing_keys());
+    assert_eq!(harness.prefs().get_recording_action(), -1);
+    assert_eq!(
+        harness.saved().shortcuts,
+        Bindings::default_for(Platform::current())
+    );
 }
 
 #[test]
@@ -706,6 +803,11 @@ fn the_models_page_lists_the_catalog_with_size_ram_and_status() {
     assert_eq!(rows.row_count(), Catalog::bundled().models.len());
     let silero = rows.iter().find(|row| row.name.contains("Silero")).unwrap();
     assert!(silero.detail.contains("2.2 MB"), "{}", silero.detail);
+    assert!(
+        silero.detail.contains("about 30 MB RAM"),
+        "{}",
+        silero.detail
+    );
     assert!(silero.detail.contains("MIT"), "{}", silero.detail);
     assert_eq!(silero.status, "Not installed");
     assert!(!silero.installed);
@@ -906,7 +1008,7 @@ fn closing_the_window_drops_it() {
         .unwrap()
         .window()
         .dispatch_event(WindowEvent::CloseRequested);
-    mock_elapsed_time(std::time::Duration::from_millis(1));
+    mock_elapsed_time(Duration::from_millis(1));
 
     assert!(!host.is_open());
     assert!(window.upgrade().is_none());

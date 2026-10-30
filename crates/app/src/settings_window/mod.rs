@@ -17,8 +17,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
+use std::time::Duration;
 
-use slint::{ComponentHandle, Model, ModelRc, PlatformError, SharedString, VecModel, Weak};
+use slint::{
+    ComponentHandle, Model, ModelRc, PlatformError, SharedString, Timer, TimerMode, VecModel, Weak,
+};
 use wf_audio::InputDevice;
 use wf_core::settings::{Replacement, Settings, SettingsStore, Snippet};
 use wf_core::shortcut::recorder::{RecorderStep, ShortcutRecorder, reset_to_default};
@@ -33,6 +36,10 @@ use values::{ModelChoices, apply_values, values_of};
 pub use host::{MakeParts, SettingsHost};
 
 const RELEASES_URL: &str = "https://github.com/fedeinfe/wispr-free/releases";
+
+/// A recording swallows every key on the system, so one left open must not eat the user's typing
+/// in another app. It ends after this long without a key.
+pub const RECORDING_IDLE_LIMIT: Duration = Duration::from_secs(15);
 
 /// What the window needs from the OS, behind a seam so tests touch nothing real.
 pub trait Desktop {
@@ -135,6 +142,7 @@ struct Inner {
     mailbox: Mailbox,
     events: Receiver<Event>,
     recording: RefCell<Option<Recording>>,
+    recording_timeout: Timer,
     microphone_test: RefCell<Option<Box<dyn Any>>>,
     devices: RefCell<(Vec<InputDevice>, Option<String>)>,
     models: Rc<VecModel<ModelRow>>,
@@ -172,6 +180,7 @@ impl SettingsController {
             mailbox,
             events,
             recording: RefCell::default(),
+            recording_timeout: Timer::default(),
             microphone_test: RefCell::default(),
             devices: RefCell::default(),
             models: Rc::default(),
@@ -437,7 +446,7 @@ impl Inner {
         }
     }
 
-    fn start_recording(&self, index: i32) {
+    fn start_recording(self: &Rc<Self>, index: i32) {
         let prefs = self.prefs();
         let Some(&action) = Action::ALL.get(index as usize) else {
             return;
@@ -455,12 +464,23 @@ impl Inner {
                 });
                 prefs.set_shortcut_error(SharedString::new());
                 prefs.set_recording_action(index);
+                let weak = Rc::downgrade(self);
+                self.recording_timeout.start(
+                    TimerMode::SingleShot,
+                    RECORDING_IDLE_LIMIT,
+                    move || {
+                        if let Some(this) = weak.upgrade() {
+                            this.stop_recording();
+                        }
+                    },
+                );
             }
             Err(error) => prefs.set_shortcut_error(error.into()),
         }
     }
 
     fn stop_recording(&self) {
+        self.recording_timeout.stop();
         self.recording.borrow_mut().take();
         let prefs = self.prefs();
         prefs.set_recording_action(-1);
@@ -483,6 +503,7 @@ impl Inner {
         let action = *action;
         let step = recorder.on_key(event);
         drop(recording);
+        self.recording_timeout.restart();
 
         let prefs = self.prefs();
         match step {

@@ -6162,6 +6162,7 @@ version = "0.1.0"
 dependencies = [
  "directories",
  "i-slint-backend-testing",
+ "image",
  "mimalloc",
  "slint",
  "slint-build",

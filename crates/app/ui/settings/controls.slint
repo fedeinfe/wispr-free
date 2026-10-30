@@ -125,12 +125,15 @@ export component Select inherits Rectangle {
         vertical-alignment: center;
     }
 
-    Text {
-        x: parent.width - 18px;
-        text: "⌄";
-        color: Theme.muted;
-        font-size: Theme.body-text;
-        vertical-alignment: center;
+    Path {
+        x: parent.width - 19px;
+        y: (parent.height - self.height) / 2;
+        width: 9px;
+        height: 5px;
+        commands: "M 0 0 L 4.5 5 L 9 0";
+        stroke: Theme.muted;
+        stroke-width: 1.5px;
+        fill: transparent;
     }
 
     touch := TouchArea {

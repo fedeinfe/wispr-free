@@ -101,6 +101,10 @@ export component GeneralPage inherits Page {
             }
         }
 
+        if !Prefs.microphone-auto && Prefs.microphones.length == 0: Hint {
+            text: "No microphones found.";
+        }
+
         if !Prefs.microphone-auto: VerticalLayout {
             spacing: 6px;
 
