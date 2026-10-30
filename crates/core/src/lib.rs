@@ -2,3 +2,4 @@
 //! and later the dictation state machine (ticket 03), settings and history (ticket 10).
 
 pub mod audio;
+pub mod pill;
