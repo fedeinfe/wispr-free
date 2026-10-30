@@ -85,6 +85,10 @@ impl Desktop for SystemDesktop {
         self.dictation.forget_history();
     }
 
+    fn look_for_microphones(&self, mailbox: &Mailbox) {
+        look_for_microphones(mailbox);
+    }
+
     fn test_microphone(
         &self,
         ranking: Vec<String>,
@@ -154,10 +158,14 @@ pub fn start_probes(mailbox: &Mailbox) {
             recommended: format!("{:?}", hardware.recommended_tier()),
         });
     });
-    let microphones_mailbox = mailbox.clone();
+    look_for_microphones(mailbox);
+}
+
+fn look_for_microphones(mailbox: &Mailbox) {
+    let mailbox = mailbox.clone();
     thread::spawn(move || {
         let backend = CpalBackend::new();
-        microphones_mailbox.post(Event::Microphones {
+        mailbox.post(Event::Microphones {
             devices: backend.devices(),
             default: backend.default_device(),
         });

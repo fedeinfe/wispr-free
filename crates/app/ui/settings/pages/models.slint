@@ -2,7 +2,7 @@ import { Prefs, ModelRow } from "../bridge.slint";
 import { Theme } from "../theme.slint";
 import { Btn, Card, ErrorText, Hint, Label, Page } from "../controls.slint";
 
-component ModelLine inherits VerticalLayout {
+export component ModelLine inherits VerticalLayout {
     in property <ModelRow> model;
 
     spacing: 4px;
@@ -89,6 +89,150 @@ component ModelLine inherits VerticalLayout {
     }
 }
 
+export component ModelsFolderCard inherits Card {
+    title: "Models folder";
+    hint: "Models take gigabytes. Keep them anywhere, an external drive included.";
+
+    HorizontalLayout {
+        spacing: 8px;
+
+        Hint {
+            horizontal-stretch: 1;
+            vertical-alignment: center;
+            text: Prefs.models-folder;
+        }
+
+        Btn {
+            width: 100px;
+            text: "Open folder";
+            enabled: !Prefs.models-folder-missing;
+            clicked => {
+                Prefs.open-models-folder();
+            }
+        }
+
+        Btn {
+            width: 80px;
+            text: "Change…";
+            accessible-label: "Change models folder";
+            enabled: !Prefs.model-busy && Prefs.pending-folder == "";
+            clicked => {
+                Prefs.choose-models-folder();
+            }
+        }
+
+        if Prefs.models-folder-custom: Btn {
+            width: 90px;
+            text: "Use default";
+            enabled: !Prefs.model-busy && Prefs.pending-folder == "";
+            clicked => {
+                Prefs.use-default-models-folder();
+            }
+        }
+    }
+
+    if Prefs.models-folder-missing: HorizontalLayout {
+        spacing: 8px;
+
+        ErrorText {
+            horizontal-stretch: 1;
+            vertical-alignment: center;
+            text: "This folder isn't available. Connect its drive, or choose another folder.";
+        }
+
+        Btn {
+            width: 100px;
+            text: "Check again";
+            enabled: !Prefs.model-busy;
+            clicked => {
+                Prefs.recheck-models-folder();
+            }
+        }
+    }
+
+    if Prefs.pending-folder != "": VerticalLayout {
+        spacing: 8px;
+
+        Label {
+            text: "Move to " + Prefs.pending-folder + "?";
+            wrap: word-wrap;
+        }
+
+        Hint {
+            text: Prefs.pending-summary;
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+
+            Btn {
+                width: 110px;
+                text: "Move them";
+                primary: true;
+                enabled: !Prefs.model-busy;
+                clicked => {
+                    Prefs.move-to-pending-folder();
+                }
+            }
+
+            Btn {
+                width: 170px;
+                text: "Switch without moving";
+                enabled: !Prefs.model-busy;
+                clicked => {
+                    Prefs.switch-to-pending-folder();
+                }
+            }
+
+            Btn {
+                width: 70px;
+                text: "Cancel";
+                accessible-label: "Keep the current folder";
+                clicked => {
+                    Prefs.cancel-pending-folder();
+                }
+            }
+        }
+    }
+
+    if Prefs.moving-models: HorizontalLayout {
+        spacing: 8px;
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 4px;
+
+            Hint {
+                text: "Moving models… The originals stay until every file is copied.";
+            }
+
+            Rectangle {
+                height: 4px;
+                border-radius: 2px;
+                background: Theme.track;
+                clip: true;
+
+                Rectangle {
+                    x: 0;
+                    width: parent.width * Prefs.move-progress;
+                    background: Theme.accent;
+                }
+            }
+        }
+
+        Btn {
+            width: 76px;
+            text: "Cancel";
+            accessible-label: "Cancel moving models";
+            clicked => {
+                Prefs.cancel-move();
+            }
+        }
+    }
+}
+
 export component ModelsPage inherits Page {
     Card {
         title: "This computer";
@@ -102,149 +246,7 @@ export component ModelsPage inherits Page {
         }
     }
 
-    Card {
-        title: "Models folder";
-        hint: "Models take gigabytes. Keep them anywhere, an external drive included.";
-
-        HorizontalLayout {
-            spacing: 8px;
-
-            Hint {
-                horizontal-stretch: 1;
-                vertical-alignment: center;
-                text: Prefs.models-folder;
-            }
-
-            Btn {
-                width: 100px;
-                text: "Open folder";
-                enabled: !Prefs.models-folder-missing;
-                clicked => {
-                    Prefs.open-models-folder();
-                }
-            }
-
-            Btn {
-                width: 80px;
-                text: "Change…";
-                accessible-label: "Change models folder";
-                enabled: !Prefs.model-busy && Prefs.pending-folder == "";
-                clicked => {
-                    Prefs.choose-models-folder();
-                }
-            }
-
-            if Prefs.models-folder-custom: Btn {
-                width: 90px;
-                text: "Use default";
-                enabled: !Prefs.model-busy && Prefs.pending-folder == "";
-                clicked => {
-                    Prefs.use-default-models-folder();
-                }
-            }
-        }
-
-        if Prefs.models-folder-missing: HorizontalLayout {
-            spacing: 8px;
-
-            ErrorText {
-                horizontal-stretch: 1;
-                vertical-alignment: center;
-                text: "This folder isn't available. Connect its drive, or choose another folder.";
-            }
-
-            Btn {
-                width: 100px;
-                text: "Check again";
-                enabled: !Prefs.model-busy;
-                clicked => {
-                    Prefs.recheck-models-folder();
-                }
-            }
-        }
-
-        if Prefs.pending-folder != "": VerticalLayout {
-            spacing: 8px;
-
-            Label {
-                text: "Move to " + Prefs.pending-folder + "?";
-                wrap: word-wrap;
-            }
-
-            Hint {
-                text: Prefs.pending-summary;
-            }
-
-            HorizontalLayout {
-                spacing: 8px;
-                alignment: start;
-
-                Btn {
-                    width: 110px;
-                    text: "Move them";
-                    primary: true;
-                    enabled: !Prefs.model-busy;
-                    clicked => {
-                        Prefs.move-to-pending-folder();
-                    }
-                }
-
-                Btn {
-                    width: 170px;
-                    text: "Switch without moving";
-                    enabled: !Prefs.model-busy;
-                    clicked => {
-                        Prefs.switch-to-pending-folder();
-                    }
-                }
-
-                Btn {
-                    width: 70px;
-                    text: "Cancel";
-                    accessible-label: "Keep the current folder";
-                    clicked => {
-                        Prefs.cancel-pending-folder();
-                    }
-                }
-            }
-        }
-
-        if Prefs.moving-models: HorizontalLayout {
-            spacing: 8px;
-
-            VerticalLayout {
-                horizontal-stretch: 1;
-                alignment: center;
-                spacing: 4px;
-
-                Hint {
-                    text: "Moving models… The originals stay until every file is copied.";
-                }
-
-                Rectangle {
-                    height: 4px;
-                    border-radius: 2px;
-                    background: Theme.track;
-                    clip: true;
-
-                    Rectangle {
-                        x: 0;
-                        width: parent.width * Prefs.move-progress;
-                        background: Theme.accent;
-                    }
-                }
-            }
-
-            Btn {
-                width: 76px;
-                text: "Cancel";
-                accessible-label: "Cancel moving models";
-                clicked => {
-                    Prefs.cancel-move();
-                }
-            }
-        }
-    }
+    ModelsFolderCard { }
 
     if Prefs.model-error != "": ErrorText {
         text: Prefs.model-error;
