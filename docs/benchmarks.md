@@ -111,7 +111,7 @@ Release to text, median of four warm dictations, in seconds. Fallbacks were 0 in
 
 Lite with Parakeet and Lite with base.en ran before the cleanup prompt gained its last example, which Lite doesn't use. Transcripts weren't perfect on any setup: the turbo setups wrote "the summary in the new budget section" for "and". Parakeet turned "Possiamo provare" into "Possire" in Italian, and the 1.7B model made it "Possa", which the speaker never said.
 
-Spec §8's sentences, spoken by `say`, on the real path: "So I think we should ship it." and "I like the blue one." on High, and the same on Balanced. See the ticket for the test run.
+Spec §8's sentences, spoken by `say`, pass on the real path: "So I think we should ship it." on Lite, Balanced and High, and "I like the blue one." on Balanced and High.
 
 The real paste adds a step this harness skips. Ticket 04 measured the whole insertion at about 520 ms through the clipboard restore, but the text lands before that restore, so this isn't added in full. It hasn't been timed from release on this path.
 
