@@ -51,7 +51,7 @@ fn keeps_the_words_of_a_clip_cut_mid_phrase(asr: &mut dyn Asr) {
         &AsrOptions::default(),
     );
 
-    for word in ["hoodwinked", "notice", "exercise", "elephant", "government"] {
+    for word in ["wise", "eyes", "notice", "exercise", "elephant", "government"] {
         assert!(text.contains(word), "no {word:?} in {text:?}");
     }
 }

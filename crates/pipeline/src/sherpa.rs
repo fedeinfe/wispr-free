@@ -19,6 +19,9 @@ const TOKENS: &str = "tokens.txt";
 const DECODING_METHOD: &str = "modified_beam_search";
 /// Measured on a sound-alike: 1.5 changes nothing, 3 picks the word, 5 invents repeats of it.
 const HOTWORD_SCORE: f32 = 3.0;
+/// Without this the decoder can stay on blank and drop the start of a clip, or all of it, with no
+/// error: 19 of 70 real clips came back empty, none at 3. At 4.5 it invents speech in noise.
+const BLANK_PENALTY: f32 = 3.0;
 /// Less audio than this makes the encoder throw, and the exception aborts the process.
 const MIN_SAMPLES: usize = SAMPLE_RATE_HZ as usize;
 
@@ -60,6 +63,7 @@ impl SherpaAsr {
         config.model_config.num_threads = crate::inference_threads() as i32;
         config.decoding_method = Some(DECODING_METHOD.into());
         config.hotwords_score = HOTWORD_SCORE;
+        config.blank_penalty = BLANK_PENALTY;
 
         let recognizer = OfflineRecognizer::create(&config)
             .ok_or_else(|| PipelineError::Engine("the sherpa-onnx model failed to load".into()))?;
