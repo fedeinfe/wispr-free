@@ -52,6 +52,10 @@ x11rb = "0.13.2"
 # Storage
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 
+# Platform
+windows-sys = "0.61.2"
+evdev = "0.13.2"
+
 # Common
 anyhow = "1.0.104"
 thiserror = "2.0.21"
