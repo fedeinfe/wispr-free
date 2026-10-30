@@ -111,9 +111,7 @@ fn a_tier_that_diarizes_also_downloads_its_speaker_models() {
              segmentation_model = \"segmentation\"\nspeaker_model = \"embedding\"\n"
         )
     };
-    let speaker = |id: &str, file: &ModelFile| {
-        entry(id, id, "sherpa-onnx", file).replace("[[models", "[[speaker_models")
-    };
+    let speaker = |id: &str, file: &ModelFile| entry(id, id, "sherpa-onnx", file);
     let toml = [
         "schema = 1\nversion = \"test\"\n".to_owned(),
         tier("lite"),

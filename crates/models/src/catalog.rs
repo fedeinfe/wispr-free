@@ -17,10 +17,6 @@ pub struct Catalog {
     pub version: String,
     tiers: Tiers,
     pub models: Vec<ModelEntry>,
-    /// Diarization's models. A list of their own: [`ModelKind`] is matched exhaustively in
-    /// Settings, so they join [`Self::models`] once that page can label them.
-    #[serde(default)]
-    pub speaker_models: Vec<SpeakerModelEntry>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -56,13 +52,9 @@ pub enum ModelKind {
     Vad,
     Asr,
     Llm,
-}
-
-/// The two models diarization needs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SpeakerModelKind {
+    /// Finds who speaks when, for diarization.
     Segmentation,
+    /// Tells the voices apart, for diarization.
     Embedding,
 }
 
@@ -79,11 +71,11 @@ pub enum Engine {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ModelEntry<K = ModelKind> {
+pub struct ModelEntry {
     /// Stable key, also the model's folder name in the store.
     pub id: String,
     pub name: String,
-    pub kind: K,
+    pub kind: ModelKind,
     pub engine: Engine,
     /// SPDX-style identifier shown on the Models page.
     pub license: String,
@@ -99,8 +91,6 @@ pub struct ModelEntry<K = ModelKind> {
     pub files: Vec<ModelFile>,
 }
 
-pub type SpeakerModelEntry = ModelEntry<SpeakerModelKind>;
-
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelFile {
@@ -112,19 +102,21 @@ pub struct ModelFile {
     pub sha256: String,
 }
 
-impl<K> ModelEntry<K> {
+impl ModelEntry {
     pub fn download_size(&self) -> u64 {
         self.files.iter().map(|f| f.size).sum()
     }
 }
 
 impl TierPreset {
-    /// Every model the preset names, in pipeline order (VAD, ASR, LLM).
+    /// Every model the preset names, in pipeline order (VAD, ASR, LLM, then diarization's two).
     pub fn model_ids(&self) -> impl Iterator<Item = &str> {
         self.vad_model
             .iter()
             .chain(std::iter::once(&self.asr_model))
             .chain(self.llm_model.iter())
+            .chain(self.segmentation_model.iter())
+            .chain(self.speaker_model.iter())
             .map(String::as_str)
     }
 }
@@ -156,9 +148,6 @@ impl Catalog {
         for model in &self.models {
             validate_entry(model, &mut ids)?;
         }
-        for model in &self.speaker_models {
-            validate_entry(model, &mut ids)?;
-        }
         for tier in [Tier::Lite, Tier::Balanced, Tier::High] {
             self.validate_preset(tier)?;
         }
@@ -180,6 +169,8 @@ impl Catalog {
             (&preset.vad_model, ModelKind::Vad),
             (&Some(preset.asr_model.clone()), ModelKind::Asr),
             (&preset.llm_model, ModelKind::Llm),
+            (&preset.segmentation_model, ModelKind::Segmentation),
+            (&preset.speaker_model, ModelKind::Embedding),
         ];
         for (id, kind) in slots {
             let Some(id) = id else { continue };
@@ -191,26 +182,11 @@ impl Catalog {
                 Some(_) => {}
             }
         }
-        let speaker_slots = [
-            (&preset.segmentation_model, SpeakerModelKind::Segmentation),
-            (&preset.speaker_model, SpeakerModelKind::Embedding),
-        ];
-        for (id, kind) in speaker_slots {
-            let Some(id) = id else { continue };
-            match self.speaker_model(id) {
-                Some(model) if model.kind == kind => {}
-                _ => return invalid(format!("{tier:?} has no {kind:?} model {id}")),
-            }
-        }
         Ok(())
     }
 
     pub fn model(&self, id: &str) -> Option<&ModelEntry> {
         self.models.iter().find(|m| m.id == id)
-    }
-
-    pub fn speaker_model(&self, id: &str) -> Option<&SpeakerModelEntry> {
-        self.speaker_models.iter().find(|m| m.id == id)
     }
 
     pub fn preset(&self, tier: Tier) -> &TierPreset {
@@ -229,14 +205,19 @@ impl Catalog {
             .collect()
     }
 
-    /// What a tier downloads on top of [`Self::models_for_tier`]: segmentation, then embedding.
-    pub fn speaker_models_for_tier(&self, tier: Tier) -> Vec<&SpeakerModelEntry> {
+    /// What diarization runs on in a tier: segmentation, then embedding.
+    pub fn speaker_models_for_tier(&self, tier: Tier) -> Vec<&ModelEntry> {
         let preset = self.preset(tier);
         [&preset.segmentation_model, &preset.speaker_model]
             .into_iter()
             .flatten()
-            .filter_map(|id| self.speaker_model(id))
+            .filter_map(|id| self.model(id))
             .collect()
+    }
+
+    /// The first model of a kind, for a stage a Custom tier names no model for.
+    pub fn first_of_kind(&self, kind: ModelKind) -> Option<&ModelEntry> {
+        self.models.iter().find(|model| model.kind == kind)
     }
 }
 
@@ -249,10 +230,9 @@ fn invalid<T>(reason: String) -> Result<T, CatalogError> {
     Err(CatalogError(reason))
 }
 
-/// Everything about an entry that doesn't depend on its kind. `ids` spans both model lists,
-/// because the id is also the folder name.
-fn validate_entry<'a, K>(
-    model: &'a ModelEntry<K>,
+/// Everything about an entry that doesn't depend on its kind. The id is also the folder name.
+fn validate_entry<'a>(
+    model: &'a ModelEntry,
     ids: &mut HashSet<&'a str>,
 ) -> Result<(), CatalogError> {
     if !ids.insert(model.id.as_str()) {

@@ -56,7 +56,7 @@ impl RealEngines {
         }
     }
 
-    fn file<K>(&self, model: &ModelEntry<K>, file: &ModelFile) -> PathBuf {
+    fn file(&self, model: &ModelEntry, file: &ModelFile) -> PathBuf {
         let nested = self.models.join(&model.id).join(&file.name);
         if nested.exists() {
             nested
