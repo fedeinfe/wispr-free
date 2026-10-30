@@ -22,6 +22,10 @@ pub struct SystemContext;
 
 impl ContextSource for SystemContext {
     fn read(&self, depth: ContextDepth) -> Context {
+        // AX on our own windows re-enters Slint's accessibility adapter, which panics.
+        if let Some(app) = frontmost_app().filter(|app| app.pid == Some(std::process::id())) {
+            return without_ax(Some(app), Focus::Unknown);
+        }
         let system = unsafe { AXUIElement::new_system_wide() };
         unsafe { system.set_messaging_timeout(AX_TIMEOUT_SECONDS) };
 
