@@ -135,6 +135,12 @@ fn start(settings: Settings, real_time: bool) -> RealFlow {
 impl RealFlow {
     /// One hands-free dictation of `clip`. Returns what would have been typed.
     fn dictate(&self, clip: AudioClip) -> (String, Report) {
+        self.try_dictate(clip)
+            .unwrap_or_else(|reason| panic!("{reason}"))
+    }
+
+    /// [`Self::dictate`], with the pill's error for a dictation that failed.
+    fn try_dictate(&self, clip: AudioClip) -> Result<(String, Report), String> {
         self.microphone.set_clip(clip);
         self.dictation.on_pill(PillInput::Click);
         let give_up = Instant::now() + LONG_WAIT;
@@ -147,12 +153,12 @@ impl RealFlow {
             let event = self.events.recv_timeout(LONG_WAIT).expect("no insertion");
             match event {
                 Event::Inserted(report) => break report,
-                Event::Pill(PillState::Error { reason }) => panic!("{reason}"),
+                Event::Pill(PillState::Error { reason }) => return Err(reason),
                 _ => {}
             }
         };
         let text = self.log.texts().pop().expect("text was inserted");
-        (text, report)
+        Ok((text, report))
     }
 
     fn wait_unloaded(&self) {
@@ -347,6 +353,35 @@ fn an_unplugged_models_drive_is_an_error_and_plugging_it_back_recovers() {
     let (text, _) = flow.dictate(clip);
     assert!(!text.is_empty());
     hdiutil(&detach);
+}
+
+/// ADR-0005: a dead host fails the next call made to it, and the dictation after that gets a new
+/// one. With all three gone that takes two dictations: VAD fails the first before the LLM is
+/// reached, and the second finds the dead LLM and falls back to rule-cleaned text.
+#[test]
+#[ignore = "needs models"]
+fn killed_engine_hosts_are_replaced_by_the_dictations_that_need_them() {
+    let flow = start(tier(PipelineTier::Balanced), false);
+    let clip = with_pauses(&fixture("speech_en"));
+    let (expected, _) = flow.dictate(clip.clone());
+
+    let killed = Command::new("pkill")
+        .args(["-9", "-P", &std::process::id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+
+    let reason = flow.try_dictate(clip.clone()).map(|_| ()).unwrap_err();
+    assert!(reason.contains("stopped"), "{reason}");
+    std::thread::sleep(Duration::from_secs(1));
+    let _ = flow.events.try_iter().count();
+
+    let (_, report) = flow.dictate(clip.clone());
+    assert!(report.cleanup_fallback.is_some());
+
+    let (text, report) = flow.dictate(clip);
+    assert_eq!(report.cleanup_fallback, None);
+    assert_eq!(text, expected);
 }
 
 /// Ticket 07 asked for one long clip before Parakeet may run without VAD: at that point nothing
