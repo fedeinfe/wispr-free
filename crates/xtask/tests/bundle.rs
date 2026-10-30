@@ -4,7 +4,8 @@
 use std::path::Path;
 
 use xtask::bundle::{
-    Signer, codesign_args, foreign_libraries, info_plist, llama_libraries, rpath_libraries,
+    Signer, codesign_args, foreign_libraries, iconset_files, info_plist, llama_libraries,
+    rpath_libraries,
 };
 
 const OTOOL: &str = "\
@@ -58,6 +59,8 @@ fn the_plist_says_what_macos_asks_for() {
     for key in [
         "NSMicrophoneUsageDescription",
         "NSAudioCaptureUsageDescription",
+        "NSAppleEventsUsageDescription",
+        "CFBundleIconFile",
         "LSUIElement",
     ] {
         assert!(plist.contains(&format!("<key>{key}</key>")), "{key}");
@@ -66,6 +69,16 @@ fn the_plist_says_what_macos_asks_for() {
     assert!(plist.contains("<string>wispr-free</string>"));
     assert!(plist.contains("<string>1.2.3</string>"));
     assert!(!plist.to_lowercase().contains("cloud"));
+}
+
+#[test]
+fn the_icon_set_has_every_size_macos_looks_for() {
+    let files = iconset_files();
+
+    assert_eq!(files.len(), 10);
+    assert!(files.contains(&("icon_16x16.png".to_owned(), 16)));
+    assert!(files.contains(&("icon_16x16@2x.png".to_owned(), 32)));
+    assert!(files.contains(&("icon_512x512@2x.png".to_owned(), 1024)));
 }
 
 #[test]
