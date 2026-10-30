@@ -283,6 +283,72 @@ fn what_each_late_millisecond_costs() {
     }
 }
 
+/// The models on a real volume that goes away under loaded engines, the way an unplugged drive
+/// does, and comes back. Uses a disk image in a temp folder, which Finder never shows.
+#[test]
+#[ignore = "needs models"]
+fn an_unplugged_models_drive_is_an_error_and_plugging_it_back_recovers() {
+    let folder = tempfile::tempdir().unwrap();
+    let image = folder.path().join("models.sparseimage");
+    let volume = folder.path().join("volume");
+    let hdiutil = |args: &[&str]| {
+        let status = Command::new("hdiutil").args(args).status().unwrap();
+        assert!(status.success(), "hdiutil {args:?}");
+    };
+    let image_path = image.to_str().unwrap();
+    let mount = volume.to_str().unwrap();
+    let attach = [
+        "attach",
+        image_path,
+        "-nobrowse",
+        "-quiet",
+        "-mountpoint",
+        mount,
+    ];
+    let detach = ["detach", mount, "-force", "-quiet"];
+    hdiutil(&[
+        "create", "-quiet", "-size", "4g", "-fs", "APFS", "-type", "SPARSE", "-volname",
+        "wfmodels", image_path,
+    ]);
+    fs::create_dir_all(&volume).unwrap();
+    hdiutil(&attach);
+    let links = folder.path().join("links");
+    fs::create_dir_all(&links).unwrap();
+    link_models(&links);
+    let copied = Command::new("cp")
+        .arg("-RL")
+        .arg(&links)
+        .arg(volume.join("models"))
+        .status()
+        .unwrap();
+    assert!(copied.success());
+
+    let mut settings = tier(PipelineTier::Balanced);
+    settings.pipeline.models_folder = Some(volume.join("models"));
+    let flow = start(settings, false);
+    let clip = with_pauses(&fixture("speech_en"));
+
+    let (text, _) = flow.dictate(clip.clone());
+    assert!(!text.is_empty());
+    let hosts = engine_hosts();
+
+    hdiutil(&detach);
+    flow.dictation.on_pill(PillInput::Click);
+    let reason = loop {
+        let event = flow.events.recv_timeout(LONG_WAIT).expect("no error shown");
+        if let Event::Pill(PillState::Error { reason }) = event {
+            break reason;
+        }
+    };
+    println!("unplugged: {reason}");
+    assert_eq!(engine_hosts(), hosts, "no engine died");
+
+    hdiutil(&attach);
+    let (text, _) = flow.dictate(clip);
+    assert!(!text.is_empty());
+    hdiutil(&detach);
+}
+
 /// Ticket 07 asked for one long clip before Parakeet may run without VAD: at that point nothing
 /// splits the recording at pauses, and a transducer's memory grows with its input.
 #[test]

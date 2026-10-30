@@ -30,6 +30,8 @@
 
 **Pipeline tier**: Lite / Balanced / High / Custom. A bundle of stage toggles and model picks matched to the hardware.
 
+**Engine host**: the child process, the app's own binary, that holds one loaded engine. Killing it is how a model unloads (ADR-0005).
+
 **Model catalog**: the versioned manifest of downloadable models with size, checksum, license and RAM needs.
 
 **Models folder**: where downloaded models live: the app data folder, or a folder the user chose, possibly on an external drive.
