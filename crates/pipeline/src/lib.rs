@@ -4,6 +4,7 @@
 
 use wf_core::audio::AudioClip;
 
+pub mod passes;
 pub mod rules;
 #[cfg(feature = "silero")]
 pub mod silero;

@@ -8,3 +8,9 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+directories.workspace = true
+rusqlite.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
