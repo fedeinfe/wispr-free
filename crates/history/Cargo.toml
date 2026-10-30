@@ -9,6 +9,7 @@ publish.workspace = true
 
 # Separate from wf-core so SQLite's C build stays out of the crates that cross-check from one OS.
 [dependencies]
+wf-core.workspace = true
 rusqlite.workspace = true
 thiserror.workspace = true
 directories.workspace = true

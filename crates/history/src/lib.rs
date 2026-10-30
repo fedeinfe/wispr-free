@@ -12,6 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{fs, io};
 
 use rusqlite::{Connection, OptionalExtension, Row, params};
+pub use wf_core::settings::HistoryRetention;
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
@@ -35,16 +36,6 @@ const SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS dictations_created_at ON dictations (created_at);
     PRAGMA user_version = 1;
 ";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum HistoryRetention {
-    #[default]
-    Keep,
-    /// Entries are deleted once they are 24 hours old.
-    Delete24h,
-    /// Nothing reaches the disk.
-    Never,
-}
 
 /// Time spent in each stage of one dictation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
