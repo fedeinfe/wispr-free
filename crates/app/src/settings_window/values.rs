@@ -5,7 +5,7 @@ use wf_core::settings::{
     CleanupStrength, HistoryRetention, KeepModels, MediaWhileDictating, PipelineTier, Settings,
     Style, Theme,
 };
-use wf_dictation::plan::{effective_models, preset_tier, vad_on};
+use wf_dictation::plan::{effective_models, preset_tier, speaker_model_ids, vad_on};
 use wf_models::{Catalog, ModelKind};
 
 use crate::SettingsValues;
@@ -130,18 +130,31 @@ fn names(choices: &[(String, String)]) -> Vec<String> {
 pub fn models_in_use(settings: &Settings, catalog: &Catalog) -> Vec<(String, &'static str)> {
     let [asr, vad, llm] = effective_models(settings, catalog);
     let pipeline = &settings.pipeline;
-    [
+    let mut in_use: Vec<(String, &'static str)> = [
         (asr, "speech recognition"),
         (vad.filter(|_| vad_on(settings, catalog)), "voice detection"),
         (llm.filter(|_| pipeline.llm_cleanup), "cleanup"),
     ]
     .into_iter()
     .filter_map(|(model, stage)| Some((model?, stage)))
-    .collect()
+    .collect();
+    if settings.meetings.diarization {
+        in_use.extend(
+            speaker_model_ids(settings, catalog)
+                .into_iter()
+                .map(|id| (id, "telling speakers apart")),
+        );
+    }
+    in_use
 }
 
 fn model_index(ids: &[String], model: Option<&String>) -> i32 {
     model.map_or(-1, |model| index_of(ids, model))
+}
+
+/// The theme as the windows' `Prefs.values` hold it.
+pub fn theme_index(settings: &Settings) -> i32 {
+    index_of(&THEMES, &settings.general.theme)
 }
 
 pub fn values_of(settings: &Settings, catalog: &Catalog, choices: &ModelChoices) -> SettingsValues {

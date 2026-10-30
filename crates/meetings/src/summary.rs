@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use wf_pipeline::cleanup::escape_tags;
 use wf_pipeline::rules::new_words;
-use wf_pipeline::{Llm, LlmPrompt};
+use wf_pipeline::{Llm, LlmPrompt, PipelineError};
 
 use crate::Error;
 use crate::store::{Meeting, SUMMARY_NOTES, Stage, StageState, read_json, write_json};
@@ -334,7 +334,11 @@ fn call(
         return Err(Error::Cancelled);
     }
     prompt.deadline = Some(Instant::now() + options.timeout);
-    Ok(llm.generate(&prompt, &mut |_| {})?)
+    llm.generate(&prompt, &mut |_| {})
+        .map_err(|error| match error {
+            PipelineError::Cancelled => Error::Cancelled,
+            error => error.into(),
+        })
 }
 
 /// Cuts the transcript at line ends, each piece up to `budget` characters. Earlier chunks don't
@@ -391,7 +395,7 @@ fn chunk_key(chunk: &TranscriptChunk, options: &SummaryOptions) -> String {
 }
 
 /// A fingerprint of what the transcript says. Stable across builds, unlike `DefaultHasher`.
-fn transcript_hash(transcript: &Transcript) -> String {
+pub fn transcript_hash(transcript: &Transcript) -> String {
     let lines: Vec<String> = transcript
         .segments
         .iter()

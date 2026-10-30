@@ -1,6 +1,6 @@
 //! The bundled, versioned model manifest and its tier presets (spec §6).
 
-use wf_models::{Catalog, ModelKind, SpeakerModelKind, Tier};
+use wf_models::{Catalog, ModelKind, Tier};
 
 #[test]
 fn lite_preset_is_rules_only_with_silero_and_a_small_asr_model() {
@@ -155,15 +155,12 @@ fn balanced_and_high_diarize_with_a_segmentation_and_an_embedding_model() {
     for tier in [Tier::Balanced, Tier::High] {
         let preset = catalog.preset(tier);
         assert!(preset.meeting_refine && preset.diarization, "{tier:?}");
-        let kinds: Vec<SpeakerModelKind> = catalog
+        let kinds: Vec<ModelKind> = catalog
             .speaker_models_for_tier(tier)
             .iter()
             .map(|m| m.kind)
             .collect();
-        assert_eq!(
-            kinds,
-            [SpeakerModelKind::Segmentation, SpeakerModelKind::Embedding]
-        );
+        assert_eq!(kinds, [ModelKind::Segmentation, ModelKind::Embedding]);
     }
 }
 
@@ -177,8 +174,14 @@ fn lite_downloads_no_speaker_models() {
 #[test]
 fn every_speaker_model_has_an_open_license_and_a_pinned_checksum() {
     let catalog = Catalog::bundled();
-    assert!(!catalog.speaker_models.is_empty());
-    for model in &catalog.speaker_models {
+    let speaker_kinds = [ModelKind::Segmentation, ModelKind::Embedding];
+    let speaker_models: Vec<_> = catalog
+        .models
+        .iter()
+        .filter(|model| speaker_kinds.contains(&model.kind))
+        .collect();
+    assert!(!speaker_models.is_empty());
+    for model in speaker_models {
         assert!(
             ["MIT", "Apache-2.0"].contains(&model.license.as_str()),
             "{}: {}",
@@ -193,9 +196,9 @@ fn every_speaker_model_has_an_open_license_and_a_pinned_checksum() {
 fn with_speaker_slot(segmentation: &str) -> String {
     let speaker = |id: &str, kind: &str| {
         format!(
-            "[[speaker_models]]\nid = \"{id}\"\nname = \"{id}\"\nkind = \"{kind}\"\n\
+            "[[models]]\nid = \"{id}\"\nname = \"{id}\"\nkind = \"{kind}\"\n\
              engine = \"sherpa-onnx\"\nlicense = \"MIT\"\nlanguages = [\"*\"]\nram_mb = 1\n\
-             [[speaker_models.files]]\nname = \"m.onnx\"\nurl = \"https://example.org/m\"\n\
+             [[models.files]]\nname = \"m.onnx\"\nurl = \"https://example.org/m\"\n\
              size = 1\nsha256 = \"{SHA}\"\n"
         )
     };

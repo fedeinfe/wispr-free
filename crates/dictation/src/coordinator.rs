@@ -14,8 +14,8 @@ use wf_core::pill::PillState;
 use wf_core::settings::{HistoryRetention, KeepModels, Settings};
 use wf_models::{Catalog, ModelStore};
 
-use crate::engines::Loaded;
-use crate::meeting::Meetings;
+use crate::engines::{LlmSlot, Loaded};
+use crate::meeting::{Meetings, Office};
 use crate::plan::plan;
 use crate::session::{NOTHING_HEARD, Pump, Session, SessionShared, part_at_fault};
 use crate::worker::{self, Job};
@@ -43,7 +43,11 @@ pub(crate) enum Input {
     /// A trial ended with no words in it.
     HeardNothing(u64),
     ToggleMeeting,
+    /// Closes any recording for good, and says when that's done.
+    CloseMeetings(Sender<()>),
     Meeting(bool),
+    /// Meeting work let go of the model.
+    LlmReturned,
     Problem(String),
     AutoStop(u64),
     /// A dictation is over: inserted, abandoned or failed. `problem` is for the pill.
@@ -106,12 +110,20 @@ impl Coordinator {
         );
         let on_event = Arc::clone(&parts.on_event);
         let finished = inbox.clone();
+        let llm = Arc::new(LlmSlot::new(&parts.engines, inbox.clone()));
         let meetings = Meetings::spawn(
             parts.meeting_room,
-            parts.meetings,
-            &parts.settings,
-            inbox.clone(),
-            Arc::clone(&parts.on_event),
+            Arc::new(Office::new(
+                parts.meetings,
+                parts.settings.clone(),
+                Arc::clone(&parts.catalog),
+                parts.default_models.clone(),
+                Arc::clone(&parts.engines),
+                Arc::clone(&llm),
+                Arc::clone(&parts.clock),
+                inbox.clone(),
+                Arc::clone(&parts.on_event),
+            )),
         );
         let (insertion, history) = (parts.insertion, parts.history);
         thread::Builder::new()
@@ -124,6 +136,7 @@ impl Coordinator {
         let shared = Arc::new(SessionShared {
             engines: parts.engines,
             loaded: Mutex::default(),
+            llm,
             context: parts.context,
             jobs,
             inbox,
@@ -154,6 +167,11 @@ impl Coordinator {
         };
         coordinator.schedule_prune();
         coordinator
+    }
+
+    /// The way in to the meetings, for the handle the app holds.
+    pub(crate) fn meetings(&self) -> Meetings {
+        self.meetings.clone()
     }
 
     pub(crate) fn run(mut self, queue: Receiver<Input>) {
@@ -215,6 +233,8 @@ impl Coordinator {
             Input::PasteRecent(index) => self.send_job(Job::PasteRecent(index)),
             Input::ForgetHistory(done) => self.send_job(Job::Forget(done)),
             Input::ToggleMeeting => self.meetings.toggle(),
+            Input::CloseMeetings(done) => self.meetings.close(done),
+            Input::LlmReturned => self.after_use(),
             Input::Meeting(active) => {
                 self.meeting = active;
                 (self.shared.on_event)(Event::Meeting(active));
@@ -366,6 +386,11 @@ impl Coordinator {
         }
         if !self.in_flight.is_empty() {
             self.shared.engines.interrupt();
+            // With meeting work on it, the model may be busy with someone else's call. A cleanup
+            // waiting behind that one ends by its own timeout.
+            if !self.shared.llm.is_leased() {
+                self.shared.llm.interrupt();
+            }
         }
     }
 
@@ -396,6 +421,11 @@ impl Coordinator {
         if self.open_trial == Some(id) {
             self.open_trial = None;
         }
+        self.after_use();
+    }
+
+    /// Applies "keep models loaded" once nothing is using them.
+    fn after_use(&mut self) {
         if self.is_idle() {
             match self.settings.pipeline.keep_models_loaded {
                 KeepModels::Always => {}
@@ -408,7 +438,7 @@ impl Coordinator {
     }
 
     fn is_idle(&self) -> bool {
-        self.recording.is_none() && self.in_flight.is_empty()
+        self.recording.is_none() && self.in_flight.is_empty() && !self.shared.llm.is_leased()
     }
 
     fn unload(&mut self) {
@@ -419,15 +449,17 @@ impl Coordinator {
         let Ok(mut loaded) = self.shared.loaded.try_lock() else {
             return;
         };
-        if loaded.is_empty() {
+        if loaded.is_empty() && !self.shared.llm.is_loaded() {
             return;
         }
         let dropped: Loaded = mem::take(&mut *loaded);
         drop(loaded);
+        let llm = self.shared.llm.clear();
         // Ending a process with a model mapped can take a moment.
         let on_event = Arc::clone(&self.shared.on_event);
         thread::spawn(move || {
             drop(dropped);
+            drop(llm);
             on_event(Event::Unloaded);
         });
     }

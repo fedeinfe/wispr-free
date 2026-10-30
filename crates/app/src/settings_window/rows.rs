@@ -91,7 +91,9 @@ pub fn model_row(index: usize, model: &ModelEntry, status: ModelStatus) -> Model
     let kind = match model.kind {
         ModelKind::Vad => "Voice detection",
         ModelKind::Asr => "Speech recognition",
-        ModelKind::Llm => "Cleanup",
+        ModelKind::Llm => "Cleanup, summaries and chat",
+        ModelKind::Segmentation => "Finding who speaks when",
+        ModelKind::Embedding => "Telling voices apart",
     };
     let detail = format!(
         "{kind} · {} · about {} RAM · {}",

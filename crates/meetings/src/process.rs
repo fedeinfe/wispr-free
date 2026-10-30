@@ -79,7 +79,7 @@ pub fn finish_meeting(
     };
 
     on_progress(ProcessProgress::Stage(Stage::Diarization));
-    diarize(meeting, plan, engines, audio.as_ref())?;
+    diarize(meeting, plan, engines, audio.as_ref(), cancel)?;
     on_progress(ProcessProgress::Stage(Stage::Refine));
     refine(
         meeting,
@@ -116,6 +116,7 @@ fn diarize(
     plan: MeetingPlan,
     engines: &mut dyn MeetingEngines,
     audio: Option<&MeetingAudio>,
+    cancel: &AtomicBool,
 ) -> Result<(), Error> {
     if !plan.diarize {
         return meeting.set_stage(Stage::Diarization, skipped("off"));
@@ -135,6 +136,8 @@ fn diarize(
             meeting.save_turns(&turns)?;
             meeting.set_stage(Stage::Diarization, StageState::done())
         }
+        // Cancel kills the engine host, which looks like a failure from here.
+        Err(_) if cancel.load(Ordering::Relaxed) => Err(Error::Cancelled),
         Err(error) => {
             tracing::warn!("diarization failed: {error}");
             meeting.set_stage(Stage::Diarization, failed(error.to_string()))
@@ -185,6 +188,7 @@ fn refine(
                 meeting.set_stage(Stage::Refine, StageState::done())
             }
             Err(Error::Cancelled) => Err(Error::Cancelled),
+            Err(Error::Engine(_)) if cancel.load(Ordering::Relaxed) => Err(Error::Cancelled),
             Err(Error::Engine(error)) => {
                 tracing::warn!("the refine pass failed: {error}");
                 meeting.set_stage(Stage::Refine, failed(error.to_string()))

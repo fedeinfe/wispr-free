@@ -8,7 +8,7 @@
 # measures it.
 
 schema = 1
-version = "2026.10.30.1"
+version = "2026.10.30.2"
 
 # Tier presets: stage toggles plus one model per enabled stage. A tier downloads exactly the
 # models it names.
@@ -237,11 +237,8 @@ size = 2740937888
 sha256 = "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4"
 
 # ── Speaker diarization ──────────────────────────────────────────────────────────────────────
-#
-# A list of its own, not [[models]]: the Settings page matches ModelKind exhaustively, so these
-# move there once it can label them. Until then they download with the tier but aren't listed.
 
-[[speaker_models]]
+[[models]]
 id = "pyannote-segmentation-3.0-int8"
 name = "Pyannote segmentation 3.0 (int8)"
 kind = "segmentation"
@@ -251,13 +248,13 @@ languages = ["*"]
 ram_mb = 60
 candidate = true
 notes = "Upstream pyannote/segmentation-3.0 is MIT, (c) 2022 CNRS. Converted to ONNX by sherpa-onnx."
-[[speaker_models.files]]
+[[models.files]]
 name = "model.int8.onnx"
 url = "https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/resolve/9403a6902bb58e3d5ae8c7e77c3422de279db2e0/model.int8.onnx"
 size = 1540506
 sha256 = "d582f4b4c6b48205de7e0643c57df0df5615a3c176189be3fc461e9d18827b5d"
 
-[[speaker_models]]
+[[models]]
 id = "eres2net-voxceleb"
 name = "3D-Speaker ERes2Net (VoxCeleb)"
 kind = "embedding"
@@ -267,7 +264,7 @@ languages = ["*"]
 ram_mb = 150
 candidate = true
 notes = "ModelScope iic/speech_eres2net_sv_en_voxceleb_16k, Apache-2.0. Same size as CAM++, which put only 39.5% of a 3-voice meeting on the right voice against 94.1% for this one."
-[[speaker_models.files]]
+[[models.files]]
 name = "3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx"
 url = "https://huggingface.co/csukuangfj/speaker-embedding-models/resolve/0743f301363dec56491a490f6d6cbc9d67f9a3bf/3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx"
 size = 26485263

@@ -18,6 +18,7 @@ use wf_platform::permissions::Permissions;
 
 use crate::Tray;
 use crate::debug::ClipRun;
+use crate::meetings_window::{MeetingsBoard, MeetingsHost};
 use crate::memory;
 use crate::onboarding::FlowWatcher;
 use crate::pill::{LANGUAGES, PillController, PillEvent};
@@ -39,6 +40,7 @@ pub fn start(
     settings: Settings,
     pill: &PillController,
     tray: &Tray,
+    board: &MeetingsBoard,
     clip: Option<&ClipRun>,
     watcher: FlowWatcher,
 ) -> Dictation {
@@ -47,7 +49,7 @@ pub fn start(
     let history = History::default_path().unwrap_or_else(|| data.join("history.sqlite3"));
     let meetings = data.join("meetings");
     let executable = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("wispr-free"));
-    let on_event = deliver_to(pill, tray.as_weak(), watcher);
+    let on_event = deliver_to(pill, tray.as_weak(), board.clone(), watcher);
     let mut parts = Parts::system(
         settings,
         Arc::new(Catalog::bundled()),
@@ -67,6 +69,7 @@ pub fn start(
 pub fn deliver_to(
     pill: &PillController,
     tray: Weak<Tray>,
+    board: MeetingsBoard,
     watcher: FlowWatcher,
 ) -> Arc<dyn Fn(Event) + Send + Sync> {
     let (events, inbox) = mpsc::channel();
@@ -76,7 +79,7 @@ pub fn deliver_to(
             if let Some(watch) = &*watcher.borrow() {
                 watch(&event);
             }
-            show(&target, &tray, event);
+            show(&target, &tray, &board, event);
         }
     });
     let window = pill.window();
@@ -89,7 +92,7 @@ pub fn deliver_to(
     })
 }
 
-fn show(pill: &PillController, tray: &Weak<Tray>, event: Event) {
+fn show(pill: &PillController, tray: &Weak<Tray>, board: &MeetingsBoard, event: Event) {
     match event {
         Event::Pill(state) => pill.set_state(state),
         Event::Level(level) => pill.set_level(level),
@@ -103,6 +106,7 @@ fn show(pill: &PillController, tray: &Weak<Tray>, event: Event) {
             }
         }
         Event::SuggestMeeting(app) => pill.suggest_meeting(app),
+        Event::Meetings(news) => board.post(news),
         Event::Trial(_) | Event::TrialFailed { .. } | Event::Inserted(_) => {}
     }
 }
@@ -186,6 +190,7 @@ pub struct PillActions {
     pub pill: PillController,
     pub store: Arc<SettingsStore>,
     pub settings: SettingsHost,
+    pub meetings: MeetingsHost,
     pub catalog: Arc<Catalog>,
     /// Applies changed settings to the running app.
     pub apply: Rc<dyn Fn(&Settings)>,
@@ -219,6 +224,11 @@ impl PillActions {
                 }
             }
             PillEvent::TakeNotes => self.dictation.toggle_meeting(),
+            PillEvent::OpenMeetings => {
+                if let Err(error) = self.meetings.open() {
+                    eprintln!("could not open meetings: {error}");
+                }
+            }
             PillEvent::OpenSettings => {
                 if let Err(error) = self.settings.open() {
                     eprintln!("could not open settings: {error}");

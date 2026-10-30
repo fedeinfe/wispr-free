@@ -38,6 +38,9 @@ pub enum PipelineError {
     ModelMissing(String),
     #[error("timed out")]
     Timeout,
+    /// The caller stopped the call. Nothing went wrong.
+    #[error("cancelled")]
+    Cancelled,
     #[error("{0}")]
     Engine(String),
 }

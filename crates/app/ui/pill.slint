@@ -113,6 +113,7 @@ export component PillWindow inherits Window {
     callback select-microphone(index: int);
     callback select-language(index: int);
     callback select-pipeline-quality(index: int);
+    callback open-meetings();
     callback open-settings();
     callback hide-for-an-hour();
     callback quit();
@@ -205,6 +206,10 @@ export component PillWindow inherits Window {
                     }
                 }
                 MenuSeparator {}
+                MenuItem {
+                    title: "Meetings";
+                    activated => { root.open-meetings(); }
+                }
                 MenuItem {
                     title: "Settings";
                     activated => { root.open-settings(); }

@@ -12,12 +12,17 @@ use wf_models::Catalog;
 use wf_platform::autostart::LaunchAtLogin;
 use wf_platform::desktop;
 use wispr_free::dictation::{self, KeyWatch, PillActions};
+use wispr_free::meetings_window::{MeetingsBoard, MeetingsHost};
 use wispr_free::onboarding::{
     FlowWatcher, OnboardingHost, OnboardingParts, Opening, SystemMachine,
 };
 use wispr_free::pill::{self, PillController};
 use wispr_free::settings_window::{SettingsHost, system_parts};
 use wispr_free::{Tray, debug, prefs};
+
+/// How long quitting waits for a running recording to be closed. If it isn't done by then, the
+/// next launch repairs the meeting.
+const MEETING_CLOSE_LIMIT: Duration = Duration::from_secs(5);
 
 fn open_settings(settings: &SettingsHost) {
     if let Err(error) = settings.open() {
@@ -68,10 +73,12 @@ fn run(args: &[String]) -> Result<(), slint::PlatformError> {
     let pill = PillController::new(prefs, prefs_path)?;
     let clip_run = debug::ClipRun::from_args(args);
     let watcher = FlowWatcher::default();
+    let board = MeetingsBoard::default();
     let flow = dictation::start(
         store.get(),
         &pill,
         &tray,
+        &board,
         clip_run.as_ref(),
         Rc::clone(&watcher),
     );
@@ -97,11 +104,21 @@ fn run(args: &[String]) -> Result<(), slint::PlatformError> {
         let settings = settings.clone();
         move || open_settings(&settings)
     });
+    let meetings = MeetingsHost::system(Arc::clone(&store), flow.clone(), &board);
+    tray.on_open_meetings({
+        let meetings = meetings.clone();
+        move || {
+            if let Err(error) = meetings.open() {
+                eprintln!("could not open meetings: {error}");
+            }
+        }
+    });
     let actions = PillActions {
         dictation: flow.clone(),
         pill: pill.clone(),
         store: Arc::clone(&store),
         settings: settings.clone(),
+        meetings,
         catalog: Arc::new(Catalog::bundled()),
         apply: Rc::clone(&apply_settings),
     };
@@ -188,5 +205,7 @@ fn run(args: &[String]) -> Result<(), slint::PlatformError> {
             open_settings(&settings);
         }
     });
-    slint::run_event_loop_until_quit()
+    let ended = slint::run_event_loop_until_quit();
+    flow.close_meetings(MEETING_CLOSE_LIMIT);
+    ended
 }

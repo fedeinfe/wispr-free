@@ -1,0 +1,129 @@
+// What crates/app/src/meetings_window binds. The window only shows this and reports what the user
+// does; everything it knows comes from Rust.
+
+export struct MeetingRow {
+    id: string,
+    title: string,
+    when: string,
+    // Why a search found it. Empty outside a search.
+    snippet: string,
+    // Where in the transcript the search found it, or -1.
+    hit-row: int,
+    recording: bool,
+    busy: bool,
+    failed: bool,
+}
+
+export struct StageRow {
+    label: string,
+    // 0 waiting, 1 done, 2 skipped, 3 failed.
+    state: int,
+    reason: string,
+}
+
+export struct SummaryLine {
+    // 0 a heading, 1 a list item, 2 plain text.
+    kind: int,
+    text: string,
+    // Empty when the line has no time.
+    time: string,
+    // The transcript line it points to, or -1 if there is none.
+    row: int,
+}
+
+export struct TranscriptLine {
+    time: string,
+    speaker: string,
+    text: string,
+    gap: bool,
+}
+
+export struct SpeakerRow {
+    id: int,
+    label: string,
+    name: string,
+}
+
+export struct ChatChip {
+    label: string,
+    // The transcript line, or -1 for a time that matches none.
+    row: int,
+}
+
+export struct ChatBlock {
+    text: string,
+    chips: [ChatChip],
+}
+
+export struct ChatMessage {
+    question: string,
+    blocks: [ChatBlock],
+    note: string,
+}
+
+export global MeetingsUi {
+    in property <[MeetingRow]> meetings;
+    in property <string> list-hint;
+    in-out property <string> query;
+    in property <bool> recording;
+
+    in property <string> selected-id;
+    in-out property <string> title;
+    in property <string> when;
+    in property <bool> this-recording;
+    in property <bool> busy;
+    in property <bool> can-finish;
+    in property <bool> can-resume;
+    in property <[StageRow]> stages;
+    // What failed and why, a line for each.
+    in property <string> failures;
+    in property <string> progress-text;
+    // 0..1, or below 0 when there's nothing to measure.
+    in property <float> progress: -1;
+    in property <string> notice;
+
+    in-out property <int> tab;
+
+    in property <[SummaryLine]> summary;
+    in property <string> summary-empty;
+    in property <bool> summary-partial;
+    in property <bool> summary-stale;
+    in property <bool> can-summarize;
+    in-out property <string> notes;
+    in property <[TranscriptLine]> transcript;
+    in property <[SpeakerRow]> speakers;
+    in property <string> transcript-empty;
+    in-out property <int> jump-row: -1;
+    in-out property <int> jump-seq;
+
+    in property <[ChatMessage]> chat;
+    in property <[string]> suggestions;
+    in property <bool> chat-running;
+    in property <string> streaming-question;
+    in property <string> streaming-text;
+    in property <string> chat-error;
+
+    callback events-arrived();
+    callback toggle-meeting();
+    callback search();
+    callback select(id: string, row: int);
+    callback title-edited();
+    callback notes-edited();
+    callback speaker-edited(id: int, name: string);
+    callback export();
+    callback delete();
+    callback resume();
+    callback finish();
+    callback cancel-work();
+    callback regenerate();
+    callback update-summary();
+    callback ask(question: string);
+    callback stop-chat();
+
+    // Shows a line of the transcript. Any time the user clicks, even the same one twice.
+    public function jump(row: int) {
+        tab = 2;
+        jump-row = row;
+        jump-seq += 1;
+    }
+}

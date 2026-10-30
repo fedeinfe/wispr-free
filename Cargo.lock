@@ -6965,6 +6965,7 @@ dependencies = [
 name = "wispr-free"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "directories",
  "i-slint-backend-testing",
  "image",

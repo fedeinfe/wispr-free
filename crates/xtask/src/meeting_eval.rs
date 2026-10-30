@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
-use wf_meetings::{ActionItem, Summary};
+use wf_meetings::{ActionItem, Summary, TranscriptRow, parse_answer};
 
 const SCRIPT: &str = include_str!("../eval/meeting.toml");
 const HOLDOUT: &str = include_str!("../eval/meeting_holdout.toml");
@@ -50,6 +50,9 @@ pub struct KnownDecision {
 pub struct KnownAction {
     pub id: String,
     pub owner: String,
+    /// Words of the turn that takes it on, for scoring a citation. Lowercase.
+    #[serde(default)]
+    pub said: String,
     pub task: Vec<Vec<String>>,
     /// Empty when nobody stated one.
     pub due: Vec<String>,
@@ -284,6 +287,144 @@ fn due_right(known: &KnownAction, item: &ActionItem) -> bool {
 }
 
 /// Word-level edit distance over the reference's length, ignoring case and punctuation.
+/// How close to a turn's start or end a transcript line may begin and still be that turn. ASR
+/// chunks start a little before the speech, and the fixture's turns are cut at the audio's edges.
+const TURN_SLACK_MS: u64 = 2_000;
+
+/// One time in an answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CitedTime {
+    pub label: String,
+    /// What the answer line it's on is about, if it's a known action.
+    pub action: Option<String>,
+    /// It matches a line of the transcript.
+    pub real: bool,
+    /// That line is the one where the known action was taken on.
+    pub right: bool,
+    pub line: String,
+    pub cited: String,
+}
+
+/// Whether the citations of an answer landed on the right transcript lines.
+#[derive(Debug, Default)]
+pub struct CitationScore {
+    pub times: Vec<CitedTime>,
+    /// Known actions the answer names with a right citation, of how many.
+    pub covered: Vec<String>,
+    pub known: usize,
+    /// Answer lines with no time at all.
+    pub bare_lines: Vec<String>,
+}
+
+impl CitationScore {
+    pub fn real(&self) -> usize {
+        self.times.iter().filter(|time| time.real).count()
+    }
+
+    pub fn on_actions(&self) -> usize {
+        self.times
+            .iter()
+            .filter(|time| time.action.is_some())
+            .count()
+    }
+
+    pub fn right(&self) -> usize {
+        self.times.iter().filter(|time| time.right).count()
+    }
+
+    pub fn render(&self) -> String {
+        let mut out = format!(
+            "citations: {} in all, {} on a real line; of {} on known actions, {} on the right line; \
+             {} of {} known actions named and rightly cited; {} lines with no time\n",
+            self.times.len(),
+            self.real(),
+            self.on_actions(),
+            self.right(),
+            self.covered.len(),
+            self.known,
+            self.bare_lines.len(),
+        );
+        for time in &self.times {
+            let verdict = match (&time.action, time.real, time.right) {
+                (_, false, _) => "NO LINE",
+                (Some(_), _, true) => "right",
+                (Some(_), _, false) => "WRONG",
+                (None, ..) => "unknown",
+            };
+            let about = time.action.as_deref().unwrap_or("-");
+            let _ = writeln!(
+                out,
+                "  {verdict:8}{} {about}: {} -> {}",
+                time.label, time.line, time.cited
+            );
+        }
+        for line in &self.bare_lines {
+            let _ = writeln!(out, "  no time  {line}");
+        }
+        out
+    }
+}
+
+/// Scores `answer` against the fixture's truth. A line is about the known action whose words it
+/// has; a citation on it is right if it names the transcript line that heard the turn taking the
+/// action on. The transcript line has to be real first: that's what the window links.
+pub fn score_citations(
+    script: &MeetingScript,
+    truth: &Truth,
+    answer: &str,
+    rows: &[TranscriptRow],
+) -> CitationScore {
+    let parsed = parse_answer(answer, rows);
+    let mut score = CitationScore {
+        known: script.actions.len(),
+        ..CitationScore::default()
+    };
+    for block in &parsed.blocks {
+        if block.citations.is_empty() {
+            score.bare_lines.push(block.text.clone());
+        }
+        let lower = block.text.to_lowercase();
+        let action = script
+            .actions
+            .iter()
+            .find(|action| matches_groups(&lower, &action.task));
+        for citation in &block.citations {
+            let row = citation.row.map(|row| &rows[row]);
+            let right = match (action, row) {
+                (Some(action), Some(row)) => heard_in_turn(action, row, truth),
+                _ => false,
+            };
+            if let Some(action) = action.filter(|_| right)
+                && !score.covered.contains(&action.id)
+            {
+                score.covered.push(action.id.clone());
+            }
+            score.times.push(CitedTime {
+                label: citation.label.clone(),
+                action: action.map(|action| action.id.clone()),
+                real: row.is_some(),
+                right,
+                line: block.text.clone(),
+                cited: row.map_or_else(String::new, |row| row.text.clone()),
+            });
+        }
+    }
+    score
+}
+
+fn heard_in_turn(action: &KnownAction, row: &TranscriptRow, truth: &Truth) -> bool {
+    if !action.said.is_empty() && row.text.to_lowercase().contains(&action.said) {
+        return true;
+    }
+    truth
+        .turns
+        .iter()
+        .filter(|turn| turn.text.to_lowercase().contains(&action.said) && !action.said.is_empty())
+        .any(|turn| {
+            row.at_ms + TURN_SLACK_MS >= turn.start_ms && row.at_ms <= turn.end_ms + TURN_SLACK_MS
+        })
+}
+
 pub fn word_error_rate(reference: &str, heard: &str) -> f64 {
     let words = |text: &str| -> Vec<String> {
         text.split_whitespace()

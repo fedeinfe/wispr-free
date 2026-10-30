@@ -2,6 +2,7 @@
 
 pub mod debug;
 pub mod dictation;
+pub mod meetings_window;
 pub mod memory;
 mod mic_levels;
 pub mod onboarding;

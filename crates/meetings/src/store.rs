@@ -10,6 +10,7 @@
 //!             summary-notes.json    map step's notes, one entry per transcript chunk
 //!             summary.json          the finished summary
 //!             notes.md              the user's own notes
+//!             chat.json             questions and answers about the meeting
 //! ```
 //!
 //! Every file but the audio and the live log is replaced whole through a temporary file, so a
@@ -18,6 +19,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, ErrorKind, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
@@ -42,6 +44,12 @@ const NOTES: &str = "notes.md";
 pub(crate) const SUMMARY_NOTES: &str = "summary-notes.json";
 /// A crash loses less than this of live text without it counting as a hole.
 const MIN_INTERRUPTED_MS: u64 = 1_000;
+/// What ticket 19's builds left in the root: `<unix seconds>.ogg`, or `.recording` after a crash.
+const FLAT_EXTENSIONS: [&str; 2] = ["ogg", "recording"];
+
+/// A worker writes stages for minutes while the window can rename the same meeting. Each change
+/// reads the record, edits it and writes it under this, so neither undoes the other.
+static RECORD_CHANGES: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MeetingRecord {
@@ -151,10 +159,7 @@ impl MeetingStore {
         fs::create_dir_all(&self.root)?;
         let created_ms = now_ms();
         let dir = self.claim_folder(created_ms)?;
-        let id = dir
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let id = folder_name(&dir);
         let meeting = Meeting {
             dir,
             record: MeetingRecord {
@@ -222,17 +227,69 @@ impl MeetingStore {
     }
 
     /// Finishes recordings a crash left open. Run it on launch, before anything is recording.
-    /// Returns the meetings it touched.
+    /// Returns the meetings it touched. One that can't be saved doesn't hold up the others.
     pub fn recover(&self) -> Result<Vec<String>, Error> {
         let mut recovered = Vec::new();
         for record in self.list()? {
             let mut meeting = self.open(&record.id)?;
-            if meeting.is_recording() {
-                meeting.recover_part()?;
-                recovered.push(record.id);
+            if !meeting.is_recording() {
+                continue;
+            }
+            match meeting.recover_part() {
+                Ok(()) => recovered.push(record.id),
+                Err(error) => tracing::error!("meeting {} can't be recovered: {error}", record.id),
             }
         }
         Ok(recovered)
+    }
+
+    /// Turns the flat recordings of older builds into meetings, repairing what a crash left
+    /// unfinished. A file that isn't a recording stays where it is. Returns the new meetings.
+    pub fn adopt_flat_recordings(&self) -> Result<Vec<String>, Error> {
+        let entries = match fs::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let mut adopted = Vec::new();
+        for entry in entries {
+            let path = entry?.path();
+            let Some(created_ms) = flat_recording_time(&path) else {
+                continue;
+            };
+            match self.adopt(&path, created_ms) {
+                Ok(id) => adopted.push(id),
+                Err(error) => tracing::error!("can't adopt {}: {error}", path.display()),
+            }
+        }
+        Ok(adopted)
+    }
+
+    fn adopt(&self, path: &Path, created_ms: u64) -> Result<String, Error> {
+        let length = repair_meeting(path)?;
+        let dir = self.claim_folder(created_ms)?;
+        let id = folder_name(&dir);
+        let file = format!("part-{:03}.ogg", 0);
+        fs::rename(path, dir.join(&file))?;
+        let meeting = Meeting {
+            dir,
+            record: MeetingRecord {
+                schema: SCHEMA,
+                id: id.clone(),
+                created_ms,
+                title: None,
+                parts: vec![Part {
+                    file,
+                    offset_ms: 0,
+                    duration_ms: Some(length.as_millis() as u64),
+                }],
+                speakers: SpeakerNames::new(),
+                audio_deleted: false,
+                stages: Stages::default(),
+            },
+        };
+        meeting.save_record()?;
+        Ok(id)
     }
 
     fn folder(&self, id: &str) -> Result<PathBuf, Error> {
@@ -245,8 +302,24 @@ impl MeetingStore {
     }
 }
 
-/// One meeting's folder, opened. There should be one per meeting at a time: changes go through
-/// this copy of the record.
+/// When a flat recording was made, if `path` is one.
+fn flat_recording_time(path: &Path) -> Option<u64> {
+    let extension = path.extension()?.to_str()?;
+    if !FLAT_EXTENSIONS.contains(&extension) {
+        return None;
+    }
+    let seconds: u64 = path.file_stem()?.to_str()?.parse().ok()?;
+    Some(seconds * 1_000)
+}
+
+fn folder_name(dir: &Path) -> String {
+    dir.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// One meeting's folder, opened. Several copies may be open, on different threads: each change
+/// starts from what's on disk.
 #[derive(Debug)]
 pub struct Meeting {
     dir: PathBuf,
@@ -280,16 +353,27 @@ impl Meeting {
         }
         let offset = self.length();
         let file = format!("part-{:03}.ogg", self.record.parts.len());
-        self.record.parts.push(Part {
+        let part = Part {
             file: file.clone(),
             offset_ms: offset.as_millis() as u64,
             duration_ms: None,
-        });
-        self.record.stages = Stages::default();
-        self.save_record()?;
+        };
+        self.change(|record| {
+            record.parts.push(part);
+            record.stages = Stages::default();
+        })?;
         Ok(NewPart {
             path: self.dir.join(file),
             offset,
+        })
+    }
+
+    /// Takes back the recording [`begin_part`](Self::begin_part) announced, when it never started.
+    pub fn abandon_part(&mut self) -> Result<(), Error> {
+        self.change(|record| {
+            if record.parts.last().is_some_and(|p| p.duration_ms.is_none()) {
+                record.parts.pop();
+            }
         })
     }
 
@@ -297,18 +381,33 @@ impl Meeting {
     ///
     /// [`MeetingRecorder::stop`]: crate::MeetingRecorder::stop
     pub fn end_part(&mut self, length: Duration) -> Result<(), Error> {
-        if let Some(part) = self.record.parts.last_mut() {
-            part.duration_ms = Some(length.as_millis() as u64);
-        }
-        self.save_record()
+        self.change(|record| {
+            if let Some(part) = record.parts.last_mut() {
+                part.duration_ms = Some(length.as_millis() as u64);
+            }
+        })
     }
 
-    fn recover_part(&mut self) -> Result<(), Error> {
+    /// Ends a recording that stopped badly, from what reached the disk. Audio with no live text
+    /// is marked as a gap, so the refine pass fills it.
+    pub fn recover_part(&mut self) -> Result<(), Error> {
         let Some(part) = self.record.parts.last() else {
             return Ok(());
         };
         let offset_ms = part.offset_ms;
-        let length = repair_meeting(&self.dir.join(&part.file))?;
+        let path = self.dir.join(&part.file);
+        let length = match repair_meeting(&path) {
+            Ok(length) => length,
+            // The crash came before the file had a header, so nothing was recorded.
+            Err(Error::NotAMeeting(_)) => {
+                let mut aside = path.clone().into_os_string();
+                aside.push(".bad");
+                fs::rename(&path, aside)?;
+                return self.abandon_part();
+            }
+            Err(Error::Io(e)) if e.kind() == ErrorKind::NotFound => return self.abandon_part(),
+            Err(error) => return Err(error),
+        };
         let end_ms = offset_ms + length.as_millis() as u64;
         let mut log = LiveLog::open(self)?;
         let transcript = self.read_live()?;
@@ -404,6 +503,11 @@ impl Meeting {
         Ok(Some(apply_speaker_names(summary, &self.record.speakers)))
     }
 
+    /// The summary as stored, with "Speaker N" labels, for handing to the model.
+    pub(crate) fn summary_with_labels(&self) -> Result<Option<Summary>, Error> {
+        read_json(&self.dir.join(SUMMARY))
+    }
+
     pub fn save_summary(&mut self, summary: &Summary) -> Result<(), Error> {
         write_json(&self.dir.join(SUMMARY), summary)
     }
@@ -423,33 +527,35 @@ impl Meeting {
 
     /// Sets the user's title. `None` goes back to the summary's.
     pub fn set_title(&mut self, title: Option<&str>) -> Result<(), Error> {
-        self.record.title = title
+        let title = title
             .map(str::trim)
             .filter(|title| !title.is_empty())
             .map(str::to_owned);
-        self.save_record()
+        self.change(|record| record.title = title)
     }
 
     /// Names a speaker. A blank name goes back to "Speaker N". Stored apart from the transcript
     /// and the summary, so it holds when either is generated again.
     pub fn rename_speaker(&mut self, speaker: SpeakerId, name: &str) -> Result<(), Error> {
         let name = name.trim();
-        if name.is_empty() {
-            self.record.speakers.remove(&speaker);
-        } else {
-            self.record.speakers.insert(speaker, name.to_owned());
-        }
-        self.save_record()
+        self.change(|record| {
+            if name.is_empty() {
+                record.speakers.remove(&speaker);
+            } else {
+                record.speakers.insert(speaker, name.to_owned());
+            }
+        })
     }
 
     pub fn set_stage(&mut self, stage: Stage, state: StageState) -> Result<(), Error> {
-        let stages = &mut self.record.stages;
-        *match stage {
-            Stage::Diarization => &mut stages.diarization,
-            Stage::Refine => &mut stages.refine,
-            Stage::Summary => &mut stages.summary,
-        } = state;
-        self.save_record()
+        self.change(|record| {
+            let stages = &mut record.stages;
+            *match stage {
+                Stage::Diarization => &mut stages.diarization,
+                Stage::Refine => &mut stages.refine,
+                Stage::Summary => &mut stages.summary,
+            } = state;
+        })
     }
 
     /// Whether the transcript can't get better: nothing recording, no holes, and every stage
@@ -476,12 +582,22 @@ impl Meeting {
                 _ => {}
             }
         }
-        self.record.audio_deleted = true;
-        self.save_record()
+        self.change(|record| record.audio_deleted = true)
     }
 
     pub(crate) fn path(&self, file: &str) -> PathBuf {
         self.dir.join(file)
+    }
+
+    fn change(&mut self, edit: impl FnOnce(&mut MeetingRecord)) -> Result<(), Error> {
+        let _one_at_a_time = RECORD_CHANGES
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(stored) = read_json(&self.dir.join(RECORD))? {
+            self.record = stored;
+        }
+        edit(&mut self.record);
+        self.save_record()
     }
 
     fn save_record(&self) -> Result<(), Error> {
