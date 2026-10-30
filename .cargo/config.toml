@@ -2,6 +2,11 @@
 # Release, because the evals run the real engines.
 xtask = "run --release --package xtask --features llama --"
 
+# llama.cpp finds any OpenSSL on the machine and links it by absolute path, for an HTTPS client
+# nothing here calls. Without this the app depends on Homebrew at run time (ADR-0004: no network).
+[env]
+CMAKE_DISABLE_FIND_PACKAGE_OpenSSL = "TRUE"
+
 # ADR-0003: llama.cpp is a shared library so its ggml stays apart from whisper.cpp's. Binaries
 # look for it next to themselves.
 [target.'cfg(target_os = "macos")']

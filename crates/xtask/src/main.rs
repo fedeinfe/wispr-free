@@ -1,10 +1,11 @@
 //! `cargo xtask eval --model model.gguf` scores LLM cleanup against `eval/cleanup.toml`.
 //! Flags: `--rules-only` scores rule cleanup alone, `--dev` skips the holdout cases, and
-//! `--cpu` keeps every layer off the GPU.
+//! `--cpu` keeps every layer off the GPU. `cargo xtask bundle` is in [`xtask::bundle`].
 
 use std::process::ExitCode;
 
 use anyhow::{Context as _, bail};
+use xtask::bundle;
 use xtask::eval::{self, Report, RulesOnly, TARGET};
 
 fn main() -> anyhow::Result<ExitCode> {
@@ -12,6 +13,12 @@ fn main() -> anyhow::Result<ExitCode> {
     let Some(task) = args.next() else {
         bail!("usage: cargo xtask eval [--model model.gguf] [--rules-only] [--dev] [--cpu]");
     };
+    if task == "bundle" {
+        return bundle::run(args).map(|()| ExitCode::SUCCESS);
+    }
+    if task == "signing-identity" {
+        return bundle::create_identity().map(|()| ExitCode::SUCCESS);
+    }
     if task != "eval" {
         bail!("unknown task {task:?}");
     }
