@@ -17,9 +17,9 @@ use wf_models::{Catalog, ModelStore};
 use crate::engines::Loaded;
 use crate::meeting::Meetings;
 use crate::plan::plan;
-use crate::session::{Pump, Session, SessionShared};
+use crate::session::{NOTHING_HEARD, Pump, Session, SessionShared, part_at_fault};
 use crate::worker::{self, Job};
-use crate::{Clock, Event, Microphone, Parts};
+use crate::{Clock, Event, Microphone, Parts, TrialPart};
 
 /// How long the pill keeps showing an error, unless a new dictation starts first.
 const ERROR_SHOWN: Duration = Duration::from_secs(6);
@@ -39,6 +39,9 @@ pub(crate) enum Input {
     PasteRecent(usize),
     ForgetHistory(Sender<()>),
     Trial,
+    ArmTrial(bool),
+    /// A trial ended with no words in it.
+    HeardNothing(u64),
     ToggleMeeting,
     Meeting(bool),
     Problem(String),
@@ -78,6 +81,9 @@ pub(crate) struct Coordinator {
     recording: Option<Recording>,
     in_flight: Vec<InFlight>,
     trial_next: bool,
+    trial_armed: bool,
+    /// The trial that still owes its outcome.
+    open_trial: Option<u64>,
     error: Option<(String, Duration)>,
     blocked: Option<String>,
     meetings: Meetings,
@@ -136,6 +142,8 @@ impl Coordinator {
             recording: None,
             in_flight: Vec::new(),
             trial_next: false,
+            trial_armed: false,
+            open_trial: None,
             error: None,
             blocked: None,
             meetings,
@@ -218,6 +226,13 @@ impl Coordinator {
                 self.trial_next = commands.iter().any(|c| matches!(c, Command::Start(_)));
                 self.on_commands(commands);
             }
+            Input::ArmTrial(armed) => self.trial_armed = armed,
+            Input::HeardNothing(id) => {
+                if self.open_trial == Some(id) {
+                    self.settle_trial(id, NOTHING_HEARD);
+                    self.fail(NOTHING_HEARD.to_owned());
+                }
+            }
             Input::AutoStop(id) => {
                 if self.recording.as_ref().is_some_and(|r| r.id == id) {
                     let now = self.clock.now();
@@ -253,16 +268,25 @@ impl Coordinator {
     fn start(&mut self, mode: Mode) {
         self.error = None;
         self.unload_at = None;
-        let trial = mem::take(&mut self.trial_next);
+        let trial = mem::take(&mut self.trial_next) || self.trial_armed;
         let plan = match plan(&self.settings, &self.catalog, &self.store) {
             Ok(plan) => plan,
-            Err(problem) => return self.refuse(problem),
+            Err(problem) => {
+                if trial {
+                    self.report_trial(TrialPart::Models, &problem);
+                }
+                return self.refuse(problem);
+            }
         };
         if let Some(problem) = self.microphone.problem() {
+            if trial {
+                self.report_trial(TrialPart::Microphone, &problem);
+            }
             return self.refuse(problem);
         }
         self.next_id += 1;
         let id = self.next_id;
+        self.open_trial = trial.then_some(id);
         let (audio, heard) = mpsc::channel();
         let pump = Arc::new(Pump::default());
         let cancel = Arc::<AtomicBool>::default();
@@ -302,6 +326,21 @@ impl Coordinator {
 
     fn fail(&mut self, problem: String) {
         self.error = Some((problem, self.clock.now() + ERROR_SHOWN));
+    }
+
+    /// Gives the trial its outcome, if `id` is the one still open.
+    fn settle_trial(&mut self, id: u64, problem: &str) {
+        if self.open_trial == Some(id) {
+            self.open_trial = None;
+            self.report_trial(part_at_fault(problem), problem);
+        }
+    }
+
+    fn report_trial(&self, part: TrialPart, reason: &str) {
+        (self.shared.on_event)(Event::TrialFailed {
+            part,
+            reason: reason.to_owned(),
+        });
     }
 
     fn stop(&mut self) {
@@ -351,7 +390,11 @@ impl Coordinator {
         }
         self.in_flight.retain(|dictation| dictation.id != id);
         if let Some(problem) = problem {
+            self.settle_trial(id, &problem);
             self.fail(problem);
+        }
+        if self.open_trial == Some(id) {
+            self.open_trial = None;
         }
         if self.is_idle() {
             match self.settings.pipeline.keep_models_loaded {

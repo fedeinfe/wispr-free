@@ -142,6 +142,8 @@ pub enum Event {
     Recent(Vec<String>),
     /// What a trial dictation heard. It was not inserted.
     Trial(String),
+    /// A trial ended without text. A cancelled one reports nothing.
+    TrialFailed { part: TrialPart, reason: String },
     /// A dictation reached the focused app.
     Inserted(Report),
     /// The models are gone from memory, so this is a good moment to hand freed pages back.
@@ -151,6 +153,13 @@ pub enum Event {
     /// A meeting app started using the mic. Offer to take notes, naming this app. Only the
     /// user's answer, through [`Dictation::toggle_meeting`], starts anything.
     SuggestMeeting(String),
+}
+
+/// The part of the app a failed trial points at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrialPart {
+    Microphone,
+    Models,
 }
 
 /// How one dictation went.
@@ -324,11 +333,18 @@ impl Dictation {
         self.send(Input::ToggleMeeting);
     }
 
-    /// Starts a real dictation that ends in [`Event::Trial`] rather than in the focused app.
-    /// Finish it with [`PillInput::Stop`] or [`PillInput::Cancel`], through [`Self::on_pill`].
-    /// This is what onboarding's "try a dictation" step calls.
+    /// Starts a real dictation that ends in [`Event::Trial`] or [`Event::TrialFailed`] rather than
+    /// in the focused app. Finish it with [`PillInput::Stop`] or [`PillInput::Cancel`], through
+    /// [`Self::on_pill`]. Onboarding's "try a dictation" step falls back on this when the shortcut
+    /// doesn't work, which it can't prove by itself.
     pub fn start_trial(&self) {
         self.send(Input::Trial);
+    }
+
+    /// While armed, every dictation the shortcut starts ends like one from [`Self::start_trial`].
+    /// Disarm it, or the user's dictations go nowhere.
+    pub fn arm_trial(&self, armed: bool) {
+        self.send(Input::ArmTrial(armed));
     }
 
     /// Wakes the flow to look at its clock. Tests call this after moving a fake one.
