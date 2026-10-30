@@ -126,7 +126,6 @@ pub fn handle_event(pill: &PillController, event: PillEvent) {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

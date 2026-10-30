@@ -34,7 +34,8 @@ pub fn apply(window: &impl HasWindowHandle) -> Result<(), OverlayError> {
     backend::apply(window)
 }
 
-/// Puts the overlay back above other windows, for stacking orders the OS does not maintain.
+/// Restores the overlay's stacking and styles, for what the OS or winit does not preserve. Call it
+/// after changing winit's hit-testing, and now and then.
 pub fn raise(window: &impl HasWindowHandle) -> Result<(), OverlayError> {
     backend::raise(window)
 }

@@ -95,7 +95,7 @@ export component PillWindow inherits Window {
         height: root.capsule-height;
         visible: root.look != PillLook.hidden;
         border-radius: min(self.width, self.height) / 2;
-        background: self.translucent ? #17161c80 : #17161cf0;
+        background: self.translucent ? #17161c80 : #17161c;
         border-width: root.look == PillLook.error || root.look == PillLook.meeting ? 1.5px : 1px;
         border-color: root.look == PillLook.error ? #e5484d
             : root.look == PillLook.meeting ? #30a46c
@@ -114,6 +114,21 @@ export component PillWindow inherits Window {
             border-color: @linear-gradient(self.turns * 360deg, #ffffff14 0%, #ffffffd0 50%, #ffffff14 100%);
         }
 
+        capsule-touch := TouchArea {
+            pointer-event(event) => {
+                if event.button == PointerEventButton.left {
+                    if event.kind == PointerEventKind.down {
+                        root.pill-pressed();
+                    } else if event.kind == PointerEventKind.up
+                        || event.kind == PointerEventKind.cancel {
+                        root.pill-released();
+                    }
+                }
+            }
+        }
+
+        // Above the TouchArea, which would otherwise swallow the right button too. Left clicks
+        // fall through it.
         ContextMenuArea {
             enabled: root.look == PillLook.ready;
 
@@ -164,19 +179,6 @@ export component PillWindow inherits Window {
                     activated => { root.quit(); }
                 }
             }
-
-            capsule-touch := TouchArea {
-                pointer-event(event) => {
-                    if event.button == PointerEventButton.left {
-                        if event.kind == PointerEventKind.down {
-                            root.pill-pressed();
-                        } else if event.kind == PointerEventKind.up
-                            || event.kind == PointerEventKind.cancel {
-                            root.pill-released();
-                        }
-                    }
-                }
-            }
         }
 
         if root.look == PillLook.listening || root.look == PillLook.locked
@@ -211,7 +213,7 @@ export component PillWindow inherits Window {
         width: min(label.preferred-width + 16px, root.width - 8px);
         height: 24px;
         border-radius: 6px;
-        background: #17161cf0;
+        background: #17161c;
 
         label := Text {
             width: parent.width - 16px;

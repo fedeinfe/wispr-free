@@ -251,13 +251,14 @@ impl Pill {
         }
 
         let move_to = self.place(tick.escape);
-        self.hovered = self.cursor_over_capsule();
+        self.hovered = self.cursor_near_capsule(HOVER_SLOP);
+        let over_capsule = self.cursor_near_capsule(0.0);
         let shown = self.shown();
         let dragging = self
             .press
             .is_some_and(|press| press.gesture == Gesture::Dragging);
         let hit_test =
-            shown != PillState::Hidden && (self.hovered || dragging || tick.cursor.is_none());
+            shown != PillState::Hidden && (over_capsule || dragging || tick.cursor.is_none());
         Frame {
             capsule: shown.capsule(self.edge),
             shown,
@@ -293,17 +294,18 @@ impl Pill {
         Some(target)
     }
 
-    fn cursor_over_capsule(&self) -> bool {
+    /// Whether the cursor is within `slop` points of the capsule shown now.
+    fn cursor_near_capsule(&self, slop: f64) -> bool {
         let Some(cursor) = self.cursor else {
             return false;
         };
         let units = self.display.map_or(1.0, |d| d.units_per_point);
         let capsule = self.shown().capsule(self.edge);
         let area = Rect {
-            x: capsule.x - HOVER_SLOP,
-            y: capsule.y - HOVER_SLOP,
-            width: capsule.width + 2.0 * HOVER_SLOP,
-            height: capsule.height + 2.0 * HOVER_SLOP,
+            x: capsule.x - slop,
+            y: capsule.y - slop,
+            width: capsule.width + 2.0 * slop,
+            height: capsule.height + 2.0 * slop,
         };
         area.contains(Point {
             x: (cursor.x - self.origin.x) / units,

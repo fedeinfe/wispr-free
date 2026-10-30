@@ -22,6 +22,12 @@ use super::OverlayError;
 const BASE_DPI: f64 = 96.0;
 
 pub fn apply(window: &impl HasWindowHandle) -> Result<(), OverlayError> {
+    raise(window)
+}
+
+/// winit rewrites the extended styles from its own flags whenever its hit-testing changes, which
+/// would drop `WS_EX_NOACTIVATE`, so this restores them too.
+pub fn raise(window: &impl HasWindowHandle) -> Result<(), OverlayError> {
     let hwnd = hwnd(window)?;
     let extra = WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST;
     // SAFETY: hwnd comes from a live window owned by this thread.
@@ -30,10 +36,6 @@ pub fn apply(window: &impl HasWindowHandle) -> Result<(), OverlayError> {
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | extra as isize);
     }
     set_topmost(hwnd, SWP_FRAMECHANGED)
-}
-
-pub fn raise(window: &impl HasWindowHandle) -> Result<(), OverlayError> {
-    set_topmost(hwnd(window)?, 0)
 }
 
 pub fn displays(_window_scale: f32) -> Vec<Display> {
@@ -76,7 +78,9 @@ fn set_topmost(hwnd: HWND, flags: u32) -> Result<(), OverlayError> {
     let flags = flags | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
     // SAFETY: hwnd comes from a live window owned by this thread.
     if unsafe { SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags) } == 0 {
-        return Err(OverlayError::Os(std::io::Error::last_os_error().to_string()));
+        return Err(OverlayError::Os(
+            std::io::Error::last_os_error().to_string(),
+        ));
     }
     Ok(())
 }

@@ -109,6 +109,20 @@ fn clicks_pass_through_except_over_the_capsule() {
 }
 
 #[test]
+fn just_outside_the_capsule_it_hovers_but_clicks_still_pass_through() {
+    let mut h = Harness::new(Edge::Bottom);
+    let frame = h.hover();
+    let origin = h.pill.origin();
+    let just_above = (
+        origin.x + frame.capsule.x + 10.0,
+        origin.y + frame.capsule.y - 3.0,
+    );
+    let near = h.cursor(just_above.0, just_above.1);
+    assert_eq!(near.shown, PillState::Ready);
+    assert!(!near.hit_test);
+}
+
+#[test]
 fn a_hidden_pill_catches_nothing_even_with_the_cursor_on_its_spot() {
     let mut h = Harness::new(Edge::Bottom);
     let p = h.on_capsule();

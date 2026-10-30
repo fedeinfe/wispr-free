@@ -60,6 +60,11 @@ pub fn apply(window: &impl HasWindowHandle) -> Result<(), OverlayError> {
             | NSWindowCollectionBehavior::IgnoresCycle,
     );
     panel.setHasShadow(false);
+    // AppKit reads `canBecomeKeyWindow` when a window is ordered in, which happened while this
+    // was still winit's class. Without a fresh order-in, a click takes the keyboard away from the
+    // app being typed into, even though that app stays active.
+    panel.orderOut(None);
+    panel.orderFrontRegardless();
     Ok(())
 }
 

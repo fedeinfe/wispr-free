@@ -6,14 +6,14 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use slint::winit_030::winit::event_loop::EventLoop;
-use slint::winit_030::winit::window::WindowAttributes;
+use slint::winit_030::winit::window::{Window as WinitWindow, WindowAttributes};
 use slint::winit_030::{EventLoopBuilder, WinitWindowAccessor};
 use slint::{
-    ComponentHandle, LogicalPosition, Model, ModelRc, PhysicalPosition, PlatformError, SharedString,
-    Timer, TimerMode, VecModel, WindowPosition,
+    ComponentHandle, LogicalPosition, Model, ModelRc, PhysicalPosition, PlatformError,
+    SharedString, Timer, TimerMode, VecModel, WindowPosition,
 };
-use wf_audio::{CpalBackend, sounds};
 use wf_audio::AudioBackend as _;
+use wf_audio::{CpalBackend, sounds};
 use wf_core::pill::dock::{Display, Point};
 use wf_core::pill::waveform::{BARS, Waveform};
 use wf_core::pill::{Pill, PillCommand, PillState, Sound, Tick};
@@ -70,7 +70,9 @@ fn event_loop_builder() -> EventLoopBuilder {
     // The pill must not pull focus from the app being typed into, starting with launch.
     #[cfg(target_os = "macos")]
     {
-        use slint::winit_030::winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+        use slint::winit_030::winit::platform::macos::{
+            ActivationPolicy, EventLoopBuilderExtMacOS,
+        };
         builder
             .with_activation_policy(ActivationPolicy::Accessory)
             .with_activate_ignoring_other_apps(false);
@@ -309,11 +311,7 @@ impl PillController {
         if now >= core.next_display_poll {
             core.next_display_poll = now + DISPLAY_POLL;
             core.displays = overlay::displays(window.scale_factor());
-            window.with_winit_window(|window| {
-                if let Err(err) = overlay::raise(window) {
-                    eprintln!("could not raise the pill: {err}");
-                }
-            });
+            window.with_winit_window(raise);
         }
 
         let frame = core.pill.tick(&Tick {
@@ -328,9 +326,10 @@ impl PillController {
         }
         if core.hit_test != Some(frame.hit_test) {
             let applied = window.with_winit_window(|window| {
-                window.set_cursor_hittest(frame.hit_test).is_ok()
+                let _ = window.set_cursor_hittest(frame.hit_test);
+                raise(window);
             });
-            core.hit_test = applied.is_some().then_some(frame.hit_test);
+            core.hit_test = applied.map(|()| frame.hit_test);
         }
 
         let ui = &inner.ui;
@@ -357,6 +356,12 @@ impl PillController {
             core.poll = poll;
             inner.timer.set_interval(poll);
         }
+    }
+}
+
+fn raise(window: &WinitWindow) {
+    if let Err(err) = overlay::raise(window) {
+        eprintln!("could not raise the pill: {err}");
     }
 }
 
@@ -400,6 +405,15 @@ mod tests {
 
     /// Clicks the element named `id` in a window showing `look`, and returns what fired.
     fn click(look: PillLook, id: &str) -> Vec<&'static str> {
+        let (fired, _) = click_with(look, id, PointerEventButton::Left);
+        fired
+    }
+
+    fn click_with(
+        look: PillLook,
+        id: &str,
+        button: PointerEventButton,
+    ) -> (Vec<&'static str>, PillWindow) {
         let ui = PillWindow::new().unwrap();
         ui.set_look(look);
         ui.set_capsule_x(82.0);
@@ -423,12 +437,13 @@ mod tests {
             .unwrap_or_else(|| panic!("no element {id}"));
         let done = fired.clone();
         slint::spawn_local(async move {
-            element.single_click(PointerEventButton::Left).await;
+            element.single_click(button).await;
             slint::quit_event_loop().unwrap();
         })
         .unwrap();
         slint::run_event_loop().unwrap();
-        done.borrow().clone()
+        let fired = done.borrow().clone();
+        (fired, ui)
     }
 
     // One test: Slint's test platform can only be installed once per process.
@@ -439,7 +454,22 @@ mod tests {
             click(PillLook::Ready, "PillWindow::capsule-touch"),
             ["pressed", "released"]
         );
-        assert_eq!(click(PillLook::Locked, "PillWindow::cancel-button"), ["cancel"]);
+        assert_eq!(
+            click(PillLook::Locked, "PillWindow::cancel-button"),
+            ["cancel"]
+        );
         assert_eq!(click(PillLook::Locked, "PillWindow::stop-button"), ["stop"]);
+
+        let is_open = |look| {
+            let (fired, ui) =
+                click_with(look, "PillWindow::capsule-touch", PointerEventButton::Right);
+            assert_eq!(fired, Vec::<&str>::new(), "a right-click is not a press");
+            ElementHandle::find_by_accessible_label(&ui, "Hide for 1 hour").count() > 0
+        };
+        assert!(
+            is_open(PillLook::Ready),
+            "right-click opens the menu when ready"
+        );
+        assert!(!is_open(PillLook::Processing), "the menu is only for Ready");
     }
 }
