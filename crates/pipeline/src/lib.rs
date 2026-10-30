@@ -4,6 +4,8 @@
 
 use wf_core::audio::AudioClip;
 
+pub mod rules;
+
 /// Engine failures that the pill's Error state and the fallbacks need to tell apart.
 #[derive(Debug, thiserror::Error)]
 pub enum PipelineError {
