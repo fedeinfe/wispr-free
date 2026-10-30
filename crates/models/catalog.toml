@@ -1,0 +1,233 @@
+# wispr-free model catalog (spec §6). Bundled into the binary; a newer copy can replace it
+# without code changes. Bump `version` on every edit; bump `schema` only for breaking format
+# changes.
+#
+# Every entry is a *candidate*: ticket 14 benchmarks them and sets the tier defaults.
+# Sizes and SHA-256 come from the Hugging Face API (LFS metadata) at the pinned revisions,
+# fetched 2026-10-30. `ram_mb` is an estimate (weights + runtime buffers) until ticket 14
+# measures it.
+
+schema = 1
+version = "2026.10.30"
+
+# Tier presets: stage toggles plus one model per enabled stage. A tier downloads exactly the
+# models it names.
+
+[tiers.lite]
+denoise = false
+vad = true
+llm_cleanup = false
+meeting_refine = false
+diarization = false
+vad_model = "silero-vad-v5"
+asr_model = "whisper-small-q8_0"
+
+[tiers.balanced]
+denoise = false
+vad = true
+llm_cleanup = true
+meeting_refine = true
+diarization = true
+vad_model = "silero-vad-v5"
+asr_model = "parakeet-tdt-0.6b-v3-int8"
+llm_model = "qwen3-1.7b-q4_k_m"
+
+[tiers.high]
+denoise = false
+vad = true
+llm_cleanup = true
+meeting_refine = true
+diarization = true
+vad_model = "silero-vad-v5"
+asr_model = "whisper-large-v3-turbo"
+llm_model = "qwen3-4b-instruct-2507-q4_k_m"
+
+# ── VAD ──────────────────────────────────────────────────────────────────────────────────────
+
+[[models]]
+id = "silero-vad-v5"
+name = "Silero VAD v5"
+kind = "vad"
+engine = "sherpa-onnx"
+license = "MIT"
+languages = ["*"]
+ram_mb = 30
+candidate = true
+[[models.files]]
+name = "silero_vad.onnx"
+url = "https://huggingface.co/csukuangfj/vad/resolve/fba88cd2e921609e7675c3aaf51e0b9b295da4bc/silero_vad_v5.onnx"
+size = 2313101
+sha256 = "6b99cbfd39246b6706f98ec13c7c50c6b299181f2474fa05cbc8046acc274396"
+
+# ── ASR ──────────────────────────────────────────────────────────────────────────────────────
+
+[[models]]
+id = "whisper-small-q8_0"
+name = "Whisper small (multilingual, 8-bit)"
+kind = "asr"
+engine = "whisper.cpp"
+license = "MIT"
+languages = ["*"]
+ram_mb = 500
+candidate = true
+[[models.files]]
+name = "ggml-small-q8_0.bin"
+url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small-q8_0.bin"
+size = 264464607
+sha256 = "49c8fb02b65e6049d5fa6c04f81f53b867b5ec9540406812c643f177317f779f"
+
+[[models]]
+id = "whisper-base.en-q5_1"
+name = "Whisper base (English only, 5-bit)"
+kind = "asr"
+engine = "whisper.cpp"
+license = "MIT"
+languages = ["en"]
+ram_mb = 200
+candidate = true
+[[models.files]]
+name = "ggml-base.en-q5_1.bin"
+url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.en-q5_1.bin"
+size = 59721011
+sha256 = "4baf70dd0d7c4247ba2b81fafd9c01005ac77c2f9ef064e00dcf195d0e2fdd2f"
+
+[[models]]
+id = "parakeet-tdt-0.6b-v3-int8"
+name = "Parakeet TDT 0.6B v3 (25 European languages, int8)"
+kind = "asr"
+engine = "sherpa-onnx"
+license = "CC-BY-4.0"
+languages = ["bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "hu", "it", "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru", "uk"]
+ram_mb = 1000
+candidate = true
+[[models.files]]
+name = "encoder.int8.onnx"
+url = "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78/encoder.int8.onnx"
+size = 652184281
+sha256 = "acfc2b4456377e15d04f0243af540b7fe7c992f8d898d751cf134c3a55fd2247"
+[[models.files]]
+name = "decoder.int8.onnx"
+url = "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78/decoder.int8.onnx"
+size = 11845275
+sha256 = "179e50c43d1a9de79c8a24149a2f9bac6eb5981823f2a2ed88d655b24248db4e"
+[[models.files]]
+name = "joiner.int8.onnx"
+url = "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78/joiner.int8.onnx"
+size = 6355277
+sha256 = "3164c13fc2821009440d20fcb5fdc78bff28b4db2f8d0f0b329101719c0948b3"
+[[models.files]]
+name = "tokens.txt"
+url = "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78/tokens.txt"
+size = 93939
+sha256 = "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"
+
+[[models]]
+id = "whisper-large-v3-turbo-q5_0"
+name = "Whisper large-v3-turbo (multilingual, 5-bit)"
+kind = "asr"
+engine = "whisper.cpp"
+license = "MIT"
+languages = ["*"]
+ram_mb = 900
+candidate = true
+[[models.files]]
+name = "ggml-large-v3-turbo-q5_0.bin"
+url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q5_0.bin"
+size = 574041195
+sha256 = "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+
+[[models]]
+id = "whisper-large-v3-turbo"
+name = "Whisper large-v3-turbo (multilingual, f16, GPU)"
+kind = "asr"
+engine = "whisper.cpp"
+license = "MIT"
+languages = ["*"]
+ram_mb = 2000
+candidate = true
+[[models.files]]
+name = "ggml-large-v3-turbo.bin"
+url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo.bin"
+size = 1624555275
+sha256 = "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69"
+
+# ── LLM (cleanup, summaries, chat) ───────────────────────────────────────────────────────────
+
+[[models]]
+id = "qwen3-1.7b-q4_k_m"
+name = "Qwen3 1.7B (Q4_K_M)"
+kind = "llm"
+engine = "llama.cpp"
+license = "Apache-2.0"
+languages = ["*"]
+ram_mb = 1600
+candidate = true
+notes = "Hybrid thinking model: disable thinking (/no_think or the chat template flag) for cleanup."
+[[models.files]]
+name = "Qwen3-1.7B-Q4_K_M.gguf"
+url = "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/d7f544eead698dbd1f15126ef60b45a1e1933222/Qwen3-1.7B-Q4_K_M.gguf"
+size = 1107409472
+sha256 = "b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897"
+
+[[models]]
+id = "llama-3.2-1b-instruct-q4_k_m"
+name = "Llama 3.2 1B Instruct (Q4_K_M)"
+kind = "llm"
+engine = "llama.cpp"
+license = "Llama-3.2-Community"
+languages = ["en", "de", "fr", "it", "pt", "hi", "es", "th"]
+ram_mb = 1200
+candidate = true
+notes = "License requires 'Built with Llama' attribution."
+[[models.files]]
+name = "Llama-3.2-1B-Instruct-Q4_K_M.gguf"
+url = "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/067b946cf014b7c697f3654f621d577a3e3afd1c/Llama-3.2-1B-Instruct-Q4_K_M.gguf"
+size = 807694464
+sha256 = "6f85a640a97cf2bf5b8e764087b1e83da0fdb51d7c9fab7d0fece9385611df83"
+
+[[models]]
+id = "qwen3.5-2b-q4_k_m"
+name = "Qwen3.5 2B (Q4_K_M)"
+kind = "llm"
+engine = "llama.cpp"
+license = "Apache-2.0"
+languages = ["*"]
+ram_mb = 1800
+candidate = true
+notes = "Check the bundled llama.cpp revision supports the Qwen3.5 architecture."
+[[models.files]]
+name = "Qwen3.5-2B-Q4_K_M.gguf"
+url = "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-Q4_K_M.gguf"
+size = 1280835840
+sha256 = "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223"
+
+[[models]]
+id = "qwen3-4b-instruct-2507-q4_k_m"
+name = "Qwen3 4B Instruct 2507 (Q4_K_M)"
+kind = "llm"
+engine = "llama.cpp"
+license = "Apache-2.0"
+languages = ["*"]
+ram_mb = 3200
+candidate = true
+[[models.files]]
+name = "Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+url = "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+size = 2497281120
+sha256 = "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597"
+
+[[models]]
+id = "qwen3.5-4b-q4_k_m"
+name = "Qwen3.5 4B (Q4_K_M)"
+kind = "llm"
+engine = "llama.cpp"
+license = "Apache-2.0"
+languages = ["*"]
+ram_mb = 3500
+candidate = true
+notes = "Check the bundled llama.cpp revision supports the Qwen3.5 architecture."
+[[models.files]]
+name = "Qwen3.5-4B-Q4_K_M.gguf"
+url = "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-Q4_K_M.gguf"
+size = 2740937888
+sha256 = "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4"
