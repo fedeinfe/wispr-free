@@ -256,10 +256,12 @@ fn writer_process_that_gets_killed() {
         return;
     };
     let mut writer = MeetingWriter::create(Path::new(&path)).unwrap();
-    for n in 0.. {
-        write_frames(&mut writer, n..n + 1);
-        if (n + 1) % 25 == 0 {
-            println!("wrote {} seconds", (n + 1) / 25);
+    let mut frames = 0;
+    loop {
+        write_frames(&mut writer, frames..frames + 1);
+        frames += 1;
+        if frames % 25 == 0 {
+            println!("wrote {} seconds", frames / 25);
         }
     }
 }

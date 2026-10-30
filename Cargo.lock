@@ -6386,7 +6386,3 @@ dependencies = [
  "syn 3.0.9",
  "winnow",
 ]
-
-[[patch.unused]]
-name = "opusic-sys"
-version = "0.7.3"

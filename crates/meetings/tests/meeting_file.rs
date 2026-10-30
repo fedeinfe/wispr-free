@@ -205,8 +205,10 @@ fn ffmpeg_decodes_the_file_as_stereo_with_the_right_duration() {
 
     let samples: Vec<i16> = output
         .stdout
-        .chunks_exact(2)
-        .map(|b| i16::from_le_bytes([b[0], b[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&bytes| i16::from_le_bytes(bytes))
         .collect();
     let channel = |c: usize| -> Vec<f32> {
         samples

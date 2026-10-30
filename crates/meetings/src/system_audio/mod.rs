@@ -14,6 +14,7 @@ mod screen_capture;
 
 #[cfg(not(target_os = "macos"))]
 pub use loopback::SystemAudioBackend;
+#[cfg(target_os = "macos")]
 pub use macos::SystemAudioBackend;
 #[cfg(target_os = "macos")]
 pub(crate) use macos::{object_list, object_property, object_string};
