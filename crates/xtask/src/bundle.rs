@@ -15,6 +15,8 @@ use anyhow::{Context as _, bail, ensure};
 pub const APP: &str = "Wispr Free.app";
 const BUNDLE_ID: &str = "com.wispr-free.app";
 const EXECUTABLE: &str = "wispr-free";
+const ICON: &str = "AppIcon";
+const ICON_SOURCE: &str = "crates/app/ui/icons/app-icon.svg";
 /// The oldest macOS the spec supports. Ticket 15's weak CoreAudio link is what makes it true.
 const MINIMUM_MACOS: &str = "13.0";
 const IDENTITY: &str = "Wispr Free Local";
@@ -59,6 +61,8 @@ pub fn info_plist(version: &str) -> String {
     <string>Wispr Free</string>
     <key>CFBundleExecutable</key>
     <string>{EXECUTABLE}</string>
+    <key>CFBundleIconFile</key>
+    <string>{ICON}</string>
     <key>CFBundleIdentifier</key>
     <string>{BUNDLE_ID}</string>
     <key>CFBundleInfoDictionaryVersion</key>
@@ -75,6 +79,8 @@ pub fn info_plist(version: &str) -> String {
     <string>{MINIMUM_MACOS}</string>
     <key>LSUIElement</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Wispr Free pauses this player while you dictate and resumes it afterwards, if you turned that on in Settings.</string>
     <key>NSAudioCaptureUsageDescription</key>
     <string>Wispr Free records the other side of a meeting, only after you start meeting notes. It stays on this Mac.</string>
     <key>NSHighResolutionCapable</key>
@@ -87,6 +93,19 @@ pub fn info_plist(version: &str) -> String {
 </plist>
 "#
     )
+}
+
+/// The files of a macOS `.iconset`, with the pixels each one has.
+pub fn iconset_files() -> Vec<(String, u32)> {
+    [16, 32, 128, 256, 512]
+        .into_iter()
+        .flat_map(|points: u32| {
+            [
+                (format!("icon_{points}x{points}.png"), points),
+                (format!("icon_{points}x{points}@2x.png"), points * 2),
+            ]
+        })
+        .collect()
 }
 
 /// What `otool -L` reports as loaded through the rpath, by file name.
@@ -300,11 +319,14 @@ fn assemble(target: &Path, signer: &Signer) -> anyhow::Result<PathBuf> {
     if app.exists() {
         fs::remove_dir_all(&app)?;
     }
+    let resources = contents.join("Resources");
     fs::create_dir_all(&macos)?;
+    fs::create_dir_all(&resources)?;
     fs::write(
         contents.join("Info.plist"),
         info_plist(env!("CARGO_PKG_VERSION")),
     )?;
+    render_icon(target, &resources.join(format!("{ICON}.icns")))?;
 
     let binary = macos.join(EXECUTABLE);
     fs::copy(&executable, &binary)?;
@@ -321,6 +343,32 @@ fn assemble(target: &Path, signer: &Signer) -> anyhow::Result<PathBuf> {
     // Fails if dyld can't find a library from inside the bundle.
     tool(&binary).arg("--version").current_dir("/").succeed()?;
     Ok(app)
+}
+
+/// Draws the icon from its SVG, each size from the source so small ones stay sharp.
+fn render_icon(target: &Path, icns: &Path) -> anyhow::Result<()> {
+    let source = workspace_root().join(ICON_SOURCE);
+    let iconset = target.join(format!("{ICON}.iconset"));
+    if iconset.exists() {
+        fs::remove_dir_all(&iconset)?;
+    }
+    fs::create_dir_all(&iconset)?;
+    for (name, pixels) in iconset_files() {
+        let pixels = pixels.to_string();
+        tool("sips")
+            .args(["-s", "format", "png", "-z", &pixels, &pixels])
+            .arg(&source)
+            .arg("--out")
+            .arg(iconset.join(name))
+            .succeed()?;
+    }
+    tool("iconutil")
+        .args(["-c", "icns", "-o"])
+        .arg(icns)
+        .arg(&iconset)
+        .succeed()?;
+    fs::remove_dir_all(&iconset)?;
+    Ok(())
 }
 
 /// Builds the app. `.cargo/config.toml` keeps OpenSSL out of llama.cpp, but nothing tells cargo

@@ -172,6 +172,20 @@ impl Default for StyleSettings {
     }
 }
 
+impl StyleSettings {
+    /// Adds a word to the dictionary, unless it's blank or there already in any case. Returns
+    /// whether it was added.
+    pub fn add_word(&mut self, word: &str) -> bool {
+        let word = word.trim();
+        let mut known = self.dictionary.iter();
+        if word.is_empty() || known.any(|known| known.eq_ignore_ascii_case(word)) {
+            return false;
+        }
+        self.dictionary.push(word.to_owned());
+        true
+    }
+}
+
 /// Tone and punctuation preset for an app category. LLM cleanup applies a style by rewriting;
 /// `wf_pipeline::passes::apply_style` does the mechanical part, so it holds with the LLM off too.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

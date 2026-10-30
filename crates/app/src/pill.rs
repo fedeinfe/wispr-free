@@ -42,7 +42,8 @@ pub const LANGUAGES: [(&str, Option<&str>); 3] = [
 ];
 const PIPELINE_QUALITIES: [&str; 4] = ["Lite", "Balanced", "High", "Custom"];
 
-/// What the user asked for through the pill. Moving and hiding it are handled internally.
+/// What the user asked for through the pill, which is also where a word they fixed arrives, on
+/// its way to the settings. Moving and hiding the pill are handled internally.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PillEvent {
     ToggleHandsFree,
@@ -57,6 +58,7 @@ pub enum PillEvent {
     OpenMeetings,
     OpenSettings,
     Quit,
+    LearnWord(String),
 }
 
 type EventHandler = Rc<dyn Fn(PillEvent)>;
@@ -334,6 +336,11 @@ impl PillController {
         if let Err(err) = spawned {
             eprintln!("could not list microphones: {err}");
         }
+    }
+
+    /// The flow saw the user fix a word. Whoever handles [`PillEvent`]s adds it.
+    pub fn learn_word(&self, word: String) {
+        self.emit(PillEvent::LearnWord(word));
     }
 
     fn emit(&self, event: PillEvent) {

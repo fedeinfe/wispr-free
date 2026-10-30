@@ -4,7 +4,9 @@
 //! contact with the outside world is a seam in [`Parts`], so tests run the whole flow on fakes.
 
 mod coordinator;
+mod corrections;
 mod engines;
+mod media;
 mod meeting;
 mod meeting_work;
 pub mod plan;
@@ -28,7 +30,9 @@ use wf_models::Catalog;
 use wf_platform::context::{ContextSource, SystemContext};
 use wf_platform::insert::{InsertError, InsertOutcome, SystemInserter};
 use wf_platform::keys::KeySignal;
+use wf_platform::media::{MediaControl, SystemMedia};
 
+pub use corrections::{LOOK_EVERY, STEADY_LOOKS, WATCH_FOR};
 pub use engines::Engines;
 pub use meeting::{
     ChatUpdate, MeetingNews, MeetingRoom, MeetingTape, MeetingsStatus, SystemMeetingRoom,
@@ -152,6 +156,9 @@ pub enum Event {
     TrialFailed { part: TrialPart, reason: String },
     /// A dictation reached the focused app.
     Inserted(Report),
+    /// The user fixed the spelling of one word of a dictation. This word belongs in the
+    /// dictionary, and the flow takes no step of its own to put it there.
+    WordLearned(String),
     /// The models are gone from memory, so this is a good moment to hand freed pages back.
     Unloaded,
     /// A meeting recording started or stopped.
@@ -192,6 +199,9 @@ pub struct Parts {
     pub meeting_room: Arc<dyn MeetingRoom>,
     pub engines: Arc<dyn Engines>,
     pub context: Arc<dyn ContextSource + Send + Sync>,
+    pub media: Arc<dyn MediaControl>,
+    /// Where outputs we muted are written down, so a crash can't leave them muted.
+    pub media_note: PathBuf,
     /// Takes a builder because the inserter should be made on the thread it lives on.
     pub insertion: Box<dyn FnOnce() -> Box<dyn Insertion> + Send>,
     pub clock: Arc<dyn Clock>,
@@ -213,12 +223,14 @@ impl Parts {
             settings,
             catalog,
             default_models,
+            media_note: history.with_file_name("media-note.json"),
             history,
             meetings,
             microphone: Arc::new(SystemMicrophone),
             meeting_room: Arc::new(SystemMeetingRoom),
             engines: Arc::new(remote::ChildEngines::new(executable)),
             context: Arc::new(SystemContext),
+            media: Arc::new(SystemMedia),
             insertion: Box::new(|| Box::new(SystemInserter::system())),
             clock: Arc::new(SystemClock::default()),
             on_event,
@@ -379,6 +391,15 @@ impl Dictation {
     pub fn close_meetings(&self, limit: Duration) {
         let (done, wait) = mpsc::channel();
         self.send(Input::CloseMeetings(done));
+        let _ = wait.recv_timeout(limit);
+    }
+
+    /// Puts back whatever a dictation in progress muted or paused, and leaves media alone from
+    /// here on, for when the app is going away. Waits for at most `limit`. A mute that doesn't
+    /// come off in time comes off at the next launch.
+    pub fn close_media(&self, limit: Duration) {
+        let (done, wait) = mpsc::channel();
+        self.send(Input::CloseMedia(done));
         let _ = wait.recv_timeout(limit);
     }
 

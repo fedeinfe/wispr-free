@@ -13,6 +13,7 @@ use wf_core::audio::{AudioClip, FRAME_MS, FRAME_SAMPLES};
 use wf_meetings::{Error, MeetingEvent, MeetingWriter, MicClient, StereoFrame, TimelineFrame};
 use wf_platform::context::{Context, ContextDepth, ContextSource, Focus};
 use wf_platform::insert::{InsertError, InsertOutcome, PasteChord};
+use wf_platform::media::{MediaControl, MediaError, Output};
 
 use crate::meeting::{MeetingRoom, MeetingTape};
 use crate::{Insertion, MicStream, Microphone};
@@ -263,6 +264,27 @@ impl Insertion for TextLog {
     fn copy(&mut self, _text: &str) -> Result<(), InsertError> {
         Ok(())
     }
+}
+
+/// Sound the OS is never asked about, so a probe can't mute or pause anything.
+pub struct NoMedia;
+
+impl MediaControl for NoMedia {
+    fn output(&self) -> Result<Output, MediaError> {
+        Err(MediaError::NoOutput)
+    }
+
+    fn set_muted(&self, _device: &str, _muted: bool) -> Result<(), MediaError> {
+        Err(MediaError::NoOutput)
+    }
+
+    fn pause_players(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn resume_players(&self, _players: &[String]) {}
+
+    fn ask_players(&self) {}
 }
 
 /// A focused text field the OS is never asked about.

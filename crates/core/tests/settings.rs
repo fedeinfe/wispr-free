@@ -8,6 +8,17 @@ use wf_core::settings::{
 };
 use wf_core::shortcut::{Combo, Key, Side};
 
+#[test]
+fn a_dictionary_word_is_added_once_in_any_case() {
+    let mut style = Settings::default().style;
+
+    assert!(style.add_word(" Slint "));
+    assert!(!style.add_word("slint"));
+    assert!(!style.add_word("   "));
+
+    assert_eq!(style.dictionary, ["Slint"]);
+}
+
 /// A value of every setting that differs from its default.
 fn every_setting_changed() -> Settings {
     let mut settings = Settings::default();

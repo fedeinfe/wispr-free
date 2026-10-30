@@ -18,8 +18,8 @@ use wf_core::settings::{KeepModels, PipelineTier, Settings};
 use wf_core::shortcut::{Bindings, Key, KeyEvent, Platform};
 use wf_dictation::plan::{AsrModel, DiarizerModel, LlmModel};
 use wf_dictation::{
-    Clock, Dictation, Engines, Event, Insertion, MeetingRoom, MeetingTape, MicStream, Microphone,
-    Parts,
+    Clock, Dictation, Engines, Event, Insertion, LOOK_EVERY, MeetingRoom, MeetingTape, MicStream,
+    Microphone, Parts,
 };
 use wf_meetings::{MeetingEvent, MeetingWriter, MicClient, StereoFrame, TimelineFrame};
 use wf_models::Catalog;
@@ -30,6 +30,7 @@ use wf_pipeline::{
 use wf_platform::context::{AppIdentity, Context, ContextDepth, ContextSource, Focus, TextAround};
 use wf_platform::insert::{CopyReason, InsertError, InsertOutcome, PasteChord};
 use wf_platform::keys::KeySignal;
+use wf_platform::media::{MediaControl, MediaError, Output};
 
 pub const FN: Key = Key::Fn;
 const WAIT: Duration = Duration::from_secs(10);
@@ -611,11 +612,122 @@ impl MeetingRoom for FakeRoom {
     }
 }
 
-pub struct FakeContext(pub Mutex<Context>);
+/// One system call of [`FakeMedia`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MediaCall {
+    Mute(String),
+    Unmute(String),
+    Pause,
+    Resume(Vec<String>),
+    Ask,
+}
+
+/// The sound system, as far as the flow can tell, and what it was told to do.
+pub struct FakeMedia {
+    pub calls: Mutex<Vec<MediaCall>>,
+    /// The default output. Anything else in `muted` is a device the user switched away from.
+    pub output: Mutex<Result<String, MediaError>>,
+    pub muted: Mutex<Vec<String>>,
+    /// Devices that are unplugged.
+    pub gone: Mutex<Vec<String>>,
+    /// The players that are playing.
+    pub playing: Mutex<Vec<String>>,
+    /// Holds `output` and `pause_players`, the calls a slow system would be slow in.
+    pub gate: Gate,
+    /// Whether the crash note was on disk at the moment of each mute.
+    pub noted_at_mute: Mutex<Vec<bool>>,
+    pub note: Mutex<Option<PathBuf>>,
+}
+
+pub const SPEAKERS: &str = "BuiltInSpeakerDevice";
+
+impl Default for FakeMedia {
+    fn default() -> Self {
+        Self {
+            calls: Mutex::default(),
+            output: Mutex::new(Ok(SPEAKERS.to_owned())),
+            muted: Mutex::default(),
+            gone: Mutex::default(),
+            playing: Mutex::default(),
+            gate: Gate::default(),
+            noted_at_mute: Mutex::default(),
+            note: Mutex::default(),
+        }
+    }
+}
+
+impl FakeMedia {
+    pub fn calls(&self) -> Vec<MediaCall> {
+        self.calls.lock().unwrap().clone()
+    }
+
+    pub fn is_muted(&self, device: &str) -> bool {
+        self.muted.lock().unwrap().iter().any(|d| d == device)
+    }
+
+    pub fn wait_calls(&self, count: usize) {
+        wait_for("calls to the sound system", || {
+            self.calls.lock().unwrap().len() >= count
+        });
+    }
+}
+
+impl MediaControl for FakeMedia {
+    fn output(&self) -> Result<Output, MediaError> {
+        self.gate.pass();
+        let device = self.output.lock().unwrap().clone()?;
+        Ok(Output {
+            muted: self.is_muted(&device),
+            device,
+        })
+    }
+
+    fn set_muted(&self, device: &str, muted: bool) -> Result<(), MediaError> {
+        if self.gone.lock().unwrap().iter().any(|d| d == device) {
+            return Err(MediaError::OutputGone);
+        }
+        let mut list = self.muted.lock().unwrap();
+        let mut calls = self.calls.lock().unwrap();
+        if muted {
+            let note = self.note.lock().unwrap().clone();
+            let noted = note.is_some_and(|note| note.exists());
+            self.noted_at_mute.lock().unwrap().push(noted);
+            list.push(device.to_owned());
+            calls.push(MediaCall::Mute(device.to_owned()));
+        } else {
+            list.retain(|d| d != device);
+            calls.push(MediaCall::Unmute(device.to_owned()));
+        }
+        Ok(())
+    }
+
+    fn pause_players(&self) -> Vec<String> {
+        self.gate.pass();
+        self.calls.lock().unwrap().push(MediaCall::Pause);
+        std::mem::take(&mut *self.playing.lock().unwrap())
+    }
+
+    fn resume_players(&self, players: &[String]) {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(MediaCall::Resume(players.to_vec()));
+        self.playing.lock().unwrap().extend_from_slice(players);
+    }
+
+    fn ask_players(&self) {
+        self.calls.lock().unwrap().push(MediaCall::Ask);
+    }
+}
+
+/// The focused field, and how many times it was read.
+pub struct FakeContext(pub Mutex<Context>, pub AtomicUsize);
 
 impl ContextSource for FakeContext {
     fn read(&self, _depth: ContextDepth) -> Context {
-        self.0.lock().unwrap().clone()
+        let context = self.0.lock().unwrap().clone();
+        self.1.fetch_add(1, Ordering::SeqCst);
+        context
     }
 }
 
@@ -676,9 +788,12 @@ pub struct Rig {
     pub log: Arc<InsertLog>,
     pub clock: Arc<FakeClock>,
     pub context: Arc<FakeContext>,
+    pub media: Arc<FakeMedia>,
     pub events: Receiver<Event>,
     pub data: TempDir,
 }
+
+pub const MEDIA_NOTE: &str = "media-note.json";
 
 impl Rig {
     pub fn new(settings: Settings) -> Self {
@@ -698,15 +813,29 @@ impl Rig {
     }
 
     pub fn with_models(settings: Settings, data: TempDir, models: PathBuf) -> Self {
+        Self::with_media(settings, data, models, Arc::default())
+    }
+
+    pub fn with_media(
+        settings: Settings,
+        data: TempDir,
+        models: PathBuf,
+        media: Arc<FakeMedia>,
+    ) -> Self {
         let mic = Arc::new(FakeMic::default());
         let room = Arc::new(FakeRoom::default());
         let probe = Arc::new(Probe::default());
         let log = Arc::new(InsertLog::default());
         let clock = Arc::new(FakeClock::default());
-        let context = Arc::new(FakeContext(Mutex::new(editor_context())));
+        let context = Arc::new(FakeContext(
+            Mutex::new(editor_context()),
+            AtomicUsize::new(0),
+        ));
         let (events_tx, events) = mpsc::channel();
         let events_tx = Mutex::new(events_tx);
         let insertion_log = Arc::clone(&log);
+        let media_note = data.path().join(MEDIA_NOTE);
+        *media.note.lock().unwrap() = Some(media_note.clone());
         let dictation = Dictation::start(Parts {
             settings,
             catalog: Arc::new(Catalog::bundled()),
@@ -717,6 +846,8 @@ impl Rig {
             meeting_room: Arc::clone(&room) as Arc<dyn MeetingRoom>,
             engines: Arc::new(FakeEngines(Arc::clone(&probe), false)),
             context: Arc::clone(&context) as Arc<dyn ContextSource + Send + Sync>,
+            media: Arc::clone(&media) as Arc<dyn MediaControl>,
+            media_note,
             insertion: Box::new(move || Box::new(FakeInsertion(insertion_log))),
             clock: Arc::clone(&clock) as Arc<dyn Clock>,
             on_event: Arc::new(move |event| {
@@ -731,6 +862,7 @@ impl Rig {
             log,
             clock,
             context,
+            media,
             events,
             data,
         }
@@ -793,6 +925,30 @@ impl Rig {
             Event::Toast(text) => Some(text),
             _ => None,
         })
+    }
+
+    /// What the focused field holds from now on, with the cursor at its end.
+    pub fn field(&self, text: &str) {
+        self.context.0.lock().unwrap().text = Some(TextAround::new(text, "", ""));
+    }
+
+    pub fn context_reads(&self) -> usize {
+        self.context.1.load(Ordering::SeqCst)
+    }
+
+    /// Moves time on until the flow looks at the field once more. The flow may not have started
+    /// watching yet, hence the second try.
+    pub fn look(&self) {
+        let reads = self.context_reads();
+        let deadline = Instant::now() + WAIT;
+        while self.context_reads() == reads {
+            assert!(Instant::now() < deadline, "timed out waiting for a look");
+            self.hold(LOOK_EVERY);
+            let tried = Instant::now();
+            while self.context_reads() == reads && tried.elapsed() < Duration::from_millis(100) {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
     }
 
     pub fn wait_inserted(&self) {

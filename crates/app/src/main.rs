@@ -23,6 +23,9 @@ use wispr_free::{Tray, debug, prefs};
 /// How long quitting waits for a running recording to be closed. If it isn't done by then, the
 /// next launch repairs the meeting.
 const MEETING_CLOSE_LIMIT: Duration = Duration::from_secs(5);
+/// How long quitting waits for the sound to come back. A mute that outlasts this comes off at the
+/// next launch.
+const MEDIA_CLOSE_LIMIT: Duration = Duration::from_secs(3);
 
 fn open_settings(settings: &SettingsHost) {
     if let Err(error) = settings.open() {
@@ -206,6 +209,7 @@ fn run(args: &[String]) -> Result<(), slint::PlatformError> {
         }
     });
     let ended = slint::run_event_loop_until_quit();
+    flow.close_media(MEDIA_CLOSE_LIMIT);
     flow.close_meetings(MEETING_CLOSE_LIMIT);
     ended
 }

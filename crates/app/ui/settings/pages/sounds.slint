@@ -11,6 +11,7 @@ export component SoundsPage inherits Page {
 
         SelectRow {
             label: "While dictating";
+            hint: "Mute silences every app while the mic is open. Pause only reaches Music and Spotify: macOS doesn't tell apps what else is playing, so browsers and other apps keep playing. macOS asks once before each player can be controlled. Media is left alone during a meeting.";
             options: ["Leave media alone", "Mute system output", "Pause media"];
             current <=> Prefs.values.media-while-dictating;
         }
