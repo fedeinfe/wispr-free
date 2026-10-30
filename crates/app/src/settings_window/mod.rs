@@ -772,18 +772,8 @@ impl<W: Surface> Inner<W> {
     }
 
     fn add_word(&self, word: &str) {
-        let word = word.trim();
-        if word.is_empty() {
-            return;
-        }
         self.update(|settings| {
-            let dictionary = &mut settings.style.dictionary;
-            if !dictionary
-                .iter()
-                .any(|known| known.eq_ignore_ascii_case(word))
-            {
-                dictionary.push(word.to_owned());
-            }
+            settings.style.add_word(word);
         });
         self.show_dictionary(&self.settings());
     }

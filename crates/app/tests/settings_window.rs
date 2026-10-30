@@ -806,6 +806,29 @@ fn dictionary_words_are_trimmed_kept_unique_and_removable() {
 }
 
 #[test]
+fn a_word_learned_with_the_window_open_shows_up_and_can_be_removed() {
+    let mut harness = Harness::new();
+    let parts = harness.parts();
+    let store = Arc::clone(&parts.store);
+    harness.controller = Some(SettingsController::new(parts).unwrap());
+
+    store
+        .update(|settings| {
+            settings.style.add_word("Kubernetes");
+        })
+        .unwrap();
+    harness.controller().refresh();
+
+    let rows: Vec<SharedString> = harness.prefs().get_dictionary().iter().collect();
+    assert_eq!(rows, ["Kubernetes"]);
+
+    harness.prefs().invoke_remove_word(0);
+
+    assert!(store.get().style.dictionary.is_empty());
+    assert_eq!(harness.prefs().get_dictionary().row_count(), 0);
+}
+
+#[test]
 fn a_replacement_is_saved_once_it_has_a_wrong_word() {
     let mut harness = Harness::new();
 

@@ -508,7 +508,10 @@ fn a_cancel_resumes_what_was_paused() {
     rig.press(Key::Esc);
 
     rig.media.wait_calls(2);
-    assert_eq!(rig.media.calls()[1], MediaCall::Resume(vec![MUSIC.to_owned()]));
+    assert_eq!(
+        rig.media.calls()[1],
+        MediaCall::Resume(vec![MUSIC.to_owned()])
+    );
 }
 
 #[test]
@@ -521,7 +524,10 @@ fn quitting_resumes_what_was_paused() {
     rig.media.wait_calls(1);
     rig.dictation.close_media(CLOSE_LIMIT);
 
-    assert_eq!(rig.media.calls()[1], MediaCall::Resume(vec![MUSIC.to_owned()]));
+    assert_eq!(
+        rig.media.calls()[1],
+        MediaCall::Resume(vec![MUSIC.to_owned()])
+    );
 }
 
 #[test]
@@ -533,7 +539,10 @@ fn a_crash_while_paused_starts_nothing_at_the_next_launch() {
     rig.hold(PAUSE_DELAY);
     rig.media.wait_calls(1);
 
-    assert!(!note_exists(&rig), "music coming on by itself would be a surprise");
+    assert!(
+        !note_exists(&rig),
+        "music coming on by itself would be a surprise"
+    );
 }
 
 #[test]

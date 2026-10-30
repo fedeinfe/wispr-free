@@ -141,7 +141,7 @@ If no text field is focused, keep the text as "last transcript" and show a toast
 
 **Context (optional, on by default).** Through the accessibility APIs, read the focused app identity, window title and up to 500 characters before and after the cursor, plus selected text. These are used for style category, ASR biasing and casing. Nothing is stored beyond the history entry.
 
-**Media.** Optionally mute system output or pause media while dictating.
+**Media.** Optionally mute system output or pause media while the mic is open, then put back exactly what changed, also after a cancel or a crash. macOS has no public way to learn what is playing, so pause only reaches players that can be asked (Music, Spotify), and mute covers everything else.
 
 **History.** Keep each dictation locally: raw ASR text, final text, app, duration and timings. Retention: keep / auto-delete after 24 h / never store. Paste last and copy last use it.
 

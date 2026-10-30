@@ -30,9 +30,10 @@ use objc2_foundation::NSString;
 use super::{MediaControl, MediaError, Output};
 
 const OSASCRIPT: &str = "/usr/bin/osascript";
-/// How long a player gets to answer. The first ask can sit on a permission question, which stays
-/// up after this and applies from the next dictation on.
+/// How long a player gets to answer, in the middle of a dictation.
 const SCRIPT_LIMIT: Duration = Duration::from_secs(3);
+/// How long the user gets to answer the OS's question about a player.
+const ASK_LIMIT: Duration = Duration::from_secs(60);
 const SCRIPT_POLL: Duration = Duration::from_millis(10);
 const PAUSED: &str = "paused";
 
@@ -92,20 +93,22 @@ impl MediaControl for SystemMedia {
         PLAYERS
             .into_iter()
             .filter(|player| is_running(player))
-            .filter(|player| run_script(&pause_script(player)).as_deref() == Some(PAUSED))
+            .filter(|player| {
+                run_script(&pause_script(player), SCRIPT_LIMIT).as_deref() == Some(PAUSED)
+            })
             .map(str::to_owned)
             .collect()
     }
 
     fn resume_players(&self, players: &[String]) {
         for player in players.iter().filter(|player| is_running(player)) {
-            let _ = run_script(&resume_script(player));
+            let _ = run_script(&resume_script(player), SCRIPT_LIMIT);
         }
     }
 
     fn ask_players(&self) {
         for player in PLAYERS.into_iter().filter(|player| is_running(player)) {
-            let _ = run_script(&ask_script(player));
+            let _ = run_script(&ask_script(player), ASK_LIMIT);
         }
     }
 }
@@ -230,7 +233,7 @@ fn ask_script(player: &str) -> String {
 }
 
 /// What the script printed, or `None` if it failed or ran out of time.
-fn run_script(script: &str) -> Option<String> {
+fn run_script(script: &str, limit: Duration) -> Option<String> {
     let mut child = Command::new(OSASCRIPT)
         .args(["-e", script])
         .stdin(Stdio::null())
@@ -243,7 +246,7 @@ fn run_script(script: &str) -> Option<String> {
         match child.try_wait().ok()? {
             Some(status) if status.success() => break,
             Some(_) => return None,
-            None if started.elapsed() >= SCRIPT_LIMIT => {
+            None if started.elapsed() >= limit => {
                 let _ = child.kill();
                 let _ = child.wait();
                 return None;

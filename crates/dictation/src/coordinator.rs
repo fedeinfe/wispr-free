@@ -16,6 +16,7 @@ use wf_core::pill::PillState;
 use wf_core::settings::{HistoryRetention, KeepModels, MediaWhileDictating, Settings};
 use wf_models::{Catalog, ModelStore};
 
+use crate::corrections::{self, LOOK_EVERY, WATCH_FOR, Watch};
 use crate::engines::{LlmSlot, Loaded};
 use crate::media;
 use crate::meeting::{Meetings, Office};
@@ -54,6 +55,14 @@ pub(crate) enum Input {
     CloseMeetings(Sender<()>),
     /// Puts media back for good, and says when that's done.
     CloseMedia(Sender<()>),
+    /// A dictation's text went into the focused app.
+    Inserted {
+        id: u64,
+        text: String,
+        app: Option<String>,
+    },
+    /// The watch on that dictation has nothing more to see.
+    WatchOver(u64),
     Meeting(bool),
     /// Meeting work let go of the model.
     LlmReturned,
@@ -73,6 +82,13 @@ struct Recording {
     pump: Arc<Pump>,
     cancel: Arc<AtomicBool>,
     locked: Arc<AtomicBool>,
+}
+
+/// The watch for a fix that's running, by the coordinator's clock.
+struct Watching {
+    id: u64,
+    next_look: Duration,
+    until: Duration,
 }
 
 /// What this recording has done to media so far.
@@ -103,6 +119,8 @@ pub(crate) struct Coordinator {
     quiet: Quiet,
     /// The app is quitting, so media stays as it is.
     media_closed: bool,
+    corrections: Sender<corrections::Job>,
+    watching: Option<Watching>,
     next_id: u64,
     recording: Option<Recording>,
     in_flight: Vec<InFlight>,
@@ -159,6 +177,14 @@ impl Coordinator {
             .name("wf-media".into())
             .spawn(move || media::run(media_jobs, control, note, on_event))
             .expect("the media thread starts");
+        let (corrections, watch_jobs) = mpsc::channel();
+        let context = Arc::clone(&parts.context);
+        let finished = inbox.clone();
+        let on_event = Arc::clone(&parts.on_event);
+        thread::Builder::new()
+            .name("wf-corrections".into())
+            .spawn(move || corrections::run(watch_jobs, context, finished, on_event))
+            .expect("the corrections thread starts");
 
         let retention = parts.settings.privacy.history_retention;
         let _ = jobs.send(Job::SetRetention(retention));
@@ -183,6 +209,8 @@ impl Coordinator {
             media,
             quiet: Quiet::Off,
             media_closed: false,
+            corrections,
+            watching: None,
             next_id: 0,
             recording: None,
             in_flight: Vec::new(),
@@ -239,7 +267,8 @@ impl Coordinator {
             Quiet::PauseAt(at) => Some(at),
             _ => None,
         };
-        [machine, error, self.unload_at, self.prune_at, pause]
+        let look = self.watching.as_ref().map(|watching| watching.next_look);
+        [machine, error, self.unload_at, self.prune_at, pause, look]
             .into_iter()
             .flatten()
             .min()
@@ -259,6 +288,16 @@ impl Coordinator {
         if self.prune_at.is_some_and(|at| now >= at) {
             self.send_job(Job::Prune);
             self.schedule_prune();
+        }
+        if let Some(watching) = &mut self.watching
+            && now >= watching.next_look
+        {
+            if now >= watching.until {
+                self.end_watch();
+            } else {
+                watching.next_look = now + LOOK_EVERY;
+                let _ = self.corrections.send(corrections::Job::Look);
+            }
         }
     }
 
@@ -304,6 +343,12 @@ impl Coordinator {
                 }
             }
             Input::Finished { id, problem } => self.on_finished(id, problem),
+            Input::Inserted { id, text, app } => self.watch_for_fix(id, &text, app),
+            Input::WatchOver(id) => {
+                if self.watching.as_ref().is_some_and(|w| w.id == id) {
+                    self.watching = None;
+                }
+            }
             Input::Shutdown => {}
         }
     }
@@ -331,6 +376,7 @@ impl Coordinator {
     fn start(&mut self, mode: Mode) {
         self.error = None;
         self.unload_at = None;
+        self.end_watch();
         let trial = mem::take(&mut self.trial_next) || self.trial_armed;
         let plan = match plan(&self.settings, &self.catalog, &self.store) {
             Ok(plan) => plan,
@@ -419,6 +465,33 @@ impl Coordinator {
 
     fn send_media(&self, job: media::Job) {
         let _ = self.media.send(job);
+    }
+
+    /// Watches the field for a fix, unless the user is already dictating the next thing.
+    fn watch_for_fix(&mut self, id: u64, text: &str, app: Option<String>) {
+        if !self.learns_corrections() || self.recording.is_some() {
+            return;
+        }
+        if let Some(watch) = Watch::new(id, text, app) {
+            let _ = self.corrections.send(corrections::Job::Begin(watch));
+            let now = self.clock.now();
+            self.watching = Some(Watching {
+                id,
+                next_look: now + LOOK_EVERY,
+                until: now + WATCH_FOR,
+            });
+        }
+    }
+
+    /// Context awareness off means the user doesn't want the focused field read at all.
+    fn learns_corrections(&self) -> bool {
+        self.settings.style.auto_add_corrections && self.settings.privacy.context_awareness
+    }
+
+    fn end_watch(&mut self) {
+        if self.watching.take().is_some() {
+            let _ = self.corrections.send(corrections::Job::End);
+        }
     }
 
     /// Ends a dictation that can't go on, with the keys possibly still down.
@@ -549,11 +622,14 @@ impl Coordinator {
 
     fn on_settings(&mut self, settings: Settings) {
         let before = mem::replace(&mut self.settings, settings);
-        let settings = &self.settings;
-        let chosen = settings.media.while_dictating;
+        let chosen = self.settings.media.while_dictating;
         if chosen == MediaWhileDictating::Pause && chosen != before.media.while_dictating {
             self.send_media(media::Job::AskPlayers);
         }
+        if !self.learns_corrections() {
+            self.end_watch();
+        }
+        let settings = &self.settings;
         self.meetings.settings_changed(settings);
         self.lock_machine().set_bindings(settings.shortcuts.clone());
         if settings.pipeline.models_folder != before.pipeline.models_folder {

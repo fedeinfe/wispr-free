@@ -85,6 +85,7 @@ export component StylePage inherits Page {
 
         ToggleRow {
             label: "Add corrected words automatically";
+            hint: "Fix one word within 30 seconds of dictating and the new spelling joins this list. Only the word is kept, you can remove it above, and password fields are never read. Needs context awareness.";
             checked <=> Prefs.values.auto-add-corrections;
         }
 

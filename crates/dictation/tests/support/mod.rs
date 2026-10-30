@@ -18,8 +18,8 @@ use wf_core::settings::{KeepModels, PipelineTier, Settings};
 use wf_core::shortcut::{Bindings, Key, KeyEvent, Platform};
 use wf_dictation::plan::{AsrModel, DiarizerModel, LlmModel};
 use wf_dictation::{
-    Clock, Dictation, Engines, Event, Insertion, MeetingRoom, MeetingTape, MicStream, Microphone,
-    Parts,
+    Clock, Dictation, Engines, Event, Insertion, LOOK_EVERY, MeetingRoom, MeetingTape, MicStream,
+    Microphone, Parts,
 };
 use wf_meetings::{MeetingEvent, MeetingWriter, MicClient, StereoFrame, TimelineFrame};
 use wf_models::Catalog;
@@ -720,11 +720,14 @@ impl MediaControl for FakeMedia {
     }
 }
 
-pub struct FakeContext(pub Mutex<Context>);
+/// The focused field, and how many times it was read.
+pub struct FakeContext(pub Mutex<Context>, pub AtomicUsize);
 
 impl ContextSource for FakeContext {
     fn read(&self, _depth: ContextDepth) -> Context {
-        self.0.lock().unwrap().clone()
+        let context = self.0.lock().unwrap().clone();
+        self.1.fetch_add(1, Ordering::SeqCst);
+        context
     }
 }
 
@@ -824,7 +827,10 @@ impl Rig {
         let probe = Arc::new(Probe::default());
         let log = Arc::new(InsertLog::default());
         let clock = Arc::new(FakeClock::default());
-        let context = Arc::new(FakeContext(Mutex::new(editor_context())));
+        let context = Arc::new(FakeContext(
+            Mutex::new(editor_context()),
+            AtomicUsize::new(0),
+        ));
         let (events_tx, events) = mpsc::channel();
         let events_tx = Mutex::new(events_tx);
         let insertion_log = Arc::clone(&log);
@@ -919,6 +925,30 @@ impl Rig {
             Event::Toast(text) => Some(text),
             _ => None,
         })
+    }
+
+    /// What the focused field holds from now on, with the cursor at its end.
+    pub fn field(&self, text: &str) {
+        self.context.0.lock().unwrap().text = Some(TextAround::new(text, "", ""));
+    }
+
+    pub fn context_reads(&self) -> usize {
+        self.context.1.load(Ordering::SeqCst)
+    }
+
+    /// Moves time on until the flow looks at the field once more. The flow may not have started
+    /// watching yet, hence the second try.
+    pub fn look(&self) {
+        let reads = self.context_reads();
+        let deadline = Instant::now() + WAIT;
+        while self.context_reads() == reads {
+            assert!(Instant::now() < deadline, "timed out waiting for a look");
+            self.hold(LOOK_EVERY);
+            let tried = Instant::now();
+            while self.context_reads() == reads && tried.elapsed() < Duration::from_millis(100) {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
     }
 
     pub fn wait_inserted(&self) {

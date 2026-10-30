@@ -97,6 +97,7 @@ fn show(pill: &PillController, tray: &Weak<Tray>, board: &MeetingsBoard, event: 
         Event::Pill(state) => pill.set_state(state),
         Event::Level(level) => pill.set_level(level),
         Event::Toast(text) => pill.show_toast(text),
+        Event::WordLearned(word) => pill.learn_word(word),
         Event::Recent(transcripts) => pill.set_recent(&transcripts),
         Event::Unloaded => memory::release_freed(),
         Event::Meeting(active) => {
@@ -237,6 +238,18 @@ impl PillActions {
             PillEvent::Quit => {
                 let _ = slint::quit_event_loop();
             }
+            PillEvent::LearnWord(word) => self.learn_word(&word),
+        }
+    }
+
+    /// Goes through the same save as any other setting, so the dictionary page and the flow both
+    /// see it at once. The toast is how the user finds out.
+    fn learn_word(&self, word: &str) {
+        let mut added = false;
+        self.change(|settings| added = settings.style.add_word(word));
+        if added {
+            self.pill
+                .show_toast(format!("Added “{word}” to the dictionary"));
         }
     }
 

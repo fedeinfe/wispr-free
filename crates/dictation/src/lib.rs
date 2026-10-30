@@ -4,6 +4,7 @@
 //! contact with the outside world is a seam in [`Parts`], so tests run the whole flow on fakes.
 
 mod coordinator;
+mod corrections;
 mod engines;
 mod media;
 mod meeting;
@@ -31,6 +32,7 @@ use wf_platform::insert::{InsertError, InsertOutcome, SystemInserter};
 use wf_platform::keys::KeySignal;
 use wf_platform::media::{MediaControl, SystemMedia};
 
+pub use corrections::{LOOK_EVERY, STEADY_LOOKS, WATCH_FOR};
 pub use engines::Engines;
 pub use meeting::{
     ChatUpdate, MeetingNews, MeetingRoom, MeetingTape, MeetingsStatus, SystemMeetingRoom,
@@ -154,6 +156,9 @@ pub enum Event {
     TrialFailed { part: TrialPart, reason: String },
     /// A dictation reached the focused app.
     Inserted(Report),
+    /// The user fixed the spelling of one word of a dictation. This word belongs in the
+    /// dictionary, and the flow takes no step of its own to put it there.
+    WordLearned(String),
     /// The models are gone from memory, so this is a good moment to hand freed pages back.
     Unloaded,
     /// A meeting recording started or stopped.

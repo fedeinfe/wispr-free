@@ -170,6 +170,14 @@ impl Worker {
             Some(Err(error)) => problem = Some(format!("Couldn't insert: {error}")),
         }
 
+        // Sent Enter usually empties the field, so there's nothing left to fix.
+        if !insert.press_enter && matches!(outcome, Some(Ok(InsertOutcome::Pasted { .. }))) {
+            let _ = self.finished.send(Input::Inserted {
+                id,
+                text: insert.text.clone(),
+                app: insert.app.clone(),
+            });
+        }
         let timings = Timings {
             insertion: started.elapsed(),
             ..insert.timings
