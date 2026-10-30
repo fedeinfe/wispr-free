@@ -4964,6 +4964,9 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 [[package]]
 name = "wf-audio"
 version = "0.1.0"
+dependencies = [
+ "wf-core",
+]
 
 [[package]]
 name = "wf-core"
@@ -4972,18 +4975,33 @@ version = "0.1.0"
 [[package]]
 name = "wf-meetings"
 version = "0.1.0"
+dependencies = [
+ "wf-audio",
+ "wf-core",
+ "wf-pipeline",
+]
 
 [[package]]
 name = "wf-models"
 version = "0.1.0"
+dependencies = [
+ "wf-core",
+]
 
 [[package]]
 name = "wf-pipeline"
 version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
+ "wf-core",
+]
 
 [[package]]
 name = "wf-platform"
 version = "0.1.0"
+dependencies = [
+ "wf-core",
+]
 
 [[package]]
 name = "wgpu"
@@ -5474,6 +5492,12 @@ version = "0.1.0"
 dependencies = [
  "slint",
  "slint-build",
+ "wf-audio",
+ "wf-core",
+ "wf-meetings",
+ "wf-models",
+ "wf-pipeline",
+ "wf-platform",
 ]
 
 [[package]]

@@ -7,4 +7,7 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+# Per-OS deps (objc2 / windows / x11rb, evdev, wayland layer-shell) arrive with tickets 03, 04 and 05
+# under [target.'cfg(...)'.dependencies].
 [dependencies]
+wf-core.workspace = true

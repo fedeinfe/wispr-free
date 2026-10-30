@@ -1,7 +1,10 @@
 slint::include_modules!();
 
 fn main() -> Result<(), slint::PlatformError> {
-    if std::env::args().skip(1).any(|arg| arg == "--version" || arg == "-V") {
+    if std::env::args()
+        .skip(1)
+        .any(|arg| arg == "--version" || arg == "-V")
+    {
         println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         return Ok(());
     }

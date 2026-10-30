@@ -7,4 +7,6 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+# Catalog manifest, resumable SHA-256-verified downloads and hardware detection arrive with ticket 11.
 [dependencies]
+wf-core.workspace = true

@@ -7,4 +7,6 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+# cpal + rubato (+ nnnoiseless for denoise) arrive with ticket 02.
 [dependencies]
+wf-core.workspace = true

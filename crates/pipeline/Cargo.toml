@@ -7,4 +7,8 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+# Engine impls arrive with their tickets as optional deps behind features:
+# `silero` (sherpa-onnx, 06), `whisper` / `sherpa` (07), `llama` (09), plus `metal` / `cuda` / `vulkan`.
 [dependencies]
+wf-core.workspace = true
+thiserror.workspace = true
