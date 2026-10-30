@@ -133,7 +133,7 @@ const CASES: &[(Option<&str>, &str, &str)] = &[
     (
         Some("en"),
         "I like the red one, oh no, I meant the blue one.",
-        "I like the red one, oh no, I meant the blue one.",
+        "I like the blue one.",
     ),
     (Some("en"), "I said no, thanks.", "I said no, thanks."),
     // A number can only swap a number: dropping "tickets" here would lose it for good.
@@ -301,5 +301,74 @@ fn pauses_become_the_punctuation_they_stand_for() {
     ];
     for (spoken, written) in cases {
         assert_eq!(rule_cleanup(spoken, Some("it")), written, "{spoken}");
+    }
+}
+
+#[test]
+fn a_revision_that_restarts_keeps_only_the_new_version() {
+    let cases = [
+        // The user's own example, with and without the commas Whisper may leave out.
+        (
+            "Fai questa cosa, cioè no, fai quest'altra.",
+            "Fai quest'altra.",
+        ),
+        (
+            "Fai questa cosa cioè no fai quest'altra",
+            "Fai quest'altra.",
+        ),
+        (
+            "Andiamo in macchina, cioè no, in treno perché costa meno.",
+            "Andiamo in treno perché costa meno.",
+        ),
+        (
+            "Compra il latte, no scusa, il pane, e poi passa a prendere Luca.",
+            "Compra il pane, e poi passa a prendere Luca.",
+        ),
+        (
+            "Domani vado al mare, no aspetta, vado in montagna con Anna.",
+            "Domani vado in montagna con Anna.",
+        ),
+        ("Usa il rosso, ripensandoci usa il blu.", "Usa il blu."),
+        (
+            "Mi serve entro lunedì, ah no, entro martedì.",
+            "Mi serve entro martedì.",
+        ),
+        (
+            "Prendo quello rosso, anzi no, volevo dire quello blu.",
+            "Prendo quello blu.",
+        ),
+        (
+            "Scarica tutti i video, cioè tutti no, solo quelli dell'ultimo mese.",
+            "Scarica solo quelli dell'ultimo mese.",
+        ),
+        (
+            "Ho finito. Manda il file a Marco, anzi no, a Luca.",
+            "Ho finito. Manda il file a Luca.",
+        ),
+    ];
+    for (spoken, written) in cases {
+        assert_eq!(rule_cleanup(spoken, Some("it")), written, "{spoken}");
+    }
+    assert_eq!(
+        rule_cleanup(
+            "I like the red one, oh no, I meant the blue one",
+            Some("en")
+        ),
+        "I like the blue one."
+    );
+}
+
+#[test]
+fn what_only_sounds_like_a_revision_stays() {
+    let cases = [
+        "Prendi il pane, no? Il pane.",
+        "Ciao, volevo dire che domani non vengo.",
+        "Ho parlato con Marco, cioè il fratello di Anna, e mi ha detto di sì.",
+        "Ho visto il film con Anna, cioè il film di ieri.",
+        "Vengo con te, ma no alle otto.",
+        "Ho perso il treno, oh no!",
+    ];
+    for spoken in cases {
+        assert_eq!(rule_cleanup(spoken, Some("it")), spoken);
     }
 }

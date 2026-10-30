@@ -14,6 +14,7 @@ pub fn rule_cleanup(text: &str, language: Option<&str>) -> String {
         remove_fillers(&mut words, &lexicons);
         collapse_repeats(&mut words, &lexicons);
         apply_edit_commands(&mut words, &lexicons);
+        apply_restarts(&mut words, &lexicons);
         apply_self_corrections(&mut words, &lexicons);
         if words.len() == before {
             break;
@@ -106,6 +107,8 @@ pub(crate) fn first_word(text: &str) -> Option<String> {
 /// Per-language word lists. Entries are lowercase.
 struct Lexicon {
     language: &'static str,
+    /// Revisions so clear that they count without a comma before them.
+    plain_revisions: &'static [&'static str],
     /// Disfluency tokens that are never content.
     fillers: &'static [&'static str],
     /// Phrases that are fillers only when set off by punctuation ("so, you know, we…").
@@ -125,17 +128,32 @@ struct Lexicon {
 const LEXICONS: &[Lexicon] = &[
     Lexicon {
         language: "en",
+        plain_revisions: &["no wait", "no sorry", "actually no"],
         fillers: &["um", "uh", "uhm", "er", "erm", "hm", "mh", "mhm"],
         filler_phrases: &["you know", "ah", "oh"],
         edit_commands: &["scratch that"],
         edit_commands_at_pause: &["delete that", "never mind"],
         correction_markers: &[
-            "no", "no wait", "wait", "sorry", "no sorry", "oh no", "i mean", "i meant", "actually",
+            "no",
+            "no wait",
+            "wait",
+            "wait no",
+            "sorry",
+            "no sorry",
+            "sorry no",
+            "oh no",
+            "i mean",
+            "i meant",
+            "actually",
+            "actually no",
+            "no actually",
+            "on second thought",
         ],
         doubles: &["had", "bye"],
     },
     Lexicon {
         language: "it",
+        plain_revisions: &["cioè no", "anzi no", "no aspetta", "no scusa"],
         fillers: &["ehm", "emh", "eh", "um", "uh", "uhm", "hm", "mh", "mhm"],
         filler_phrases: &["diciamo", "tipo", "ah", "oh"],
         edit_commands: &[],
@@ -149,10 +167,20 @@ const LEXICONS: &[Lexicon] = &[
             "no",
             "no aspetta",
             "aspetta",
+            "aspetta no",
             "anzi",
+            "anzi no",
+            "no anzi",
             "cioè",
+            "cioè no",
             "scusa",
+            "no scusa",
+            "scusa no",
+            "ah no",
+            "ma no",
             "volevo dire",
+            "intendevo",
+            "ripensandoci",
         ],
         doubles: &["così", "piano", "ciao", "via"],
     },
@@ -362,6 +390,74 @@ fn apply_edit_commands(words: &mut Vec<Word>, lexicons: &[&Lexicon]) {
     }
 }
 
+/// The longest revision marker of any kind starting at `i`, in words.
+fn revision_marker(words: &[Word], i: usize, lexicons: &[&Lexicon]) -> Option<usize> {
+    lexicons
+        .iter()
+        .flat_map(|l| l.correction_markers)
+        .filter_map(|marker| keys_at(words, i, marker))
+        .max()
+}
+
+/// After the verb these point back at a name the revision would take away: "tell Anna this, no,
+/// tell her that" still means Anna, which takes understanding.
+const POINTING_BACK: &[&str] = &["her", "him", "them", "lei", "lui", "loro"];
+
+/// How many more words a revision may take back than it says itself. Past that, as in "send Mark
+/// the file, no, to Luke", it would take away something the speaker kept.
+const RESTART_SLACK: usize = 1;
+
+/// Resolves "A, marker, B" when B restarts from a word of A: everything from that word on is taken
+/// back, so "fai questa cosa, cioè no, fai quest'altra" leaves "fai quest'altra". Unlike the slot
+/// swap this keeps what follows B, and it works without commas when the marker is unmistakable.
+/// Revisions with no word in common need to be understood, so they stay for LLM cleanup.
+fn apply_restarts(words: &mut Vec<Word>, lexicons: &[&Lexicon]) {
+    let mut i = 1;
+    while i < words.len() {
+        if let Some(range) = restart_at(words, i, lexicons) {
+            i = range.start.max(1);
+            words.drain(range);
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// The words a revision at `i` takes back, marker included.
+fn restart_at(words: &[Word], i: usize, lexicons: &[&Lexicon]) -> Option<std::ops::Range<usize>> {
+    let plain = lexicons
+        .iter()
+        .flat_map(|l| l.plain_revisions)
+        .any(|marker| keys_at(words, i, marker).is_some());
+    if !plain && !words[i - 1].suffix.contains(',') {
+        return None;
+    }
+    let key = |at: usize| words.get(at).map(|word| word.key.as_str());
+    // "tutti i video, cioè tutti no, solo quelli": the word repeated says where it starts.
+    let repeated = key(i) == Some("cioè") && key(i + 2) == Some("no");
+    let mut first = if repeated { i + 3 } else { i };
+    while let Some(marker) = revision_marker(words, first, lexicons) {
+        first += marker;
+    }
+    let explained = first == i + 1 && key(i) == Some("cioè");
+    if first == i || explained || words[first - 1].suffix.contains('?') {
+        return None;
+    }
+    let anchor = if repeated { key(i + 1) } else { key(first) }?;
+    if key(first + 1).is_some_and(|next| POINTING_BACK.contains(&next)) {
+        return None;
+    }
+
+    let clause = (0..i - 1)
+        .rev()
+        .find(|&at| words[at].ends_clause())
+        .map_or(0, |at| at + 1);
+    let from = (clause..i).rev().find(|&at| words[at].key == anchor)?;
+    let last = (first..words.len()).find(|&at| words[at].ends_clause());
+    let said = last.unwrap_or(words.len() - 1) + 1 - first;
+    (i - from <= said + RESTART_SLACK).then_some(from..first)
+}
+
 /// Longest replacement the slot heuristic trusts; longer revisions are left for LLM cleanup.
 const MAX_SLOT_WORDS: usize = 3;
 
@@ -378,7 +474,7 @@ fn apply_self_corrections(words: &mut Vec<Word>, lexicons: &[&Lexicon]) {
             .filter(|_| after_comma)
             .filter_map(|m| keys_at(words, i, m))
             .max();
-        if let Some(m) = marker
+        if let Some(m) = marker.filter(|&m| !words[i + m - 1].suffix.contains('?'))
             && let Some(slot) = slot_swap(words, sentence_start, i, m)
         {
             words.drain(i - slot..i + m);
@@ -406,6 +502,13 @@ fn slot_swap(words: &[Word], sentence_start: usize, i: usize, m: usize) -> Optio
         .find(|&r| words[r].ends_clause())
         .unwrap_or(words.len() - 1);
     let n = last + 1 - first;
+    // "manda la mail a Marco, anzi no, mandala a Luca" starts over, whatever else lines up.
+    let restarts = words[sentence_start..i]
+        .iter()
+        .any(|word| word.key.len() > 3 && words[first].key.starts_with(&word.key));
+    if restarts {
+        return None;
+    }
     let ends_sentence = words[last].ends_sentence() || last + 1 == words.len();
     if n > MAX_SLOT_WORDS || i - sentence_start <= n || !ends_sentence {
         return None;

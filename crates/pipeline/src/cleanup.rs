@@ -209,6 +209,14 @@ const EXAMPLES_IT: &[(&str, &str)] = &[
     ),
     ("Prenota due stanze, anzi tre.", "Prenota tre stanze."),
     (
+        "Apri una cartella nuova, cioè, no, usa quella che c'è.",
+        "Usa quella che c'è.",
+    ),
+    (
+        "Dobbiamo rifare il logo, anzi, lascia stare il logo e cambia i colori.",
+        "Lascia stare il logo e cambia i colori.",
+    ),
+    (
         "Abbiamo mangiato pasta insalata e frutta.",
         "Abbiamo mangiato pasta, insalata e frutta.",
     ),

@@ -684,3 +684,80 @@ input = "ask Katerina about the new contract"
 dictionary = ["Caterina"]
 expect = ["Ask Caterina about the new contract."]
 contains = ["Caterina"]
+
+# --- Revisions, from how the user dictates ------------------------------------------------------
+
+[[case]]
+id = "sc-it-fai-altra"
+category = "self-correction"
+language = "it"
+input = "fai questa cosa, cioè no, fai quest'altra"
+expect = ["Fai quest'altra."]
+absent = ["questa cosa"]
+
+[[case]]
+id = "sc-it-fai-altra-no-commas"
+category = "self-correction"
+language = "it"
+input = "fai questa cosa cioè no fai quest'altra"
+expect = ["Fai quest'altra."]
+absent = ["questa cosa"]
+
+[[case]]
+id = "sc-it-latte-pane"
+category = "self-correction"
+language = "it"
+input = "compra il latte, no scusa, il pane, e poi passa a prendere Luca"
+expect = ["Compra il pane e poi passa a prendere Luca."]
+absent = ["latte"]
+
+[[case]]
+id = "sc-it-file-nuovo"
+category = "self-correction"
+language = "it"
+input = "crea un file nuovo, cioè, no, modifica quello che c'è già"
+expect = ["Modifica quello che c'è già."]
+absent = ["nuovo"]
+
+[[case]]
+id = "sc-it-home-menu"
+category = "self-correction"
+language = "it"
+input = "dobbiamo rifare la home, anzi, lascia stare la home e sistema il menu"
+expect = ["Lascia stare la home e sistema il menu."]
+absent = ["rifare"]
+holdout = true
+
+[[case]]
+id = "sc-it-video"
+category = "self-correction"
+language = "it"
+input = "scarica tutti i video, cioè tutti no, solo quelli dell'ultimo mese"
+expect = ["Scarica solo quelli dell'ultimo mese."]
+absent = ["tutti"]
+
+[[case]]
+id = "sc-it-mare-montagna"
+category = "self-correction"
+language = "it"
+input = "domani vado al mare, no aspetta, vado in montagna con Anna"
+expect = ["Domani vado in montagna con Anna."]
+absent = ["mare"]
+holdout = true
+
+[[case]]
+id = "sc-it-email-marco"
+category = "self-correction"
+language = "it"
+input = "manda la mail a Marco, anzi no, mandala a Luca"
+expect = ["Manda la mail a Luca.", "Mandala a Luca."]
+absent = ["Marco"]
+holdout = true
+
+[[case]]
+id = "sc-it-spiegazione"
+category = "self-correction"
+language = "it"
+input = "ho parlato con Marco, cioè il fratello di Anna, e mi ha detto di sì"
+expect = ["Ho parlato con Marco, il fratello di Anna, e mi ha detto di sì."]
+holdout = true
