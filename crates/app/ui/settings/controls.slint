@@ -34,9 +34,10 @@ export component SidebarItem inherits Rectangle {
     in property <bool> interactive: true;
     callback clicked();
 
-    height: 32px;
-    border-radius: 6px;
-    background: selected ? Theme.surface : touch.has-hover ? Theme.hover : transparent;
+    height: 34px;
+    border-radius: Theme.control-radius;
+    background: selected ? Theme.accent-soft : touch.has-hover && interactive ? Theme.hover : transparent;
+    animate background { duration: 120ms; easing: ease-out; }
     accessible-role: tab;
     accessible-label: label;
     accessible-item-selected: selected;
@@ -60,6 +61,7 @@ export component SidebarItem inherits Rectangle {
             text: root.label;
             color: root.selected ? Theme.text : Theme.muted;
             font-size: Theme.body-text;
+            font-weight: root.selected ? 600 : 400;
             vertical-alignment: center;
         }
     }
@@ -70,6 +72,28 @@ export component SidebarItem inherits Rectangle {
         clicked => {
             root.clicked();
         }
+    }
+}
+
+// The app's name at the top of a sidebar.
+export component SidebarBrand inherits HorizontalLayout {
+    height: 34px;
+    padding-left: 8px;
+    spacing: 9px;
+
+    Image {
+        width: 22px;
+        source: @image-url("../icons/app-icon.svg");
+        image-fit: contain;
+        accessible-role: none;
+    }
+
+    Text {
+        text: "wispr-free";
+        color: Theme.text;
+        font-size: Theme.title-text;
+        font-weight: 700;
+        vertical-alignment: center;
     }
 }
 
@@ -98,10 +122,11 @@ export component Toggle inherits Rectangle {
         }
     }
 
-    width: 36px;
-    height: 20px;
+    width: 38px;
+    height: 22px;
     border-radius: self.height / 2;
     background: checked ? Theme.accent : Theme.track;
+    animate background { duration: 140ms; easing: ease-out; }
     opacity: enabled ? 1 : 0.5;
     accessible-role: switch;
     accessible-label: label;
@@ -113,11 +138,14 @@ export component Toggle inherits Rectangle {
 
     Rectangle {
         x: root.checked ? parent.width - self.width - 2px : 2px;
-        width: 16px;
-        height: 16px;
+        width: 18px;
+        height: 18px;
         border-radius: self.height / 2;
         background: #ffffff;
-        animate x { duration: 100ms; easing: ease-out; }
+        drop-shadow-blur: 3px;
+        drop-shadow-offset-y: 1px;
+        drop-shadow-color: #00000040;
+        animate x { duration: 140ms; easing: ease-out; }
     }
 
     TouchArea {
@@ -135,12 +163,13 @@ export component Btn inherits Rectangle {
     in property <bool> enabled: true;
     callback clicked();
 
-    min-width: label.preferred-width + 24px;
-    height: 28px;
-    border-radius: 6px;
-    border-width: primary ? 0 : 1px;
-    border-color: Theme.line;
-    background: primary ? Theme.accent : touch.has-hover && enabled ? Theme.hover : Theme.surface;
+    min-width: label.preferred-width + 28px;
+    height: Theme.control-height;
+    border-radius: Theme.control-radius;
+    background: primary
+        ? (touch.pressed ? Theme.accent.darker(10%) : touch.has-hover && enabled ? Theme.accent.brighter(8%) : Theme.accent)
+        : (touch.pressed ? Theme.track : touch.has-hover && enabled ? Theme.hover : Theme.control);
+    animate background { duration: 120ms; easing: ease-out; }
     opacity: enabled ? 1 : 0.5;
     accessible-role: button;
     accessible-label: text;
@@ -155,6 +184,7 @@ export component Btn inherits Rectangle {
         text: root.text;
         color: root.primary ? Theme.on-accent : root.danger ? Theme.danger : Theme.text;
         font-size: Theme.body-text;
+        font-weight: 500;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -176,11 +206,10 @@ export component Select inherits Rectangle {
     callback selected();
 
     width: 200px;
-    height: 28px;
-    border-radius: 6px;
-    border-width: 1px;
-    border-color: Theme.line;
-    background: touch.has-hover && enabled ? Theme.hover : Theme.surface;
+    height: Theme.control-height;
+    border-radius: Theme.control-radius;
+    background: touch.has-hover && enabled ? Theme.hover : Theme.control;
+    animate background { duration: 120ms; easing: ease-out; }
     opacity: enabled ? 1 : 0.5;
     accessible-role: combobox;
     accessible-label: label;
@@ -222,21 +251,24 @@ export component Select inherits Rectangle {
 
         Rectangle {
             background: Theme.surface;
-            border-radius: 6px;
+            border-radius: Theme.control-radius;
             border-width: 1px;
             border-color: Theme.line;
+            drop-shadow-blur: 12px;
+            drop-shadow-offset-y: 4px;
+            drop-shadow-color: Theme.shadow;
 
             VerticalLayout {
                 padding: 4px;
 
                 for option[index] in root.options: Rectangle {
-                    height: 26px;
-                    border-radius: 4px;
+                    height: 30px;
+                    border-radius: Theme.small-radius;
                     background: option-touch.has-hover ? Theme.hover : transparent;
 
                     Text {
-                        x: 6px;
-                        width: parent.width - 12px;
+                        x: 8px;
+                        width: parent.width - 16px;
                         text: option;
                         color: index == root.current ? Theme.accent : Theme.text;
                         font-size: Theme.body-text;
@@ -271,11 +303,11 @@ export component Field inherits Rectangle {
     }
 
     min-width: 80px;
-    height: multiline ? 72px : 28px;
-    border-radius: 6px;
+    height: multiline ? 76px : Theme.control-height;
+    border-radius: Theme.control-radius;
     border-width: 1px;
-    border-color: input.has-focus ? Theme.accent : Theme.line;
-    background: Theme.surface;
+    border-color: input.has-focus ? Theme.accent : Theme.control;
+    background: Theme.control;
 
     TouchArea {
         mouse-cursor: MouseCursor.text;
@@ -299,10 +331,10 @@ export component Field inherits Rectangle {
     }
 
     input := TextInput {
-        x: 8px;
-        y: multiline ? 6px : 0;
-        width: parent.width - 16px;
-        height: parent.height - (multiline ? 12px : 0);
+        x: 10px;
+        y: multiline ? 8px : 0;
+        width: parent.width - 20px;
+        height: parent.height - (multiline ? 16px : 0);
         text <=> root.text;
         color: Theme.text;
         font-size: Theme.body-text;
@@ -337,7 +369,7 @@ export component Stepper inherits Rectangle {
     }
 
     width: 150px;
-    height: 28px;
+    height: Theme.control-height;
     opacity: enabled ? 1 : 0.5;
     accessible-role: spinbox;
     accessible-label: label;
@@ -358,7 +390,7 @@ export component Stepper inherits Rectangle {
         spacing: 6px;
 
         Btn {
-            width: 28px;
+            width: 32px;
             text: "−";
             enabled: root.enabled && root.value > root.minimum;
             clicked => {
@@ -376,7 +408,7 @@ export component Stepper inherits Rectangle {
         }
 
         Btn {
-            width: 28px;
+            width: 32px;
             text: "+";
             enabled: root.enabled && root.value < root.maximum;
             clicked => {
@@ -395,18 +427,21 @@ export component Card inherits Rectangle {
     border-radius: Theme.radius;
     border-width: 1px;
     border-color: Theme.line;
+    drop-shadow-blur: 10px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: Theme.dark ? transparent : Theme.shadow;
 
     VerticalLayout {
-        padding: 16px;
-        spacing: 12px;
+        padding: 20px;
+        spacing: 14px;
 
         if root.title != "": VerticalLayout {
-            spacing: 2px;
+            spacing: 3px;
 
             Text {
                 text: root.title;
                 color: Theme.text;
-                font-size: Theme.body-text;
+                font-size: Theme.title-text;
                 font-weight: 600;
             }
 
@@ -508,9 +543,9 @@ export component StepperRow inherits Row {
 
 // The title of a page and its scrolling cards are in window.slint; this is the page's column.
 export component Page inherits VerticalLayout {
-    padding: 24px;
+    padding: 28px;
     padding-top: 0;
-    spacing: 14px;
+    spacing: 16px;
     alignment: start;
 }
 

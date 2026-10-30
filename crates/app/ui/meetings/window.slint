@@ -3,7 +3,7 @@
 import { ScrollView, TextEdit, Palette } from "std-widgets.slint";
 import { Prefs } from "../settings/bridge.slint";
 import { Theme } from "../settings/theme.slint";
-import { Btn, ErrorText, Field, Hint, Label, StatusMark } from "../settings/controls.slint";
+import { Btn, ErrorText, Field, Hint, Label, SidebarBrand, StatusMark } from "../settings/controls.slint";
 import {
     ChatBlock, ChatChip, ChatMessage, MeetingRow, MeetingsUi, SpeakerRow, StageRow, SummaryLine,
     TranscriptLine,
@@ -19,7 +19,7 @@ component TimeChip inherits Rectangle {
 
     width: text.preferred-width + 12px;
     height: 20px;
-    border-radius: 4px;
+    border-radius: Theme.small-radius;
     background: real && touch.has-hover ? Theme.hover : transparent;
     border-width: 1px;
     border-color: real ? Theme.accent : Theme.line;
@@ -54,7 +54,7 @@ component Mark inherits Rectangle {
 
     width: 8px;
     height: 8px;
-    border-radius: 4px;
+    border-radius: Theme.small-radius;
     background: tone;
 }
 
@@ -63,8 +63,9 @@ component MeetingItem inherits Rectangle {
     in property <bool> selected;
 
     min-height: content.preferred-height;
-    border-radius: 6px;
-    background: selected ? Theme.surface : touch.has-hover ? Theme.hover : transparent;
+    border-radius: Theme.control-radius;
+    background: selected ? Theme.accent-soft : touch.has-hover ? Theme.hover : transparent;
+    animate background { duration: 120ms; easing: ease-out; }
     accessible-role: list-item;
     accessible-label: meeting.title;
     accessible-item-selected: selected;
@@ -134,9 +135,11 @@ component Sidebar inherits Rectangle {
     background: Theme.sidebar;
 
     VerticalLayout {
-        padding: 12px;
-        padding-top: 16px;
-        spacing: 10px;
+        padding: 14px;
+        padding-top: 20px;
+        spacing: 12px;
+
+        SidebarBrand { }
 
         Btn {
             text: MeetingsUi.recording ? "Stop meeting notes" : "Start meeting notes";
@@ -493,7 +496,7 @@ component TranscriptRowView inherits Rectangle {
     callback show-me(y: length);
 
     min-height: content.preferred-height;
-    border-radius: 4px;
+    border-radius: Theme.small-radius;
     background: aimed ? Theme.hover : transparent;
 
     changed aim => {
@@ -599,8 +602,8 @@ component ChatQuestion inherits Rectangle {
     in property <string> text;
 
     min-height: label.preferred-height + 12px;
-    border-radius: 6px;
-    background: Theme.hover;
+    border-radius: Theme.control-radius;
+    background: Theme.control;
 
     label := Label {
         x: 10px;

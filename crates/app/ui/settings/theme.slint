@@ -1,4 +1,4 @@
-// Our own palette (ADR-0001): warm paper tones and a deep teal accent.
+// Our own palette (ADR-0001): clean neutrals and one vivid teal accent.
 import { Palette } from "std-widgets.slint";
 import { Prefs } from "bridge.slint";
 
@@ -10,20 +10,28 @@ export global Theme {
 
     out property <bool> dark: mode == 2 || (mode == 0 && (Palette.color-scheme == ColorScheme.unknown ? system-dark : Palette.color-scheme == ColorScheme.dark));
 
-    out property <color> background: dark ? #1e1b18 : #f6f2ea;
-    out property <color> sidebar: dark ? #171512 : #ece6da;
-    out property <color> surface: dark ? #2a2622 : #fffdf9;
-    out property <color> hover: dark ? #38332e : #e6dfd1;
-    out property <color> line: dark ? #3f3a34 : #dcd4c5;
-    out property <color> text: dark ? #f0ebe3 : #2b2622;
-    out property <color> muted: dark ? #a79f94 : #746b5f;
-    out property <color> accent: dark ? #4cb5a4 : #0f766e;
-    out property <color> on-accent: dark ? #10211e : #ffffff;
-    out property <color> danger: dark ? #ef8a7a : #b3402e;
-    out property <color> track: dark ? #4a443d : #cfc6b5;
+    out property <color> background: dark ? #111113 : #f6f6f8;
+    out property <color> sidebar: dark ? #0b0b0d : #ececf0;
+    out property <color> surface: dark ? #19191c : #ffffff;
+    // Filled controls, which sit on a surface.
+    out property <color> control: dark ? #26262b : #f0f0f4;
+    out property <color> hover: dark ? #303036 : #e5e5eb;
+    out property <color> line: dark ? #26262b : #e6e6ec;
+    out property <color> text: dark ? #f4f4f5 : #18181b;
+    out property <color> muted: dark ? #9c9ca6 : #6c6c78;
+    out property <color> accent: dark ? #2dd4bf : #0d9488;
+    out property <color> accent-soft: dark ? #2dd4bf24 : #0d94881a;
+    out property <color> on-accent: dark ? #04201c : #ffffff;
+    out property <color> danger: dark ? #f87171 : #dc2626;
+    out property <color> track: dark ? #3a3a41 : #d6d6de;
+    out property <color> shadow: dark ? #00000066 : #1a1a2e14;
 
-    out property <length> radius: 8px;
+    out property <length> radius: 14px;
+    out property <length> control-radius: 9px;
+    out property <length> small-radius: 6px;
+    out property <length> control-height: 32px;
     out property <length> small-text: 12px;
     out property <length> body-text: 13px;
-    out property <length> heading-text: 20px;
+    out property <length> title-text: 14px;
+    out property <length> heading-text: 24px;
 }

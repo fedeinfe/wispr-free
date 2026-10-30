@@ -17,16 +17,17 @@ export component ShortcutLine inherits HorizontalLayout {
 
     Rectangle {
         min-width: 150px;
-        height: 28px;
-        border-radius: 6px;
+        height: Theme.control-height;
+        border-radius: Theme.control-radius;
         border-width: 1px;
         border-color: root.recording ? Theme.accent : Theme.line;
-        background: Theme.background;
+        background: root.recording ? Theme.accent-soft : Theme.background;
 
         Text {
             text: !root.recording ? root.shortcut.combo : Prefs.recording-keys != "" ? Prefs.recording-keys : "Press keys…";
             color: root.recording ? Theme.accent : Theme.text;
             font-size: Theme.body-text;
+            font-weight: 500;
             horizontal-alignment: center;
             vertical-alignment: center;
         }

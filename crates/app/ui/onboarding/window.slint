@@ -3,7 +3,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { Prefs, SettingsValues, ShortcutRow, MicrophoneRow, LanguageRow, ReplacementRow, SnippetRow, ModelRow } from "../settings/bridge.slint";
 import { Theme } from "../settings/theme.slint";
-import { Btn, Card, ErrorText, Hint, Label, Page, Row, Select, SidebarItem, StatusMark, ThemedWindow } from "../settings/controls.slint";
+import { Btn, Card, ErrorText, Hint, Label, Page, Row, Select, SidebarBrand, SidebarItem, StatusMark, ThemedWindow } from "../settings/controls.slint";
 import { ModelLine, ModelsFolderCard } from "../settings/pages/models.slint";
 import { ShortcutLine } from "../settings/pages/general.slint";
 import { Consent, Mark, Setup, SetupStep, TrialPhase } from "setup.slint";
@@ -345,17 +345,23 @@ export component OnboardingWindow inherits ThemedWindow {
 
     HorizontalLayout {
         Rectangle {
-            width: 200px;
+            width: 216px;
             background: Theme.sidebar;
 
             VerticalLayout {
-                padding: 12px;
-                padding-top: 16px;
-                spacing: 2px;
+                padding: 14px;
+                padding-top: 20px;
+                spacing: 3px;
                 alignment: start;
 
+                SidebarBrand { }
+
+                Rectangle {
+                    height: 14px;
+                }
+
                 for step[index] in Setup.steps: Rectangle {
-                    height: 32px;
+                    height: 34px;
 
                     SidebarItem {
                         label: step.title;
@@ -365,7 +371,7 @@ export component OnboardingWindow inherits ThemedWindow {
                     }
 
                     if step.done: StatusMark {
-                        x: parent.width - self.width - 6px;
+                        x: parent.width - self.width - 9px;
                         y: (parent.height - self.height) / 2;
                         ok: true;
                     }
@@ -377,12 +383,13 @@ export component OnboardingWindow inherits ThemedWindow {
             horizontal-stretch: 1;
 
             Text {
-                height: 58px;
-                x: 24px;
+                height: 76px;
+                x: 28px;
                 text: Setup.steps[Setup.current].title;
                 color: Theme.text;
                 font-size: Theme.heading-text;
-                font-weight: 600;
+                font-weight: 700;
+                letter-spacing: -0.3px;
                 vertical-alignment: center;
             }
 
@@ -390,8 +397,8 @@ export component OnboardingWindow inherits ThemedWindow {
                 height: 34px;
 
                 ErrorText {
-                    x: 24px;
-                    width: parent.width - 48px;
+                    x: 28px;
+                    width: parent.width - 56px;
                     text: Prefs.notice;
                 }
             }

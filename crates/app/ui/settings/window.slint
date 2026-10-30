@@ -2,7 +2,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { Prefs, SettingsValues, ShortcutRow, MicrophoneRow, LanguageRow, ReplacementRow, SnippetRow, ModelRow } from "bridge.slint";
 import { Theme } from "theme.slint";
-import { ErrorText, SidebarItem, ThemedWindow } from "controls.slint";
+import { ErrorText, SidebarBrand, SidebarItem, ThemedWindow } from "controls.slint";
 import { GeneralPage } from "pages/general.slint";
 import { ModelsPage } from "pages/models.slint";
 import { PipelinePage } from "pages/pipeline.slint";
@@ -39,14 +39,20 @@ export component SettingsWindow inherits ThemedWindow {
 
     HorizontalLayout {
         Rectangle {
-            width: 200px;
+            width: 216px;
             background: Theme.sidebar;
 
             VerticalLayout {
-                padding: 12px;
-                padding-top: 16px;
-                spacing: 2px;
+                padding: 14px;
+                padding-top: 20px;
+                spacing: 3px;
                 alignment: start;
+
+                SidebarBrand { }
+
+                Rectangle {
+                    height: 14px;
+                }
 
                 for page[index] in root.pages: SidebarItem {
                     label: page.label;
@@ -63,12 +69,13 @@ export component SettingsWindow inherits ThemedWindow {
             horizontal-stretch: 1;
 
             Text {
-                height: 58px;
-                x: 24px;
+                height: 76px;
+                x: 28px;
                 text: root.pages[root.page].label;
                 color: Theme.text;
                 font-size: Theme.heading-text;
-                font-weight: 600;
+                font-weight: 700;
+                letter-spacing: -0.3px;
                 vertical-alignment: center;
             }
 
@@ -76,8 +83,8 @@ export component SettingsWindow inherits ThemedWindow {
                 height: 34px;
 
                 ErrorText {
-                    x: 24px;
-                    width: parent.width - 48px;
+                    x: 28px;
+                    width: parent.width - 56px;
                     text: Prefs.notice;
                 }
             }
