@@ -229,6 +229,16 @@ impl<C: Clipboard, K: PasteKeys, X: ContextSource, S: Sleep> Inserter<C, K, X, S
     }
 
     pub fn insert(&mut self, text: &str) -> Result<InsertOutcome, InsertError> {
+        self.insert_then(text, &mut || {})
+    }
+
+    /// [`Self::insert`], telling `on_pasted` the moment the keystroke is out, which is when the
+    /// user sees their text. The call itself goes on through the clipboard restore.
+    pub fn insert_then(
+        &mut self,
+        text: &str,
+        on_pasted: &mut dyn FnMut(),
+    ) -> Result<InsertOutcome, InsertError> {
         let context = self.context.read(ContextDepth::FocusOnly);
         if !accepts_paste(context.focus, context.app.as_ref()) {
             self.clipboard.write_text(text, false)?;
@@ -248,6 +258,7 @@ impl<C: Clipboard, K: PasteKeys, X: ContextSource, S: Sleep> Inserter<C, K, X, S
                 reason: CopyReason::PasteFailed(err.to_string()),
             });
         }
+        on_pasted();
         self.sleep.sleep(self.timings.restore_after);
         let clipboard_restored = match saved {
             Some(saved) if !self.clipboard.changed_since(mark) => {

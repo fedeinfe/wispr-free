@@ -26,6 +26,9 @@ pub struct LlamaConfig {
     pub gpu_layers: u32,
     /// CPU threads for whatever stays off the GPU.
     pub threads: i32,
+    /// Map the file rather than read it into memory. Loads faster, but every page has to stay
+    /// reachable: a read from an unplugged drive is a bus error, which no caller can catch.
+    pub use_mmap: bool,
 }
 
 impl LlamaConfig {
@@ -34,6 +37,7 @@ impl LlamaConfig {
             model: model.into(),
             gpu_layers: u32::MAX,
             threads: default_threads(),
+            use_mmap: true,
         }
     }
 }
@@ -72,7 +76,9 @@ impl LlamaEngine {
                 config.model.display().to_string(),
             ));
         }
-        let params = LlamaModelParams::default().with_n_gpu_layers(config.gpu_layers);
+        let params = LlamaModelParams::default()
+            .with_n_gpu_layers(config.gpu_layers)
+            .with_use_mmap(config.use_mmap);
         let model =
             LlamaModel::load_from_file(backend()?, &config.model, &params).map_err(engine)?;
         let template = model.chat_template(None).map_err(engine)?;

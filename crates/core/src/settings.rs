@@ -143,6 +143,8 @@ pub struct StyleSettings {
     pub replacements: Vec<Replacement>,
     pub snippets: Vec<Snippet>,
     pub auto_add_corrections: bool,
+    /// Saying "press enter" at the end of a dictation presses Enter.
+    pub press_enter_command: bool,
 }
 
 impl Default for StyleSettings {
@@ -156,6 +158,7 @@ impl Default for StyleSettings {
             replacements: Vec::new(),
             snippets: Vec::new(),
             auto_add_corrections: true,
+            press_enter_command: false,
         }
     }
 }

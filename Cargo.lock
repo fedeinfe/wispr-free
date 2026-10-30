@@ -6273,6 +6273,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "wf-dictation"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "wf-audio",
+ "wf-core",
+ "wf-history",
+ "wf-models",
+ "wf-pipeline",
+ "wf-platform",
+]
+
+[[package]]
 name = "wf-history"
 version = "0.1.0"
 dependencies = [
