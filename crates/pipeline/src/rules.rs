@@ -73,7 +73,7 @@ const LEXICONS: &[Lexicon] = &[
     Lexicon {
         language: "en",
         fillers: &["um", "umm", "uh", "uhh", "er", "erm", "hmm", "mm"],
-        filler_phrases: &["you know"],
+        filler_phrases: &["you know", "ah"],
         edit_commands: &["scratch that"],
         edit_commands_at_pause: &["delete that", "never mind"],
         correction_markers: &[
