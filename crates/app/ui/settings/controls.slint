@@ -30,6 +30,8 @@ export component SidebarItem inherits Rectangle {
     in property <string> label;
     in property <image> icon;
     in property <bool> selected;
+    // Onboarding's list only shows where you are.
+    in property <bool> interactive: true;
     callback clicked();
 
     height: 32px;
@@ -63,6 +65,7 @@ export component SidebarItem inherits Rectangle {
     }
 
     touch := TouchArea {
+        enabled: root.interactive;
         mouse-cursor: pointer;
         clicked => {
             root.clicked();

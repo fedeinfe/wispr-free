@@ -354,22 +354,20 @@ export component OnboardingWindow inherits ThemedWindow {
                 spacing: 2px;
                 alignment: start;
 
-                for step[index] in Setup.steps: HorizontalLayout {
-                    alignment: stretch;
+                for step[index] in Setup.steps: Rectangle {
+                    height: 32px;
 
                     SidebarItem {
-                        horizontal-stretch: 1;
                         label: step.title;
                         icon: root.icons[step.page];
                         selected: Setup.current == index;
+                        interactive: false;
                     }
 
-                    if step.done: VerticalLayout {
-                        alignment: center;
-
-                        StatusMark {
-                            ok: true;
-                        }
+                    if step.done: StatusMark {
+                        x: parent.width - self.width - 6px;
+                        y: (parent.height - self.height) / 2;
+                        ok: true;
                     }
                 }
             }
