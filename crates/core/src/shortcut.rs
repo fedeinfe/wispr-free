@@ -1,5 +1,12 @@
 //! The shortcut model (spec §2): keys, combos, the per-action bindings with their per-OS defaults,
-//! and the recorder's validation rules (reused by Settings in ticket 12).
+//! the recorder's validation rules and its capture loop, and the text forms of keys.
+
+pub mod recorder;
+mod text;
+
+use serde::{Deserialize, Serialize};
+
+pub use text::UnknownKey;
 
 /// Which physical side of a modifier. Pressed keys are always `Left` or `Right`; a binding may say
 /// `Either` so that both sides trigger it.
@@ -22,7 +29,8 @@ pub enum MouseButton {
 
 /// A physical key, independent of the keyboard layout. `Meta` is Cmd on macOS, Win on Windows and
 /// Super on Linux; `Alt` is Option on macOS.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(into = "String", try_from = "String")]
 pub enum Key {
     Fn,
     Ctrl(Side),
@@ -109,7 +117,8 @@ impl KeyEvent {
 }
 
 /// The keys of one shortcut, held together.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Combo(Vec<Key>);
 
 impl Combo {
@@ -324,8 +333,9 @@ impl Action {
     ];
 }
 
-/// The combo bound to each action.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The combo bound to each action. A file that omits an action gets its default.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Bindings {
     pub push_to_talk: Combo,
     pub hands_free: Combo,
@@ -333,6 +343,12 @@ pub struct Bindings {
     pub paste_last: Combo,
     pub copy_last: Combo,
     pub meeting_notes: Combo,
+}
+
+impl Default for Bindings {
+    fn default() -> Self {
+        Self::default_for(Platform::current())
+    }
 }
 
 impl Bindings {
@@ -369,5 +385,17 @@ impl Bindings {
             Action::CopyLast => &self.copy_last,
             Action::MeetingNotes => &self.meeting_notes,
         }
+    }
+
+    pub fn set(&mut self, action: Action, combo: Combo) {
+        let slot = match action {
+            Action::PushToTalk => &mut self.push_to_talk,
+            Action::HandsFree => &mut self.hands_free,
+            Action::Cancel => &mut self.cancel,
+            Action::PasteLast => &mut self.paste_last,
+            Action::CopyLast => &mut self.copy_last,
+            Action::MeetingNotes => &mut self.meeting_notes,
+        };
+        *slot = combo;
     }
 }

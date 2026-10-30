@@ -1,0 +1,192 @@
+import { Prefs } from "../bridge.slint";
+import { Theme } from "../theme.slint";
+import { Btn, Card, Field, Hint, Label, Page, SelectRow, ToggleRow } from "../controls.slint";
+
+export component StylePage inherits Page {
+    property <[string]> styles: ["Formal", "Casual", "Very casual", "Excited"];
+    property <string> new-word;
+
+    Card {
+        title: "Styles";
+        hint: "Tone and punctuation for each kind of app.";
+
+        SelectRow {
+            label: "Personal messages";
+            options: root.styles;
+            current <=> Prefs.values.style-personal;
+        }
+
+        SelectRow {
+            label: "Work messages";
+            options: root.styles;
+            current <=> Prefs.values.style-work;
+        }
+
+        SelectRow {
+            label: "Email";
+            options: root.styles;
+            current <=> Prefs.values.style-email;
+        }
+
+        SelectRow {
+            label: "Other";
+            options: root.styles;
+            current <=> Prefs.values.style-other;
+        }
+    }
+
+    Card {
+        title: "Dictionary";
+        hint: "Words dictation should recognize and spell your way.";
+
+        HorizontalLayout {
+            spacing: 8px;
+
+            Field {
+                label: "New word";
+                placeholder: "Add a word";
+                text <=> root.new-word;
+                accepted => {
+                    Prefs.add-word(root.new-word);
+                    root.new-word = "";
+                }
+            }
+
+            Btn {
+                width: 60px;
+                text: "Add";
+                accessible-label: "Add word";
+                enabled: root.new-word != "";
+                clicked => {
+                    Prefs.add-word(root.new-word);
+                    root.new-word = "";
+                }
+            }
+        }
+
+        for word[index] in Prefs.dictionary: HorizontalLayout {
+            spacing: 8px;
+
+            Label {
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+                text: word;
+            }
+
+            Btn {
+                width: 70px;
+                text: "Remove";
+                accessible-label: "Remove " + word;
+                clicked => {
+                    Prefs.remove-word(index);
+                }
+            }
+        }
+
+        ToggleRow {
+            label: "Add corrected words automatically";
+            checked <=> Prefs.values.auto-add-corrections;
+        }
+    }
+
+    Card {
+        title: "Replacements";
+        hint: "Always swap a wrong word for the right one.";
+
+        for replacement[index] in Prefs.replacements: HorizontalLayout {
+            spacing: 8px;
+
+            Field {
+                label: "Wrong";
+                placeholder: "Wrong";
+                text: replacement.wrong;
+                edited => {
+                    Prefs.edit-replacement(index, { wrong: self.text, right: replacement.right });
+                }
+            }
+
+            Field {
+                label: "Right";
+                placeholder: "Right";
+                text: replacement.right;
+                edited => {
+                    Prefs.edit-replacement(index, { wrong: replacement.wrong, right: self.text });
+                }
+            }
+
+            Btn {
+                width: 70px;
+                text: "Remove";
+                accessible-label: "Remove replacement " + replacement.wrong;
+                clicked => {
+                    Prefs.remove-replacement(index);
+                }
+            }
+        }
+
+        HorizontalLayout {
+            alignment: start;
+
+            Btn {
+                width: 130px;
+                text: "Add replacement";
+                clicked => {
+                    Prefs.add-replacement();
+                }
+            }
+        }
+    }
+
+    Card {
+        title: "Snippets";
+        hint: "Say the trigger phrase and it expands to the text.";
+
+        for snippet[index] in Prefs.snippets: VerticalLayout {
+            spacing: 6px;
+
+            HorizontalLayout {
+                spacing: 8px;
+
+                Field {
+                    label: "Trigger phrase";
+                    placeholder: "Trigger phrase";
+                    text: snippet.trigger;
+                    edited => {
+                        Prefs.edit-snippet(index, { trigger: self.text, text: snippet.text });
+                    }
+                }
+
+                Btn {
+                    width: 70px;
+                    text: "Remove";
+                    accessible-label: "Remove snippet " + snippet.trigger;
+                    clicked => {
+                        Prefs.remove-snippet(index);
+                    }
+                }
+            }
+
+            Field {
+                label: "Expands to";
+                placeholder: "Expands to";
+                multiline: true;
+                text: snippet.text;
+                edited => {
+                    Prefs.edit-snippet(index, { trigger: snippet.trigger, text: self.text });
+                }
+            }
+        }
+
+        HorizontalLayout {
+            alignment: start;
+
+            Btn {
+                width: 110px;
+                text: "Add snippet";
+                clicked => {
+                    Prefs.add-snippet();
+                }
+            }
+        }
+    }
+}

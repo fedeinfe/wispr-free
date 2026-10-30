@@ -13,6 +13,7 @@ publish.workspace = true
 wf-core.workspace = true
 raw-window-handle.workspace = true
 thiserror.workspace = true
+directories.workspace = true
 
 # Insertion + context (04): NSPasteboard, CGEvent paste, AX focused-text reads. Pill overlay (05):
 # NSPanel swap, screens, cursor and Esc state.
@@ -55,3 +56,6 @@ windows = { workspace = true, features = [
 evdev.workspace = true
 arboard = { workspace = true, features = ["wayland-data-control"] }
 x11rb = { workspace = true, features = ["randr", "xtest"] }
+
+[dev-dependencies]
+tempfile.workspace = true

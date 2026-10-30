@@ -1,0 +1,114 @@
+import { Prefs, ModelRow } from "../bridge.slint";
+import { Theme } from "../theme.slint";
+import { Btn, Card, ErrorText, Hint, Label, Page } from "../controls.slint";
+
+component ModelLine inherits VerticalLayout {
+    in property <int> index;
+    in property <ModelRow> model;
+
+    spacing: 4px;
+
+    HorizontalLayout {
+        spacing: 8px;
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+
+            Label {
+                text: root.model.name;
+            }
+
+            Hint {
+                text: root.model.detail;
+            }
+
+            Hint {
+                text: root.model.status;
+                color: root.model.installed ? Theme.accent : Theme.muted;
+            }
+        }
+
+        if root.model.downloading: Btn {
+            width: 76px;
+            text: "Cancel";
+            accessible-label: "Cancel download";
+            clicked => {
+                Prefs.cancel-download();
+            }
+        }
+
+        if !root.model.installed && !root.model.downloading: Btn {
+            width: 86px;
+            text: root.model.partial ? "Resume" : "Download";
+            accessible-label: "Download " + root.model.name;
+            enabled: !Prefs.model-busy;
+            clicked => {
+                Prefs.download-model(root.index);
+            }
+        }
+
+        if root.model.installed: Btn {
+            width: 66px;
+            text: "Verify";
+            accessible-label: "Verify " + root.model.name;
+            enabled: !Prefs.model-busy;
+            clicked => {
+                Prefs.verify-model(root.index);
+            }
+        }
+
+        if root.model.installed || root.model.partial: Btn {
+            width: 66px;
+            text: "Delete";
+            danger: true;
+            accessible-label: "Delete " + root.model.name;
+            enabled: !Prefs.model-busy;
+            clicked => {
+                Prefs.delete-model(root.index);
+            }
+        }
+    }
+
+    if root.model.downloading: Rectangle {
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.track;
+        clip: true;
+
+        Rectangle {
+            x: 0;
+            width: parent.width * root.model.progress;
+            background: Theme.accent;
+        }
+    }
+}
+
+export component ModelsPage inherits Page {
+    Card {
+        title: "This computer";
+
+        Label {
+            text: Prefs.hardware-summary;
+        }
+
+        if Prefs.recommended-tier != "": Hint {
+            text: "Recommended quality tier: " + Prefs.recommended-tier;
+        }
+    }
+
+    Card {
+        title: "Models";
+        hint: "Downloads start only when you ask, and every file is checked against its SHA-256.";
+
+        for model[index] in Prefs.models: ModelLine {
+            index: index;
+            model: model;
+        }
+
+        if Prefs.model-error != "": ErrorText {
+            text: Prefs.model-error;
+        }
+    }
+}

@@ -1,5 +1,4 @@
-//! The few pill preferences that must survive a restart. Ticket 12's settings store takes these
-//! over.
+//! Where the pill was left. Its `sounds` follows the Sounds setting once the app has started.
 
 use std::fs;
 use std::io;

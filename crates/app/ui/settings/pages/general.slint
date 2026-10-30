@@ -1,0 +1,263 @@
+import { Prefs, ShortcutRow } from "../bridge.slint";
+import { Theme } from "../theme.slint";
+import { Btn, Card, ErrorText, Hint, Label, Page, Row, SelectRow, ToggleRow, Toggle } from "../controls.slint";
+
+component ShortcutLine inherits HorizontalLayout {
+    in property <int> index;
+    in property <ShortcutRow> shortcut;
+    property <bool> recording: Prefs.recording-action == index;
+
+    spacing: 8px;
+
+    Label {
+        horizontal-stretch: 1;
+        vertical-alignment: center;
+        text: root.shortcut.action;
+    }
+
+    Rectangle {
+        min-width: 150px;
+        height: 28px;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: root.recording ? Theme.accent : Theme.line;
+        background: Theme.background;
+
+        Text {
+            text: !root.recording ? root.shortcut.combo : Prefs.recording-keys != "" ? Prefs.recording-keys : "Press keys…";
+            color: root.recording ? Theme.accent : Theme.text;
+            font-size: Theme.body-text;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    if !root.recording: Btn {
+        width: 72px;
+        text: "Change";
+        accessible-label: "Change " + root.shortcut.action;
+        enabled: Prefs.recording-action < 0;
+        clicked => {
+            Prefs.record-shortcut(root.index);
+        }
+    }
+
+    if root.recording: Btn {
+        width: 72px;
+        text: "Stop";
+        accessible-label: "Stop recording";
+        clicked => {
+            Prefs.stop-recording();
+        }
+    }
+
+    Btn {
+        width: 60px;
+        text: "Reset";
+        accessible-label: "Reset " + root.shortcut.action;
+        enabled: Prefs.recording-action < 0;
+        clicked => {
+            Prefs.reset-shortcut(root.index);
+        }
+    }
+}
+
+export component GeneralPage inherits Page {
+    property <int> language-columns: 3;
+    property <length> language-width: 150px;
+    property <length> language-height: 26px;
+
+    Card {
+        title: "Shortcuts";
+        hint: "Press the new combo and release it to save. Esc alone stops recording.";
+
+        for shortcut[index] in Prefs.shortcuts: ShortcutLine {
+            index: index;
+            shortcut: shortcut;
+        }
+
+        if Prefs.shortcut-error != "": ErrorText {
+            text: Prefs.shortcut-error;
+        }
+    }
+
+    Card {
+        title: "Microphone";
+
+        Row {
+            label: "Choose automatically";
+            hint: "Follows the system default.";
+
+            VerticalLayout {
+                alignment: center;
+
+                Toggle {
+                    label: "Choose automatically";
+                    checked <=> Prefs.microphone-auto;
+                    toggled => {
+                        Prefs.set-microphone-auto(self.checked);
+                    }
+                }
+            }
+        }
+
+        if !Prefs.microphone-auto && Prefs.microphones.length == 0: Hint {
+            text: "No microphones found.";
+        }
+
+        if !Prefs.microphone-auto: VerticalLayout {
+            spacing: 6px;
+
+            for microphone[index] in Prefs.microphones: HorizontalLayout {
+                spacing: 8px;
+
+                Label {
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    text: (index + 1) + ". " + microphone.name + (microphone.connected ? "" : " (not connected)");
+                }
+
+                Btn {
+                    width: 34px;
+                    text: "↑";
+                    accessible-label: "Move " + microphone.name + " up";
+                    enabled: index > 0;
+                    clicked => {
+                        Prefs.move-microphone(index, -1);
+                    }
+                }
+
+                Btn {
+                    width: 34px;
+                    text: "↓";
+                    accessible-label: "Move " + microphone.name + " down";
+                    enabled: index + 1 < Prefs.microphones.length;
+                    clicked => {
+                        Prefs.move-microphone(index, 1);
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 12px;
+
+            Btn {
+                width: 90px;
+                text: Prefs.microphone-testing ? "Stop test" : "Test";
+                accessible-label: "Test microphone";
+                clicked => {
+                    Prefs.toggle-microphone-test();
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+
+                Rectangle {
+                    height: 8px;
+                    border-radius: 4px;
+                    background: Theme.track;
+                    clip: true;
+
+                    Rectangle {
+                        x: 0;
+                        width: parent.width * Prefs.microphone-level;
+                        background: Theme.accent;
+                    }
+                }
+            }
+        }
+
+        if Prefs.microphone-error != "": ErrorText {
+            text: Prefs.microphone-error;
+        }
+    }
+
+    Card {
+        title: "My languages";
+
+        Row {
+            label: "Auto-detect";
+            hint: "Otherwise dictation listens for the languages you pick.";
+
+            VerticalLayout {
+                alignment: center;
+
+                Toggle {
+                    label: "Auto-detect";
+                    checked <=> Prefs.languages-auto;
+                    toggled => {
+                        Prefs.set-languages-auto(self.checked);
+                    }
+                }
+            }
+        }
+
+        if !Prefs.languages-auto: Rectangle {
+            height: ceil(Prefs.languages.length / root.language-columns) * root.language-height;
+
+            for language[index] in Prefs.languages: Rectangle {
+                x: mod(index, root.language-columns) * root.language-width;
+                y: floor(index / root.language-columns) * root.language-height;
+                width: root.language-width;
+                height: root.language-height;
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+
+                    VerticalLayout {
+                        alignment: center;
+
+                        Toggle {
+                            label: language.name;
+                            checked: language.selected;
+                            toggled => {
+                                Prefs.toggle-language(index);
+                            }
+                        }
+                    }
+
+                    Label {
+                        vertical-alignment: center;
+                        text: language.name;
+                    }
+                }
+            }
+        }
+    }
+
+    Card {
+        title: "Appearance and startup";
+
+        SelectRow {
+            label: "App language";
+            options: ["System", "English"];
+            current <=> Prefs.values.app-language;
+        }
+
+        SelectRow {
+            label: "Theme";
+            options: ["System", "Light", "Dark"];
+            current <=> Prefs.values.theme;
+        }
+
+        ToggleRow {
+            label: "Launch at login";
+            checked <=> Prefs.values.launch-at-login;
+        }
+
+        ToggleRow {
+            label: "Show pill";
+            hint: "Shortcuts keep working while it's hidden.";
+            checked <=> Prefs.values.show-pill;
+        }
+
+        if Prefs.is-macos: ToggleRow {
+            label: "Show in Dock";
+            checked <=> Prefs.values.show-in-dock;
+        }
+    }
+}

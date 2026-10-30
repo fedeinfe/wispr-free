@@ -197,6 +197,20 @@ impl PillController {
         }
     }
 
+    /// The Sounds setting.
+    pub fn set_sounds(&self, sounds: bool) {
+        self.inner.core.borrow_mut().prefs.sounds = sounds;
+    }
+
+    /// The Show pill setting. A dictation in progress keeps its pill until the next one.
+    pub fn set_shown(&self, shown: bool) {
+        match self.state() {
+            PillState::Resting | PillState::Ready if !shown => self.set_state(PillState::Hidden),
+            PillState::Hidden if shown => self.set_state(PillState::Resting),
+            _ => {}
+        }
+    }
+
     /// Latest level from the meter, 0.0..=1.0.
     pub fn set_level(&self, level: f32) {
         self.inner.core.borrow_mut().waveform.set_level(level);

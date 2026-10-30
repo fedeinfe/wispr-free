@@ -1,0 +1,29 @@
+// Our own palette (ADR-0001): warm paper tones and a deep teal accent.
+import { Palette } from "std-widgets.slint";
+import { Prefs } from "bridge.slint";
+
+export global Theme {
+    // 0 system, 1 light, 2 dark.
+    property <int> mode: Prefs.values.theme;
+    // What the OS said when the window opened. Palette stops reporting it once it is overridden.
+    in-out property <bool> system-dark;
+
+    out property <bool> dark: mode == 2 || (mode == 0 && (Palette.color-scheme == ColorScheme.unknown ? system-dark : Palette.color-scheme == ColorScheme.dark));
+
+    out property <color> background: dark ? #1e1b18 : #f6f2ea;
+    out property <color> sidebar: dark ? #171512 : #ece6da;
+    out property <color> surface: dark ? #2a2622 : #fffdf9;
+    out property <color> hover: dark ? #38332e : #e6dfd1;
+    out property <color> line: dark ? #3f3a34 : #dcd4c5;
+    out property <color> text: dark ? #f0ebe3 : #2b2622;
+    out property <color> muted: dark ? #a79f94 : #746b5f;
+    out property <color> accent: dark ? #4cb5a4 : #0f766e;
+    out property <color> on-accent: dark ? #10211e : #ffffff;
+    out property <color> danger: dark ? #ef8a7a : #b3402e;
+    out property <color> track: dark ? #4a443d : #cfc6b5;
+
+    out property <length> radius: 8px;
+    out property <length> small-text: 12px;
+    out property <length> body-text: 13px;
+    out property <length> heading-text: 20px;
+}

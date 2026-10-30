@@ -1,0 +1,84 @@
+import { Prefs } from "../bridge.slint";
+import { Card, Page, SelectRow, StepperRow, ToggleRow } from "../controls.slint";
+
+export component PipelinePage inherits Page {
+    Card {
+        title: "Quality";
+        hint: "A tier sets the stages and models below. Changing one of them makes it Custom.";
+
+        SelectRow {
+            label: "Quality tier";
+            options: ["Lite", "Balanced", "High", "Custom"];
+            current <=> Prefs.values.tier;
+        }
+    }
+
+    Card {
+        title: "Stages";
+
+        ToggleRow {
+            label: "Noise suppression";
+            hint: "For noisy rooms and cheap mics.";
+            checked <=> Prefs.values.denoise;
+        }
+
+        ToggleRow {
+            label: "Silence trimming (VAD)";
+            checked <=> Prefs.values.vad;
+        }
+
+        ToggleRow {
+            label: "LLM cleanup";
+            hint: "Rewrites the transcript with a local model.";
+            checked <=> Prefs.values.llm-cleanup;
+        }
+
+        SelectRow {
+            label: "Cleanup strength";
+            options: ["None", "Light", "Medium", "High"];
+            current <=> Prefs.values.cleanup-strength;
+        }
+
+        ToggleRow {
+            label: "Stop hands-free after silence";
+            checked <=> Prefs.values.vad-auto-stop;
+        }
+
+        StepperRow {
+            label: "Silence before stopping";
+            unit: "s";
+            minimum: 1;
+            maximum: 60;
+            enabled: Prefs.values.vad-auto-stop;
+            value <=> Prefs.values.vad-auto-stop-seconds;
+        }
+    }
+
+    Card {
+        title: "Models";
+
+        SelectRow {
+            label: "Speech recognition";
+            options: Prefs.asr-options;
+            current <=> Prefs.values.asr-model;
+        }
+
+        SelectRow {
+            label: "Voice detection";
+            options: Prefs.vad-options;
+            current <=> Prefs.values.vad-model;
+        }
+
+        SelectRow {
+            label: "Cleanup model";
+            options: Prefs.llm-options;
+            current <=> Prefs.values.llm-model;
+        }
+
+        SelectRow {
+            label: "Keep models loaded";
+            options: ["Always", "For 5 minutes", "Unload after use"];
+            current <=> Prefs.values.keep-models-loaded;
+        }
+    }
+}

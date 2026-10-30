@@ -1,0 +1,18 @@
+import { Prefs } from "../bridge.slint";
+import { Card, Page, SelectRow, ToggleRow } from "../controls.slint";
+
+export component SoundsPage inherits Page {
+    Card {
+        ToggleRow {
+            label: "Sounds";
+            hint: "Short start, stop, lock and error sounds.";
+            checked <=> Prefs.values.sounds;
+        }
+
+        SelectRow {
+            label: "While dictating";
+            options: ["Leave media alone", "Mute system output", "Pause media"];
+            current <=> Prefs.values.media-while-dictating;
+        }
+    }
+}

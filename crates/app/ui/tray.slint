@@ -1,8 +1,9 @@
 import { PillLook } from "pill.slint";
 
-// The always-present tray icon. Later tickets add Settings, Meetings and pill toggles here.
+// The always-present tray icon. Later tickets add Meetings and pill toggles here.
 export component Tray inherits SystemTrayIcon {
     in property <bool> debug-menu;
+    callback open-settings();
     callback quit();
     callback debug-state(PillLook);
     callback debug-sound(string);
@@ -70,6 +71,10 @@ export component Tray inherits SystemTrayIcon {
                 title: "Use real mic level";
                 activated => { root.debug-mic-level(); }
             }
+        }
+        MenuItem {
+            title: "Settings…";
+            activated => { root.open-settings(); }
         }
         MenuItem {
             title: "Quit wispr-free";
