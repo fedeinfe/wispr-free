@@ -3,7 +3,7 @@
 
 use std::fs::{self, File};
 
-use super::{Access, Permissions};
+use super::{Access, Permission, Permissions};
 
 pub const MICROPHONE_DENIED: &str = "Allow the microphone for this app";
 
@@ -13,6 +13,12 @@ pub fn check() -> Permissions {
         accessibility: Access::Granted,
         input_monitoring: input_devices(),
     }
+}
+
+pub fn ask(_permission: Permission) {}
+
+pub fn settings_link(_permission: Permission) -> Option<&'static str> {
+    None
 }
 
 fn input_devices() -> Access {
