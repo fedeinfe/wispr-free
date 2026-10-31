@@ -2,7 +2,7 @@
 //! up the UI. Tasks run in the order they were asked for, so an open after a save sees the save.
 
 use std::path::Path;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, Sender};
 
 use wf_meetings::{
     Error, MeetingStore, SearchIndex, SpeakerId, meeting_detail, meeting_entries, write_export,
@@ -32,6 +32,8 @@ pub(super) enum Task {
         when: String,
     },
     Delete(String),
+    /// Says everything asked for before it is done.
+    Report(Sender<()>),
 }
 
 pub(super) fn run(
@@ -113,6 +115,9 @@ fn perform(
                 .delete(&id)
                 .map_err(|e| wrong("Couldn't delete the meeting", e))?;
             mailbox.post(Event::Deleted(id));
+        }
+        Task::Report(done) => {
+            let _ = done.send(());
         }
     }
     Ok(())

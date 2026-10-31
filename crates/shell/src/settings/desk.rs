@@ -133,7 +133,7 @@ impl Drop for Desk {
 
 /// Runs `work`, and lets the thread live through a panic in it: the app's Settings would otherwise
 /// stay dead until the next start, over an index gone stale.
-fn guarded(work: impl FnOnce()) {
+pub(crate) fn guarded(work: impl FnOnce()) {
     if panic::catch_unwind(AssertUnwindSafe(work)).is_err() {
         eprintln!("the settings pages panicked");
     }
@@ -249,20 +249,20 @@ type Slot = Rc<RefCell<Alarm>>;
 
 /// Time on the pages' thread: the loop wakes for the next alarm.
 #[derive(Default)]
-struct DeskClock {
+pub(crate) struct DeskClock {
     slots: RefCell<Vec<Weak<RefCell<Alarm>>>>,
     /// Alarms nobody holds, from [`Clock::later`].
     kept: RefCell<Vec<Box<dyn Timer>>>,
 }
 
 impl DeskClock {
-    fn next_due(&self) -> Option<Instant> {
+    pub(crate) fn next_due(&self) -> Option<Instant> {
         let slots = self.slots.borrow();
         let dues = slots.iter().filter_map(Weak::upgrade);
         dues.filter_map(|slot| slot.borrow().due).min()
     }
 
-    fn fire_due(&self) {
+    pub(crate) fn fire_due(&self) {
         let now = Instant::now();
         self.slots
             .borrow_mut()

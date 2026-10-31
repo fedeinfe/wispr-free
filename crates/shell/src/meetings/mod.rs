@@ -3,6 +3,8 @@
 //! [`View`], with disk work on [`disk`]'s thread and engine work in the flow, so the UI thread never
 //! waits.
 
+pub mod changes;
+pub mod desk;
 mod disk;
 pub mod rows;
 
@@ -42,6 +44,11 @@ const TRANSCRIPT_TAB: i32 = 2;
 
 const EMPTY_LIST: &str = "No meetings yet. Start one here, from the tray, or with the shortcut.";
 const NO_HITS: &str = "Nothing matches that.";
+const PICK_ONE: &str = "Pick a meeting to see its summary, notes, transcript and chat.";
+const START: &str = "Start meeting notes";
+const STOP: &str = "Stop meeting notes";
+const ASK_HINT: &str =
+    "Answers come only from this meeting, and each one shows the times it rests on.";
 const NO_SUMMARY: &str = "No summary yet.";
 const NO_TRANSCRIPT: &str = "Nothing was transcribed.";
 const LISTENING: &str = "Listening. The first lines take a few seconds.";
@@ -146,7 +153,11 @@ pub enum Event {
 pub enum Shown {
     Meetings(Rows<MeetingRow>),
     ListHint(String),
+    /// What shows with nothing picked.
+    DetailHint(String),
     Recording(bool),
+    /// What the button that starts and stops a meeting says.
+    StartLabel(String),
     SelectedId(String),
     Title(String),
     Notes(String),
@@ -156,6 +167,8 @@ pub enum Shown {
     CanFinish(bool),
     CanResume(bool),
     CanSummarize(bool),
+    CanExport(bool),
+    CanDelete(bool),
     Stages(Vec<StageRow>),
     Failures(String),
     ProgressText(String),
@@ -174,6 +187,8 @@ pub enum Shown {
     Speakers(Vec<SpeakerRow>),
     Chat(Rows<ChatMessage>),
     Suggestions(Vec<String>),
+    /// Shows until something has been asked.
+    ChatHint(String),
     ChatRunning(bool),
     StreamingQuestion(String),
     StreamingText(String),
@@ -520,6 +535,8 @@ impl Meetings {
         };
         let hint = if hits.is_some() { NO_HITS } else { EMPTY_LIST };
         self.show(Shown::ListHint(hint.to_owned()));
+        let pick = if rows.is_empty() { "" } else { PICK_ONE };
+        self.show(Shown::DetailHint(pick.to_owned()));
         self.change_list(Rows::All(rows));
     }
 
@@ -607,6 +624,8 @@ impl Meetings {
     fn show_status(&self) {
         let status = self.parts.actions.status();
         self.show(Shown::Recording(status.recording.is_some()));
+        let start = if status.recording.is_some() { STOP } else { START };
+        self.show(Shown::StartLabel(start.to_owned()));
         let id = self.selected();
         let detail = self.detail.borrow();
         let this_recording = id.is_some() && status.recording == id;
@@ -627,6 +646,8 @@ impl Meetings {
                 .as_ref()
                 .is_some_and(|detail| !detail.rows.is_empty()),
         ));
+        self.show(Shown::CanExport(id.is_some() && !this_recording));
+        self.show(Shown::CanDelete(id.is_some() && !busy && !this_recording));
         let (text, progress) = match step {
             Some((_, step)) => step_text(*step),
             None => ("", -1.0),
@@ -749,6 +770,11 @@ impl Meetings {
         let here = asking
             .as_ref()
             .filter(|asking| Some(&asking.id) == selected.as_ref());
+        let detail = self.detail.borrow();
+        let asked = here.is_some() || detail.as_ref().is_some_and(|open| !open.chat.is_empty());
+        self.show(Shown::ChatHint(
+            if asked { "" } else { ASK_HINT }.to_owned(),
+        ));
         self.show(Shown::ChatRunning(asking.is_some()));
         self.show(Shown::StreamingQuestion(
             here.map_or("", |asking| &asking.question).to_owned(),
@@ -790,6 +816,17 @@ impl Meetings {
                 self.show_asking();
             }
         }
+    }
+}
+
+impl Meetings {
+    /// Sends what's unsaved to the disk thread and says when that thread has done it all, so a
+    /// window opened next, or the app going away, can wait for it.
+    pub fn finish_up(&self) -> Receiver<()> {
+        self.flush_edits();
+        let (done, finished) = mpsc::channel();
+        self.send(Task::Report(done));
+        finished
     }
 }
 

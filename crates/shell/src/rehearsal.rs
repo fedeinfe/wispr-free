@@ -19,7 +19,7 @@ use wf_dictation::{
 };
 use wf_meetings::{MicClient, TimelineFrame};
 use wf_models::Catalog;
-use wf_pipeline::{Asr, AsrOptions, Diarizer, Llm, PipelineError, Transcript, Vad};
+use wf_pipeline::{Asr, AsrOptions, Diarizer, Llm, LlmPrompt, PipelineError, Transcript, Vad};
 use wf_platform::context::{AppIdentity, Context, ContextDepth, ContextSource, Focus};
 use wf_platform::insert::{InsertError, InsertOutcome, PasteChord};
 use wf_platform::media::{MediaControl, MediaError, Output};
@@ -32,6 +32,13 @@ use crate::settings::{Event as PageEvent, Mailbox};
 pub const HEARD: &str = "This came through the whole flow";
 /// The speech model a rehearsal pretends to have.
 const SPEECH_MODEL: &str = "parakeet-tdt-0.6b-v3-int8";
+/// The model a rehearsal's chat pretends to have.
+const CHAT_MODEL: &str = "qwen3-1.7b-q4_k_m";
+/// What every rehearsal's chat answers, a word at a time. A time needs a line that shares its words,
+/// so the first time holds in a check's meetings and the second matches none.
+pub const ANSWERED: &str = "Send the contract. [00:05] [59:59]";
+/// A pause between words, so a check can see an answer on its way, and stop it.
+const WORD_PACE: Duration = Duration::from_millis(120);
 /// Loud enough to show on the pill.
 const SIGNAL: f32 = 0.2;
 /// Whole cycles in a frame, so frames join up.
@@ -49,6 +56,7 @@ pub fn settings() -> Settings {
     let pipeline = &mut settings.pipeline;
     pipeline.tier = PipelineTier::Custom;
     pipeline.asr_model = Some(SPEECH_MODEL.to_owned());
+    pipeline.llm_model = Some(CHAT_MODEL.to_owned());
     pipeline.vad = false;
     pipeline.llm_cleanup = false;
     pipeline.keep_models_loaded = KeepModels::Always;
@@ -83,8 +91,10 @@ pub fn report_microphones(mailbox: &Mailbox) {
 /// Every seam of the flow on a fake, with its files at `paths`.
 pub fn parts(paths: &Paths, settings: Settings, on_event: OnEvent) -> Parts {
     let catalog = Arc::new(Catalog::bundled());
-    if let Err(error) = place_model(&paths.models, &catalog) {
-        eprintln!("could not lay out the rehearsal's model: {error}");
+    for model in [SPEECH_MODEL, CHAT_MODEL] {
+        if let Err(error) = place_model(&paths.models, &catalog, model) {
+            eprintln!("could not lay out the rehearsal's {model}: {error}");
+        }
     }
     Parts {
         settings,
@@ -105,11 +115,11 @@ pub fn parts(paths: &Paths, settings: Settings, on_event: OnEvent) -> Parts {
 }
 
 /// Placeholder files of the right size, which is all the flow looks at before it loads a model.
-fn place_model(root: &Path, catalog: &Catalog) -> std::io::Result<()> {
-    let Some(model) = catalog.model(SPEECH_MODEL) else {
+fn place_model(root: &Path, catalog: &Catalog, id: &str) -> std::io::Result<()> {
+    let Some(model) = catalog.model(id) else {
         return Ok(());
     };
-    let folder: PathBuf = root.join(SPEECH_MODEL);
+    let folder: PathBuf = root.join(id);
     fs::create_dir_all(&folder)?;
     for file in &model.files {
         fs::File::create(folder.join(&file.name))?.set_len(file.size)?;
@@ -171,7 +181,7 @@ impl Engines for ScriptedEngines {
     }
 
     fn llm(&self, _model: &LlmModel) -> Result<Box<dyn Llm>, PipelineError> {
-        Err(not_rehearsed())
+        Ok(Box::new(ScriptedLlm))
     }
 
     fn diarizer(&self, _model: &DiarizerModel) -> Result<Box<dyn Diarizer>, PipelineError> {
@@ -201,6 +211,22 @@ impl Asr for ScriptedAsr {
             text: HEARD.to_owned(),
             language: Some("en".into()),
         })
+    }
+}
+
+struct ScriptedLlm;
+
+impl Llm for ScriptedLlm {
+    fn generate(
+        &mut self,
+        _prompt: &LlmPrompt,
+        on_token: &mut dyn FnMut(&str),
+    ) -> Result<String, PipelineError> {
+        for word in ANSWERED.split_inclusive(' ') {
+            on_token(word);
+            thread::sleep(WORD_PACE);
+        }
+        Ok(ANSWERED.to_owned())
     }
 }
 

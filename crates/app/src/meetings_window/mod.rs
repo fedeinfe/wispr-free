@@ -168,6 +168,12 @@ fn show(ui: &MeetingsUi<'_>, lists: &Lists, shown: Shown) {
     match shown {
         Shown::Meetings(change) => apply_rows(&lists.meetings, change),
         Shown::ListHint(hint) => ui.set_list_hint(hint.into()),
+        // The .slint works these out for itself.
+        Shown::DetailHint(_)
+        | Shown::StartLabel(_)
+        | Shown::CanExport(_)
+        | Shown::CanDelete(_)
+        | Shown::ChatHint(_) => {}
         Shown::Recording(recording) => ui.set_recording(recording),
         Shown::SelectedId(id) => ui.set_selected_id(id.into()),
         Shown::Title(title) => ui.set_title(title.into()),

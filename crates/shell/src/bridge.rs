@@ -19,12 +19,16 @@ use wf_core::pill::{PillCommand, PillState, Sound};
 use wf_core::settings::{ReplaceError, Replacement, Settings, SettingsStore, Snippet};
 use wf_core::shortcut::Platform;
 use wf_dictation::{Dictation, Event};
+use wf_meetings::MeetingStore;
 use wf_models::Catalog;
 use wf_platform::desktop;
 use wf_platform::keys::KeySignal;
 
 use crate::app_windows::{OpenWindows, WindowOrder};
 use crate::flow::{self, KeyWatch, rank_first};
+use crate::meetings::changes::MeetingsChange;
+use crate::meetings::desk::{self as meetings_desk, MeetingsDesk};
+use crate::meetings::{Meetings, MeetingsParts};
 use crate::memory;
 use crate::menus::{self, MenuAction, MenuEntry};
 use crate::onboarding::desk::{MachineHooks, MakeMachine, SetupCall, SetupDesk, SetupRecipe};
@@ -139,6 +143,11 @@ pub enum ShellEvent {
     /// What onboarding shows now. Sent when it changes, and before its window opens.
     Setup {
         page: SetupPage,
+    },
+    /// What the Meetings window shows now, all from one moment. Only after its [`ShellEvent::Open`]
+    /// and until it has closed.
+    Meetings {
+        changes: Vec<MeetingsChange>,
     },
     /// A menu asked the app to quit. The app calls [`Shell::quit`] on its way out.
     QuitAsked,
@@ -326,6 +335,11 @@ struct Board {
     /// Made when something first needs the pages, so an app that never opens Settings pays nothing.
     pages: OnceLock<Option<Desk>>,
     recipe: Mutex<Option<PagesRecipe>>,
+    /// The Meetings window, from open until the next one, or until the run ends. One that closed
+    /// stays here, stopped, so the next can wait for it. Held for moments only.
+    meetings: Mutex<Option<MeetingsDesk>>,
+    meetings_folder: PathBuf,
+    exports_folder: PathBuf,
 }
 
 impl Board {
@@ -424,6 +438,48 @@ impl Board {
         self.sink.on_event(event);
     }
 
+    fn lock_meetings(&self) -> MutexGuard<'_, Option<MeetingsDesk>> {
+        self.meetings.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Runs `work` on the open Meetings window, after what was asked of it before.
+    fn meetings_do(&self, work: impl FnOnce(&Meetings) + Send + 'static) {
+        if let Some(desk) = &*self.lock_meetings() {
+            desk.work(work);
+        }
+    }
+
+    /// Stops the window and waits for what it was saving, so what comes next finds it on disk.
+    fn let_meetings_go(&self) {
+        let desk = self.lock_meetings().take();
+        if let Some(desk) = desk {
+            desk.stop();
+            desk.wait();
+        }
+    }
+
+    fn start_meetings(&self) {
+        let (store, exports) = (self.meetings_folder.clone(), self.exports_folder.clone());
+        let Some(dictation) = self.dictation.get().cloned() else {
+            return;
+        };
+        let sink = Arc::clone(&self.sink);
+        let desk = MeetingsDesk::start(meetings_desk::DeskParts {
+            make_parts: Box::new(move || MeetingsParts {
+                store: MeetingStore::new(store),
+                actions: Rc::new(dictation),
+                theme: 0,
+                export_dir: exports,
+                bring_to_front: Rc::new(|| {}),
+            }),
+            publish: Box::new(move |changes| sink.on_event(ShellEvent::Meetings { changes })),
+        });
+        match desk {
+            Ok(desk) => *self.lock_meetings() = Some(desk),
+            Err(error) => eprintln!("could not open the meetings: {error}"),
+        }
+    }
+
     /// Asks for `window`, so the rule decides what the app does about it.
     fn ask_for(self: &Arc<Self>, window: AppWindow) {
         if window == AppWindow::Onboarding {
@@ -439,10 +495,18 @@ impl Board {
         if order == WindowOrder::Open(AppWindow::Settings) {
             self.fill_pages();
         }
+        let meetings_open = order == WindowOrder::Open(AppWindow::Meetings);
+        if meetings_open {
+            self.let_meetings_go();
+        }
         self.sink.on_event(match order {
             WindowOrder::Open(window) => ShellEvent::Open { window },
             WindowOrder::Raise(window) => ShellEvent::Raise { window },
         });
+        // After the window, so what it shows finds it there.
+        if meetings_open {
+            self.start_meetings();
+        }
     }
 
     /// Whether there's anything to do is onboarding's to say. It has said by the time this returns,
@@ -584,11 +648,14 @@ impl Board {
             }
             Event::WordLearned(word) => return self.learn_word(&word),
             Event::Unloaded => return memory::release_freed(),
-            // Onboarding heard of the trials above. Meetings' window brings its news across.
-            Event::Trial(_)
-            | Event::TrialFailed { .. }
-            | Event::Inserted(_)
-            | Event::Meetings(_) => return,
+            Event::Meetings(news) => {
+                if let Some(desk) = &*self.lock_meetings() {
+                    desk.news(news);
+                }
+                return;
+            }
+            // Onboarding heard of the trials above.
+            Event::Trial(_) | Event::TrialFailed { .. } | Event::Inserted(_) => return,
         };
         self.sink.on_event(event);
     }
@@ -643,6 +710,9 @@ impl Shell {
             setup_needed: Arc::default(),
             pages: OnceLock::new(),
             recipe: Mutex::default(),
+            meetings: Mutex::default(),
+            meetings_folder: paths.meetings.clone(),
+            exports_folder: paths.exports.clone(),
             store: Arc::new(store),
             sink,
             dictation: OnceLock::new(),
@@ -785,6 +855,7 @@ impl Shell {
         if let Some(Some(desk)) = self.board.pages.get() {
             desk.stop();
         }
+        self.board.let_meetings_go();
         self.dictation.close_media(MEDIA_CLOSE_LIMIT);
         self.dictation.close_meetings(MEETING_CLOSE_LIMIT);
         Ok(())
@@ -906,6 +977,11 @@ impl Shell {
         }
         if window == AppWindow::Settings {
             self.board.pages_do(Pages::window_closed);
+        }
+        if window == AppWindow::Meetings
+            && let Some(desk) = &*self.board.lock_meetings()
+        {
+            desk.stop();
         }
         release_memory_after_teardown();
         Ok(())
@@ -1174,6 +1250,94 @@ impl Shell {
 
     pub fn check_for_updates(&self) -> Result<(), ShellError> {
         self.board.pages_do(Pages::check_for_updates);
+        Ok(())
+    }
+
+    /// Starts meeting notes, or stops the meeting being recorded.
+    pub fn toggle_meeting(&self) -> Result<(), ShellError> {
+        self.board.meetings_do(Meetings::toggle_meeting);
+        Ok(())
+    }
+
+    /// Shows a meeting, at line `row` of its transcript if that isn't -1. What it holds comes back
+    /// as [`ShellEvent::Meetings`], off the disk.
+    pub fn select_meeting(&self, id: String, row: i32) -> Result<(), ShellError> {
+        self.board.meetings_do(move |meetings| meetings.select(&id, row));
+        Ok(())
+    }
+
+    /// The search box changed. The search runs a moment after the last change.
+    pub fn search_meetings(&self, query: String) -> Result<(), ShellError> {
+        self.board.meetings_do(move |meetings| meetings.search(query));
+        Ok(())
+    }
+
+    /// The shown meeting's title changed. It's saved a moment after the last change.
+    pub fn edit_meeting_title(&self, title: String) -> Result<(), ShellError> {
+        self.board
+            .meetings_do(move |meetings| meetings.title_edited(title));
+        Ok(())
+    }
+
+    /// The shown meeting's notes changed. They're saved a moment after the last change.
+    pub fn edit_meeting_notes(&self, notes: String) -> Result<(), ShellError> {
+        self.board
+            .meetings_do(move |meetings| meetings.notes_edited(notes));
+        Ok(())
+    }
+
+    /// `speaker` is a [`SpeakerRow`]'s `id`.
+    ///
+    /// [`SpeakerRow`]: crate::meetings::rows::SpeakerRow
+    pub fn name_speaker(&self, speaker: i32, name: String) -> Result<(), ShellError> {
+        self.board
+            .meetings_do(move |meetings| meetings.speaker_edited(speaker, name));
+        Ok(())
+    }
+
+    pub fn export_meeting(&self) -> Result<(), ShellError> {
+        self.board.meetings_do(Meetings::export);
+        Ok(())
+    }
+
+    pub fn delete_meeting(&self) -> Result<(), ShellError> {
+        self.board.meetings_do(Meetings::delete);
+        Ok(())
+    }
+
+    pub fn resume_meeting(&self) -> Result<(), ShellError> {
+        self.board.meetings_do(Meetings::resume);
+        Ok(())
+    }
+
+    pub fn finish_meeting(&self) -> Result<(), ShellError> {
+        self.board.meetings_do(Meetings::finish);
+        Ok(())
+    }
+
+    pub fn cancel_meeting_work(&self) -> Result<(), ShellError> {
+        self.board.meetings_do(Meetings::cancel_work);
+        Ok(())
+    }
+
+    pub fn regenerate_summary(&self) -> Result<(), ShellError> {
+        self.board.meetings_do(Meetings::regenerate);
+        Ok(())
+    }
+
+    pub fn update_summary(&self) -> Result<(), ShellError> {
+        self.board.meetings_do(Meetings::update_summary);
+        Ok(())
+    }
+
+    /// Asks about the shown meeting. The answer streams through [`ShellEvent::Meetings`].
+    pub fn ask_meeting(&self, question: String) -> Result<(), ShellError> {
+        self.board.meetings_do(move |meetings| meetings.ask(&question));
+        Ok(())
+    }
+
+    pub fn stop_meeting_chat(&self) -> Result<(), ShellError> {
+        self.board.meetings_do(Meetings::stop_chat);
         Ok(())
     }
 

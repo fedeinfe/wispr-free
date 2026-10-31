@@ -19,7 +19,7 @@ use wf_meetings::{
     SpeakerId, Stage, StageState, Summary,
 };
 use wf_shell::meetings::rows::{
-    ChatMessage, MeetingRow, SpeakerRow, StageRow, SummaryLine, TranscriptLine,
+    ChatMessage, MeetingRow, SpeakerRow, StageMark, StageRow, SummaryLine, TranscriptLine,
 };
 use wf_shell::meetings::{MeetingActions, Meetings, MeetingsParts, Shown};
 
@@ -156,6 +156,11 @@ fn seed(store: &MeetingStore, title: &str) -> Meeting {
 struct Seen {
     meetings: Vec<MeetingRow>,
     list_hint: String,
+    detail_hint: String,
+    start_label: String,
+    can_export: bool,
+    can_delete: bool,
+    chat_hint: String,
     recording: bool,
     selected_id: String,
     title: String,
@@ -218,6 +223,11 @@ impl Seen {
             Shown::StreamingQuestion(question) => self.streaming_question = question,
             Shown::StreamingText(text) => self.streaming_text = text,
             Shown::ChatError(error) => self.chat_error = error,
+            Shown::DetailHint(hint) => self.detail_hint = hint,
+            Shown::StartLabel(label) => self.start_label = label,
+            Shown::CanExport(can) => self.can_export = can,
+            Shown::CanDelete(can) => self.can_delete = can,
+            Shown::ChatHint(hint) => self.chat_hint = hint,
             Shown::When(_)
             | Shown::Failures(_)
             | Shown::SummaryEmpty(_)
@@ -603,7 +613,7 @@ fn stages_show_progress_and_say_what_failed() {
     harness.pick(0);
 
     let stages = harness.ui().stages.clone();
-    assert_eq!(stages[0].state, 3);
+    assert_eq!(stages[0].state, StageMark::Failed);
     assert_eq!(stages[0].reason, "the speaker model is damaged");
     assert!(!harness.ui().meetings.is_empty());
 
@@ -864,6 +874,75 @@ fn closing_the_window_stops_its_answer() {
     harness.meetings = None;
 
     assert!(harness.actions.runs.borrow()[0].load(Ordering::SeqCst));
+}
+
+#[test]
+fn with_nothing_picked_the_window_says_what_to_do() {
+    let (harness, _) = ready(&["Launch"]);
+    assert!(harness.ui().detail_hint.starts_with("Pick a meeting"));
+    assert_eq!(harness.ui().start_label, "Start meeting notes");
+    assert!(!harness.ui().can_export && !harness.ui().can_delete);
+
+    let empty = Harness::new().open();
+    empty.settle();
+    assert_eq!(empty.ui().detail_hint, "");
+}
+
+#[test]
+fn a_recording_meeting_can_be_neither_exported_nor_deleted_and_the_button_says_stop() {
+    let (harness, ids) = ready(&["Launch"]);
+    harness.pick(0);
+    assert!(harness.ui().can_export && harness.ui().can_delete);
+
+    harness.actions.status.borrow_mut().recording = Some(ids[0].clone());
+    harness
+        .meetings()
+        .news(MeetingNews::Recording(ids[0].clone()));
+
+    assert_eq!(harness.ui().start_label, "Stop meeting notes");
+    assert!(!harness.ui().can_export && !harness.ui().can_delete);
+}
+
+#[test]
+fn a_meeting_at_work_can_be_exported_but_not_deleted() {
+    let (harness, ids) = ready(&["Launch"]);
+    harness.pick(0);
+
+    harness.actions.status.borrow_mut().work = vec![(ids[0].clone(), WorkStep::Waiting)];
+    harness.meetings().news(MeetingNews::Working {
+        id: ids[0].clone(),
+        step: WorkStep::Waiting,
+    });
+
+    assert!(harness.ui().can_export && !harness.ui().can_delete);
+}
+
+#[test]
+fn the_chat_explains_itself_until_something_is_asked() {
+    let (harness, _) = ready(&["Launch"]);
+    harness.pick(0);
+    assert!(harness.ui().chat_hint.starts_with("Answers come only"));
+
+    harness.meetings().ask("First?");
+    assert_eq!(harness.ui().chat_hint, "");
+
+    harness.meetings().news(MeetingNews::Chat {
+        run: 1,
+        update: ChatUpdate::Done(Ok(turn("First?", "Yes."))),
+    });
+    assert_eq!(harness.ui().chat_hint, "");
+}
+
+#[test]
+fn finishing_up_says_when_the_disk_has_it_all() {
+    let (harness, ids) = ready(&["Launch"]);
+    harness.pick(0);
+    harness.meetings().notes_edited("Last words".to_owned());
+
+    harness.meetings().finish_up().recv_timeout(WAIT).unwrap();
+
+    let saved = harness.store.open(&ids[0]).unwrap();
+    assert_eq!(saved.notes().unwrap(), "Last words");
 }
 
 #[test]
