@@ -10,4 +10,6 @@ Port the logic in the 142 window tests to `cargo test -p wf-shell` on the existi
 
 Done when: `cargo test --workspace` and clippy pass, `cargo xtask eval` is unchanged, `wf-shell` has no `slint` in its dependency tree, and `cargo tree -p wf-shell` shows no engine.
 
+Keep `wf-shell` and `wf-engine-host` in separate cargo commands (see ticket 07's comment), and extend `the_app_depends_on_no_engine` and the check in `assemble` to cover `wf-shell`.
+
 ## Comments

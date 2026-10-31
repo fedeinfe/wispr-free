@@ -162,7 +162,7 @@ Long jobs (downloads, folder moves) move from the windows to `Shell`, so they ou
 
 `cargo xtask bundle` gains these steps:
 
-1. `cargo build --release -p wf-shell -p wf-engine-host`.
+1. Build `wf-shell` and `wf-engine-host` with `--release`, in two separate cargo commands. One command would unify features and hand the shell every engine.
 2. Generate bindings, write the modulemap, make `WfBridge.xcframework`.
 3. `swift build -c release --package-path apple`.
 4. `actool` on `AppIcon.icon` for `Assets.car` and `AppIcon.icns`.
