@@ -2,6 +2,7 @@
 //! do. A front end draws the result and reports what the user does.
 
 pub mod clock;
+pub mod flow;
 pub mod lists;
 pub mod memory;
 pub mod onboarding;

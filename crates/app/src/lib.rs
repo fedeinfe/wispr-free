@@ -8,7 +8,7 @@ mod mic_levels;
 pub mod onboarding;
 pub mod pill;
 pub mod settings_window;
-mod slint_clock;
+pub mod slint_clock;
 
 pub use folder_picker::folder_picker;
 pub use wf_shell::{memory, prefs};

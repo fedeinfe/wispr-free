@@ -11,13 +11,15 @@ use wf_dictation::remote::ENGINE_HOST_ARG;
 use wf_models::Catalog;
 use wf_platform::autostart::LaunchAtLogin;
 use wf_platform::desktop;
+use wf_shell::flow::listen_to_keys;
 use wispr_free::dictation::{self, KeyWatch, PillActions};
 use wispr_free::meetings_window::{MeetingsBoard, MeetingsHost};
 use wispr_free::onboarding::{
-    FlowWatcher, OnboardingHost, OnboardingParts, Opening, SystemMachine,
+    FlowWatcher, OnboardingHost, OnboardingParts, Opening, system_machine,
 };
 use wispr_free::pill::{self, PillController};
 use wispr_free::settings_window::{SettingsHost, system_parts};
+use wispr_free::slint_clock::SlintClock;
 use wispr_free::{Tray, debug, folder_picker, prefs};
 
 /// How long quitting waits for a running recording to be closed. If it isn't done by then, the
@@ -137,16 +139,16 @@ fn run(args: &[String]) -> Result<(), slint::PlatformError> {
     let mut onboarding = None;
     let _keys = match bundle {
         // Permissions belong to a bundle, so a bare binary has nothing to walk anyone through.
-        None => dictation::listen_to_keys(&flow),
+        None => listen_to_keys(&flow, &SlintClock),
         Some(bundle) => {
-            let keys = KeyWatch::idle(&flow);
-            let machine = SystemMachine {
+            let keys = KeyWatch::idle(&flow, &SlintClock);
+            let machine = system_machine(
                 bundle,
-                dictation: flow.clone(),
-                keys: keys.clone(),
-                settings: settings.clone(),
-                tray: tray.as_weak(),
-            };
+                flow.clone(),
+                keys.clone(),
+                settings.clone(),
+                tray.as_weak(),
+            );
             let host = OnboardingHost::new(OnboardingParts {
                 settings: system_parts(
                     Arc::clone(&store),

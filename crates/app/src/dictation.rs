@@ -1,21 +1,16 @@
-//! Connects the dictation flow to the app: its events to the pill, the keyboard to the flow, and
-//! the pill menu to the settings. The flow itself lives in `wf_dictation`.
+//! Connects the dictation flow to the windows: its events to the pill, and the pill menu to the
+//! settings. The rest of what surrounds the flow is in `wf_shell::flow`.
 
-use std::cell::{Cell, RefCell};
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
 
-use slint::{Timer, TimerMode, Weak};
-use wf_core::settings::{PipelineTier, Settings, SettingsStore, data_dir};
-use wf_dictation::remote::engine_host_beside;
-use wf_dictation::{Dictation, Event, Parts};
-use wf_history::History;
-use wf_models::{Catalog, ModelStore};
-use wf_platform::keys::{self, KeyListener};
-use wf_platform::permissions::Permissions;
+use slint::Weak;
+use wf_core::settings::{Settings, SettingsStore};
+use wf_dictation::{Dictation, Event};
+use wf_models::Catalog;
+use wf_shell::flow::{self, rank_first};
+use wf_shell::settings::values::{TIERS, choose_tier};
 
 use crate::Tray;
 use crate::meetings_window::{MeetingsBoard, MeetingsHost};
@@ -23,17 +18,8 @@ use crate::memory;
 use crate::onboarding::FlowWatcher;
 use crate::pill::{LANGUAGES, PillController, PillEvent};
 use crate::settings_window::SettingsHost;
-use crate::settings_window::values::choose_tier;
 
-/// How often to try the keyboard again after the OS refused it. Permissions arrive at any time.
-const KEYS_RETRY: Duration = Duration::from_secs(5);
-
-const PIPELINE_QUALITIES: [PipelineTier; 4] = [
-    PipelineTier::Lite,
-    PipelineTier::Balanced,
-    PipelineTier::High,
-    PipelineTier::Custom,
-];
+pub use wf_shell::flow::KeyWatch;
 
 /// Starts the flow on the real machine. Its events reach `pill` and `tray` on the UI thread.
 pub fn start(
@@ -43,29 +29,8 @@ pub fn start(
     board: &MeetingsBoard,
     watcher: FlowWatcher,
 ) -> Dictation {
-    let data = data_dir().unwrap_or_else(|| PathBuf::from("wispr-free"));
-    let default_models = ModelStore::default_root().unwrap_or_else(|| data.join("models"));
-    let history = History::default_path().unwrap_or_else(|| data.join("history.sqlite3"));
-    let meetings = data.join("meetings");
-    let executable = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("wispr-free"));
-    let engine_host = engine_host_beside(&executable);
-    // `cargo run` builds only the app.
-    if !engine_host.exists() {
-        eprintln!(
-            "no engine host at {}: run `cargo build -p wf-engine-host`",
-            engine_host.display()
-        );
-    }
     let on_event = deliver_to(pill, tray.as_weak(), board.clone(), watcher);
-    Dictation::start(Parts::system(
-        settings,
-        Arc::new(Catalog::bundled()),
-        default_models,
-        history,
-        meetings,
-        engine_host,
-        on_event,
-    ))
+    flow::start(settings, on_event)
 }
 
 /// Returns the callback for the flow's threads. Events wait in a queue for the UI thread.
@@ -116,79 +81,6 @@ fn show(pill: &PillController, tray: &Weak<Tray>, board: &MeetingsBoard, event: 
     }
 }
 
-/// Listens to the keyboard for as long as the returned value lives. While the OS refuses, the pill
-/// says why and this keeps trying. The way a bare binary runs: in the app bundle, onboarding's
-/// watch does all this through [`KeyWatch::refresh`].
-pub fn listen_to_keys(dictation: &Dictation) -> KeyWatch {
-    let watch = KeyWatch::idle(dictation);
-    if !watch.try_listen_and_report() {
-        let this = watch.clone();
-        watch.retry.start(TimerMode::Repeated, KEYS_RETRY, move || {
-            if this.try_listen_and_report() {
-                this.retry.stop();
-            }
-        });
-    }
-    watch
-}
-
-#[derive(Clone)]
-pub struct KeyWatch {
-    dictation: Dictation,
-    listener: Rc<RefCell<Option<KeyListener>>>,
-    retry: Rc<Timer>,
-    permissions: Rc<Cell<Option<Permissions>>>,
-}
-
-impl KeyWatch {
-    /// Not listening yet.
-    pub fn idle(dictation: &Dictation) -> Self {
-        Self {
-            dictation: dictation.clone(),
-            listener: Rc::default(),
-            retry: Rc::new(Timer::default()),
-            permissions: Rc::default(),
-        }
-    }
-
-    pub fn is_listening(&self) -> bool {
-        self.listener.borrow().is_some()
-    }
-
-    /// Keeps the listener in step with the permissions. Any change restarts it: a tap made
-    /// without Accessibility can't swallow keys until it's made again, and one made before a
-    /// revoke may be dead with nothing to say so. `may_prompt` false holds back the first try,
-    /// which could bring up an OS question.
-    pub fn refresh(&self, permissions: &Permissions, may_prompt: bool) {
-        if self.permissions.replace(Some(*permissions)) != Some(*permissions) {
-            self.listener.borrow_mut().take();
-        }
-        if may_prompt && !self.is_listening() {
-            let _ = self.try_listen();
-        }
-    }
-
-    fn try_listen(&self) -> Result<(), keys::KeysError> {
-        let flow = self.dictation.clone();
-        let listener = keys::listen(move |signal| flow.on_key(signal))?;
-        *self.listener.borrow_mut() = Some(listener);
-        Ok(())
-    }
-
-    fn try_listen_and_report(&self) -> bool {
-        match self.try_listen() {
-            Ok(()) => {
-                self.dictation.set_blocked(None);
-                true
-            }
-            Err(error) => {
-                self.dictation.set_blocked(Some(error.to_string()));
-                false
-            }
-        }
-    }
-}
-
 /// What the pill's buttons and menu do.
 pub struct PillActions {
     pub dictation: Dictation,
@@ -223,7 +115,7 @@ impl PillActions {
                 }
             }
             PillEvent::SelectPipelineQuality(index) => {
-                if let Some(&tier) = PIPELINE_QUALITIES.get(index) {
+                if let Some(&tier) = TIERS.get(index) {
                     let catalog = Arc::clone(&self.catalog);
                     self.change(|settings| choose_tier(settings, tier, &catalog));
                 }
@@ -265,27 +157,5 @@ impl PillActions {
         }
         (self.apply)(&self.store.get());
         self.settings.refresh();
-    }
-}
-
-/// Puts `id` at the top of the microphone ranking, keeping the rest in order.
-fn rank_first(ranking: &mut Vec<String>, id: String) {
-    ranking.retain(|known| *known != id);
-    ranking.insert(0, id);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::rank_first;
-
-    #[test]
-    fn a_chosen_microphone_moves_to_the_top_of_the_ranking() {
-        let mut ranking = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
-
-        rank_first(&mut ranking, "c".to_owned());
-        assert_eq!(ranking, ["c", "a", "b"]);
-
-        rank_first(&mut ranking, "new".to_owned());
-        assert_eq!(ranking, ["new", "c", "a", "b"]);
     }
 }

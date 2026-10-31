@@ -2,23 +2,23 @@
 
 use std::path::PathBuf;
 
-use slint::Weak;
 use wf_core::dictation::PillInput;
 use wf_dictation::Dictation;
 use wf_platform::desktop;
 use wf_platform::permissions::{self, Permission, Permissions};
 
 use super::Machine;
-use crate::Tray;
-use crate::dictation::KeyWatch;
-use crate::settings_window::SettingsHost;
+use crate::flow::KeyWatch;
 
 pub struct SystemMachine {
     pub bundle: PathBuf,
     pub dictation: Dictation,
     pub keys: KeyWatch,
-    pub settings: SettingsHost,
-    pub tray: Weak<Tray>,
+    /// Tells the tray whether to offer to finish the setup.
+    pub set_setup_needed: Box<dyn Fn(bool)>,
+    pub close_settings: Box<dyn Fn()>,
+    /// Ends the run loop.
+    pub quit: Box<dyn Fn()>,
 }
 
 impl Machine for SystemMachine {
@@ -55,13 +55,11 @@ impl Machine for SystemMachine {
     }
 
     fn set_setup_needed(&self, needed: bool) {
-        if let Some(tray) = self.tray.upgrade() {
-            tray.set_setup_needed(needed);
-        }
+        (self.set_setup_needed)(needed);
     }
 
     fn close_settings(&self) {
-        self.settings.close();
+        (self.close_settings)();
     }
 
     fn reopen_app(&self) {
@@ -69,6 +67,6 @@ impl Machine for SystemMachine {
             eprintln!("could not reopen the app: {error}");
             return;
         }
-        let _ = slint::quit_event_loop();
+        (self.quit)();
     }
 }
