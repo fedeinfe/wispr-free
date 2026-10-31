@@ -33,6 +33,7 @@ const CARD_GAP: f64 = 8.0;
 const MEETING_BAR_SCALE: f32 = 0.85;
 
 #[derive(Debug, Clone, PartialEq, Default)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 pub enum PillState {
     /// The user turned the pill off. Shortcuts still work.
     Hidden,

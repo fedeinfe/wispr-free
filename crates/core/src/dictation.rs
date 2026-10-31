@@ -50,6 +50,7 @@ pub enum Command {
 
 /// Clicks on the pill (spec §1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 pub enum PillInput {
     /// Toggles hands-free dictation.
     Click,

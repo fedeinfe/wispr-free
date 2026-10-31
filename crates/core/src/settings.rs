@@ -13,6 +13,7 @@ use crate::shortcut::Bindings;
 
 /// All settings. A file that omits one gets its default, so new settings need no migration.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 #[serde(default)]
 pub struct Settings {
     pub general: General,
@@ -28,12 +29,14 @@ pub struct Settings {
 /// Whether the first-run flow was seen through. Delete all resets it with everything else, which
 /// is right: what it set up is gone.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 #[serde(default)]
 pub struct Onboarding {
     pub finished: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 #[serde(default)]
 pub struct General {
     /// Input device ids, best first (`wf_audio::CaptureConfig::ranking`). Empty means auto.
@@ -64,6 +67,7 @@ impl Default for General {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 #[serde(rename_all = "snake_case")]
 pub enum Theme {
     #[default]
@@ -73,6 +77,7 @@ pub enum Theme {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 #[serde(default)]
 pub struct Pipeline {
     pub tier: PipelineTier,
@@ -111,6 +116,7 @@ impl Default for Pipeline {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 #[serde(rename_all = "snake_case")]
 pub enum PipelineTier {
     Lite,
@@ -122,6 +128,7 @@ pub enum PipelineTier {
 
 /// How far LLM cleanup may depart from the spoken words.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 #[serde(rename_all = "snake_case")]
 pub enum CleanupStrength {
     None,
@@ -132,6 +139,7 @@ pub enum CleanupStrength {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 #[serde(rename_all = "snake_case")]
 pub enum KeepModels {
     Always,
@@ -142,6 +150,7 @@ pub enum KeepModels {
 
 /// Styles per app category, the dictionary and snippets.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 #[serde(default)]
 pub struct StyleSettings {
     pub personal_messages: Style,
@@ -189,6 +198,7 @@ impl StyleSettings {
 /// Tone and punctuation preset for an app category. LLM cleanup applies a style by rewriting;
 /// `wf_pipeline::passes::apply_style` does the mechanical part, so it holds with the LLM off too.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 #[serde(rename_all = "snake_case")]
 pub enum Style {
     Formal,
@@ -199,6 +209,7 @@ pub enum Style {
 
 /// A dictionary replacement: `wrong` is always written as `right`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 pub struct Replacement {
     pub wrong: String,
     pub right: String,
@@ -206,12 +217,14 @@ pub struct Replacement {
 
 /// A user snippet: saying `trigger` writes `text`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 pub struct Snippet {
     pub trigger: String,
     pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 #[serde(default)]
 pub struct Meetings {
     /// Suggest taking notes when a meeting app starts using the mic. Never records by itself.
@@ -240,6 +253,7 @@ impl Default for Meetings {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 #[serde(default)]
 pub struct Media {
     pub sounds: bool,
@@ -256,6 +270,7 @@ impl Default for Media {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 #[serde(rename_all = "snake_case")]
 pub enum MediaWhileDictating {
     #[default]
@@ -265,6 +280,7 @@ pub enum MediaWhileDictating {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 #[serde(default)]
 pub struct Privacy {
     pub context_awareness: bool,
@@ -281,6 +297,7 @@ impl Default for Privacy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryRetention {
     #[default]
@@ -290,6 +307,13 @@ pub enum HistoryRetention {
     /// Nothing reaches the disk.
     Never,
 }
+
+#[cfg(feature = "uniffi")]
+uniffi::custom_type!(PathBuf, String, {
+    remote,
+    lower: |path| path.to_string_lossy().into_owned(),
+    try_lift: |text| Ok(PathBuf::from(text)),
+});
 
 /// The settings of this run, backed by a TOML file. Every update is written through at once, so
 /// a crash loses nothing.

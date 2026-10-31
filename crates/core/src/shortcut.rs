@@ -335,6 +335,7 @@ impl Action {
 
 /// The combo bound to each action. A file that omits an action gets its default.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 #[serde(default)]
 pub struct Bindings {
     pub push_to_talk: Combo,
@@ -399,3 +400,12 @@ impl Bindings {
         *slot = combo;
     }
 }
+
+#[cfg(feature = "uniffi")]
+uniffi::custom_type!(Combo, Vec<String>, {
+    lower: |combo| combo.0.iter().map(|key| String::from(*key)).collect(),
+    try_lift: |keys| {
+        let keys: Result<Vec<Key>, _> = keys.into_iter().map(Key::try_from).collect();
+        Ok(Combo(keys.map_err(|error| uniffi::deps::anyhow::anyhow!("{error:?}"))?))
+    },
+});

@@ -16,12 +16,16 @@ use wf_platform::keys::{self, KeyListener};
 use wf_platform::permissions::Permissions;
 
 use crate::clock::{Clock, Timer};
+use crate::paths::Paths;
 
 /// How often to try the keyboard again after the OS refused it. Permissions arrive at any time.
 const KEYS_RETRY: Duration = Duration::from_secs(5);
 
+/// What the flow reports to. Runs on the flow's threads.
+pub type OnEvent = Arc<dyn Fn(Event) + Send + Sync>;
+
 /// Starts the flow on the real machine. `on_event` runs on the flow's threads.
-pub fn start(settings: Settings, on_event: Arc<dyn Fn(Event) + Send + Sync>) -> Dictation {
+pub fn start(settings: Settings, on_event: OnEvent) -> Dictation {
     let data = data_dir().unwrap_or_else(|| PathBuf::from("wispr-free"));
     let default_models = ModelStore::default_root().unwrap_or_else(|| data.join("models"));
     let history = History::default_path().unwrap_or_else(|| data.join("history.sqlite3"));
@@ -44,6 +48,19 @@ pub fn start(settings: Settings, on_event: Arc<dyn Fn(Event) + Send + Sync>) -> 
         engine_host,
         on_event,
     ))
+}
+
+/// The real machine, with the flow's files at `paths` and nowhere else.
+pub fn parts_at(paths: &Paths, settings: Settings, on_event: OnEvent) -> Parts {
+    Parts::system(
+        settings,
+        Arc::new(Catalog::bundled()),
+        paths.models.clone(),
+        paths.history.clone(),
+        paths.meetings.clone(),
+        paths.engine_host.clone(),
+        on_event,
+    )
 }
 
 /// Listens to the keyboard for as long as the returned value lives. While the OS refuses, the pill
