@@ -401,7 +401,7 @@ fn search_finds_words_in_the_transcript_and_opens_at_the_line() {
     harness.wait("hits", |this| {
         this.ui()
             .meetings
-            .get(0)
+            .first()
             .is_some_and(|row| !row.snippet.is_empty())
     });
     let hit = harness.ui().meetings[0].clone();
@@ -605,7 +605,7 @@ fn stages_show_progress_and_say_what_failed() {
     let stages = harness.ui().stages.clone();
     assert_eq!(stages[0].state, 3);
     assert_eq!(stages[0].reason, "the speaker model is damaged");
-    assert!(harness.ui().meetings.first().is_some());
+    assert!(!harness.ui().meetings.is_empty());
 
     let step = WorkStep::Refining {
         done_ms: 500,

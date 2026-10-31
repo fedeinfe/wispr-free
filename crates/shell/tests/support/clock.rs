@@ -85,16 +85,7 @@ impl Clock for ManualClock {
     }
 
     fn later(&self, delay: Duration, fire: Box<dyn FnOnce()>) {
-        self.timer_slot_once(delay, fire);
-    }
-}
-
-impl ManualClock {
-    fn timer_slot_once(&self, delay: Duration, fire: Box<dyn FnOnce()>) {
-        let slot = self.slot();
-        let mut slot = slot.borrow_mut();
-        slot.due = Some(self.slots.now.get() + delay);
-        slot.fire = Fire::Once(fire);
+        self.timer().once(delay, fire);
     }
 }
 

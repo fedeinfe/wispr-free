@@ -62,7 +62,7 @@ pub fn shortcut_rows(settings: &Settings, platform: Platform) -> Vec<ShortcutRow
         .into_iter()
         .map(|action| ShortcutRow {
             action: action.label().into(),
-            combo: settings.shortcuts.get(action).label(platform).into(),
+            combo: settings.shortcuts.get(action).label(platform),
         })
         .collect()
 }
@@ -133,7 +133,7 @@ pub fn model_row(index: usize, model: &ModelEntry, status: ModelStatus) -> Model
     let (status_text, installed, partial): (String, _, _) = match status {
         ModelStatus::NotInstalled => ("Not downloaded".into(), false, false),
         ModelStatus::Partial { downloaded } => (
-            format!("{} downloaded", format_bytes(downloaded)).into(),
+            format!("{} downloaded", format_bytes(downloaded)),
             false,
             true,
         ),
@@ -142,9 +142,9 @@ pub fn model_row(index: usize, model: &ModelEntry, status: ModelStatus) -> Model
     ModelRow {
         index: index as i32,
         name: model.name.as_str().into(),
-        size: format_bytes(model.download_size()).into(),
+        size: format_bytes(model.download_size()),
         used_for: String::new(),
-        detail: detail.into(),
+        detail,
         status: status_text,
         installed,
         partial,

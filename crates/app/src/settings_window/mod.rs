@@ -163,7 +163,7 @@ macro_rules! wire {
 }
 
 impl<W: Surface> Controller<W> {
-    pub fn new(parts: wf_shell::settings::SettingsParts) -> Result<Self, PlatformError> {
+    pub fn new(parts: SettingsParts) -> Result<Self, PlatformError> {
         let window = W::create()?;
         let lists = Rc::new(Lists::default());
         bind_lists(&window.prefs(), &lists);

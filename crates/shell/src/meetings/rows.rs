@@ -108,7 +108,7 @@ pub fn meeting_row(
     MeetingRow {
         id: entry.id.as_str().into(),
         title: entry.title.as_deref().unwrap_or(UNTITLED).into(),
-        when: when_text(entry.created_ms, entry.length_ms).into(),
+        when: when_text(entry.created_ms, entry.length_ms),
         snippet: hit
             .map(|hit| hit.snippet.as_str())
             .unwrap_or_default()
@@ -182,8 +182,8 @@ fn heading(text: &str) -> SummaryLine {
 fn item(text: String, at_ms: Option<u64>, rows: &[TranscriptRow]) -> SummaryLine {
     SummaryLine {
         kind: 1,
-        text: text.into(),
-        time: at_ms.map(timestamp).unwrap_or_default().into(),
+        text,
+        time: at_ms.map(timestamp).unwrap_or_default(),
         row: at_ms
             .and_then(|at_ms| row_at(rows, at_ms))
             .map_or(-1, |row| row as i32),
@@ -226,7 +226,7 @@ pub fn summary_lines(summary: &Summary, rows: &[TranscriptRow]) -> Vec<SummaryLi
 
 pub fn transcript_line(row: &TranscriptRow) -> TranscriptLine {
     TranscriptLine {
-        time: timestamp(row.at_ms).into(),
+        time: timestamp(row.at_ms),
         speaker: row.name.as_str().into(),
         text: row.text.as_str().into(),
         gap: row.gap,
@@ -236,7 +236,7 @@ pub fn transcript_line(row: &TranscriptRow) -> TranscriptLine {
 pub fn speaker_rows(detail: &MeetingDetail) -> Vec<SpeakerRow> {
     let speakers = detail.speakers.iter().map(|(id, name)| SpeakerRow {
         id: id.0 as i32,
-        label: format!("Speaker {}", id.0).into(),
+        label: format!("Speaker {}", id.0),
         name: name.as_deref().unwrap_or_default().into(),
     });
     speakers.collect()

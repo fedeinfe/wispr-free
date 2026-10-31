@@ -136,7 +136,7 @@ impl Mailbox {
 
 /// What the pages know before anything is stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Facts {
+pub struct PageFacts {
     pub is_macos: bool,
     pub version: String,
     pub data_folder: String,
@@ -149,7 +149,7 @@ pub struct Facts {
 /// One thing for the pages to show now.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Shown {
-    Facts(Facts),
+    Facts(PageFacts),
     Notice(String),
     Values(Box<SettingsValues>),
     /// The ASR engine needs VAD, so the setting doesn't apply.
@@ -283,7 +283,7 @@ impl Pages {
     }
 
     fn show_facts(&self) {
-        self.show(Shown::Facts(Facts {
+        self.show(Shown::Facts(PageFacts {
             is_macos: self.parts.platform == Platform::MacOs,
             version: env!("CARGO_PKG_VERSION").to_owned(),
             data_folder: self.parts.paths.data_dir.to_string_lossy().into_owned(),
@@ -543,7 +543,7 @@ impl Pages {
             }
             RecorderStep::Rejected(_, error) => {
                 self.show(Shown::RecordingKeys(String::new()));
-                self.show(Shown::ShortcutError(error.message().into()));
+                self.show(Shown::ShortcutError(error.message()));
             }
         }
     }
@@ -559,7 +559,7 @@ impl Pages {
                 self.show(Shown::ShortcutError(String::new()));
                 self.show_shortcuts(&self.settings());
             }
-            Err(error) => self.show(Shown::ShortcutError(error.message().into())),
+            Err(error) => self.show(Shown::ShortcutError(error.message())),
         }
     }
 

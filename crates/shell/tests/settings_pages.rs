@@ -702,10 +702,10 @@ fn picking_languages_persists_and_none_means_auto_detect() {
 fn dictionary_words_are_trimmed_kept_unique_and_removable() {
     let harness = Harness::new();
 
-    harness.pages().add_word("  Slint ".into());
-    harness.pages().add_word("slint".into());
-    harness.pages().add_word("   ".into());
-    harness.pages().add_word("Infelici".into());
+    harness.pages().add_word("  Slint ");
+    harness.pages().add_word("slint");
+    harness.pages().add_word("   ");
+    harness.pages().add_word("Infelici");
 
     assert_eq!(harness.saved().style.dictionary, ["Slint", "Infelici"]);
 

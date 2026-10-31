@@ -6,13 +6,13 @@ use wf_core::settings::{Replacement, Snippet};
 use wf_shell::lists::Rows;
 use wf_shell::settings::rows::{LanguageRow, MicrophoneLine, ModelRow, ShortcutRow};
 use wf_shell::settings::values::SettingsValues;
-use wf_shell::settings::{Facts, Shown};
+use wf_shell::settings::{PageFacts, Shown};
 
 #[derive(Clone, Default)]
 pub struct Seen {
     /// How many times the whole list of models was replaced.
     pub model_rebuilds: u32,
-    pub facts: Option<Facts>,
+    pub facts: Option<PageFacts>,
     pub notice: String,
     pub values: SettingsValues,
     pub vad_forced: bool,
