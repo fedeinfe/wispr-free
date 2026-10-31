@@ -17,8 +17,7 @@ final class WindowShots {
     private static let tallHeight: CGFloat = 1500
 
     private static let scenes: [(String, AppWindow, MenuAction)] = [
-        ("meetings", .meetings, .openMeetings),
-        ("onboarding", .onboarding, .openOnboarding),
+        ("meetings", .meetings, .openMeetings)
     ]
 
     private let shell: Shell
@@ -40,6 +39,7 @@ final class WindowShots {
                 return
             }
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try await shootTheWalk()
             try fillInThePages()
             for row in settingsPages() {
                 try await shell.setSettingsPage(page: row.page)
@@ -62,10 +62,72 @@ final class WindowShots {
                 try await shoot(name, window)
                 window.close()
             }
+            try await shootTheMissingModels()
             log("shots taken")
         } catch {
             log("shots failed: \(error)")
         }
+    }
+
+    /// A first run, step by step. A rehearsal answers every "Allow…" at once.
+    private func shootTheWalk() async throws {
+        let window = try await openTheWalk()
+        try await until { $0.step == .microphone && $0.microphoneMark == .passed }
+        try await shoot("onboarding-microphone", window)
+        try shell.askPermission(index: 0)
+        try await until { $0.canContinue }
+        try await shoot("onboarding-microphone-allowed", window)
+        try shell.setupContinue()
+        try await until { $0.step == .keys }
+        try await shoot("onboarding-keys", window)
+        try shell.askPermission(index: 2)
+        try shell.askPermission(index: 1)
+        try await until { $0.canContinue }
+        try shell.setupContinue()
+        try await until { $0.step == .models }
+        try await shoot("onboarding-models", window)
+        scrollToEnd(window)
+        try await shoot("onboarding-models-end", window)
+        try shell.setupContinue()
+        try await until { $0.step == .trial }
+        try await shoot("onboarding-trial", window)
+        try shell.startTrial()
+        try await until { $0.trial.canStop }
+        try await shoot("onboarding-trial-listening", window)
+        try shell.stopTrial()
+        try await until { $0.trial.heard != nil && $0.trial.phase == .idle }
+        try await shoot("onboarding-trial-heard", window)
+        scrollToEnd(window)
+        try await shoot("onboarding-trial-end", window)
+        window.close()
+        await closed(.onboarding)
+    }
+
+    /// The pages' tier needs models that aren't there, so the walk comes back to that step.
+    private func shootTheMissingModels() async throws {
+        let window = try await openTheWalk()
+        try await until { $0.step == .models }
+        try await shoot("onboarding-models-missing", window)
+        scrollToEnd(window)
+        try await shoot("onboarding-models-missing-end", window)
+        window.close()
+        await closed(.onboarding)
+    }
+
+    private func openTheWalk() async throws -> NSWindow {
+        try await shell.menuAction(action: .openOnboarding)
+        guard let window = await open(.onboarding) else {
+            throw Shots.ShotError.noPicture("onboarding")
+        }
+        return window
+    }
+
+    private func until(_ done: (SetupPage) -> Bool) async throws {
+        for _ in 0..<Self.attempts {
+            if let page = try await shell.steps(), done(page) { return }
+            try await Task.sleep(for: Self.poll)
+        }
+        throw Shots.ShotError.noPicture("onboarding")
     }
 
     private func scrollToEnd(_ window: NSWindow) {

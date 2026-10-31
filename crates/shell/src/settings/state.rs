@@ -5,7 +5,7 @@ use wf_core::settings::{PipelineTier, Replacement, Snippet};
 
 use super::page::SettingsPage;
 use super::rows::{LanguageRow, MicrophoneLine, ModelRow, ShortcutRow, StageModel, stage_model};
-use super::values::SettingsValues;
+use super::values::{SettingsValues, TIERS, TierRow, tier_rows};
 use super::{PageFacts, Shown};
 
 /// A stage's menu of models.
@@ -68,6 +68,12 @@ pub struct PagesState {
     /// The catalog, each model with how it stands here.
     pub models: Vec<ModelRow>,
     pub models_in_use_summary: String,
+    /// The tiers onboarding offers. Custom is one only for someone already on it.
+    pub offered_tiers: Vec<TierRow>,
+    /// The models the settings use, for onboarding's list.
+    pub models_in_use: Vec<ModelRow>,
+    /// What that list still has to fetch.
+    pub models_to_download: String,
     pub downloaded_summary: String,
     /// Under Downloaded when it's empty.
     pub nothing_downloaded: String,
@@ -114,6 +120,9 @@ pub fn blank_pages_state() -> PagesState {
         recommended_tier: None,
         models: Vec::new(),
         models_in_use_summary: String::new(),
+        offered_tiers: Vec::new(),
+        models_in_use: Vec::new(),
+        models_to_download: String::new(),
         downloaded_summary: String::new(),
         nothing_downloaded: String::new(),
         asr_menu: StageMenu::default(),
@@ -240,6 +249,19 @@ impl Folded {
         if state.recording_action.is_some() && state.recording_keys.is_empty() {
             "Press keys…".clone_into(&mut state.recording_keys);
         }
+        let tier = usize::try_from(self.values.tier).ok();
+        let custom = tier.and_then(|tier| TIERS.get(tier)) == Some(&PipelineTier::Custom);
+        state.offered_tiers = tier_rows();
+        state
+            .offered_tiers
+            .retain(|row| custom || row.tier != PipelineTier::Custom);
+        let in_use = state.models.iter().filter(|row| !row.used_for.is_empty());
+        state.models_in_use = in_use.cloned().collect();
+        state.models_to_download = if state.models_in_use_summary.is_empty() {
+            "Everything is downloaded.".to_owned()
+        } else {
+            format!("{} to download", state.models_in_use_summary)
+        };
         state.nothing_downloaded = if state.models_folder_missing {
             "Connect the folder to see its models."
         } else {
@@ -389,6 +411,45 @@ mod tests {
         folded.take(Shown::ModelsFolderMissing(true));
 
         assert!(folded.state().nothing_downloaded.starts_with("Connect"));
+    }
+
+    #[test]
+    fn onboarding_lists_the_models_in_use_and_what_they_still_need() {
+        let needed = ModelRow {
+            used_for: "Needed for speech".to_owned(),
+            ..row(1)
+        };
+        let mut folded = folded(vec![row(0), needed.clone()]);
+
+        folded.take(Shown::ModelsInUseSummary("1 model, 1 GB".to_owned()));
+        assert_eq!(folded.state().models_in_use, [needed]);
+        assert_eq!(
+            folded.state().models_to_download,
+            "1 model, 1 GB to download"
+        );
+
+        folded.take(Shown::ModelsInUseSummary(String::new()));
+        assert_eq!(
+            folded.state().models_to_download,
+            "Everything is downloaded."
+        );
+    }
+
+    #[test]
+    fn custom_is_offered_only_to_someone_already_on_it() {
+        let titles = |folded: &Folded| -> Vec<String> {
+            let rows = folded.state().offered_tiers;
+            rows.into_iter().map(|row| row.title).collect()
+        };
+        let mut folded = Folded::new(SettingsPage::Models);
+        assert_eq!(titles(&folded), ["Lite", "Balanced", "High"]);
+
+        folded.take(Shown::Values(Box::new(SettingsValues {
+            tier: 3,
+            ..SettingsValues::default()
+        })));
+
+        assert_eq!(titles(&folded), ["Lite", "Balanced", "High", "Custom"]);
     }
 
     #[test]

@@ -12,6 +12,7 @@ struct Node: Encodable {
     let role: String
     let identifier: String
     let title: String
+    let enabled: Bool
 }
 
 struct Window: Encodable {
@@ -55,7 +56,8 @@ func descendants(of root: AXUIElement) -> [AXUIElement] {
 func node(_ element: AXUIElement) -> Node {
     Node(
         role: text(element, kAXRoleAttribute), identifier: text(element, kAXIdentifierAttribute),
-        title: text(element, kAXTitleAttribute))
+        title: text(element, kAXTitleAttribute),
+        enabled: attribute(element, kAXEnabledAttribute) as? Bool ?? true)
 }
 
 /// An app builds its tree for whoever says it's an assistive tool.

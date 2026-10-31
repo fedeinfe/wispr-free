@@ -16,6 +16,8 @@ struct WindowShape {
 struct WindowStage {
     let activate: () -> Void
     let order: (NSWindow) -> Void
+    /// In view, with the focus left where it is.
+    let orderQuietly: (NSWindow) -> Void
 
     func bringForward(_ window: NSWindow) {
         activate()
@@ -24,9 +26,11 @@ struct WindowStage {
 
     /// An accessory app doesn't get the foreground unless it asks.
     static let front = WindowStage(
-        activate: { NSApp.activate() }, order: { $0.makeKeyAndOrderFront(nil) })
+        activate: { NSApp.activate() }, order: { $0.makeKeyAndOrderFront(nil) },
+        orderQuietly: { $0.orderFrontRegardless() })
     /// Behind every other window, with nothing activated, for a run with no person at the Mac.
-    static let behind = WindowStage(activate: {}, order: { $0.orderBack(nil) })
+    static let behind = WindowStage(
+        activate: {}, order: { $0.orderBack(nil) }, orderQuietly: { $0.orderBack(nil) })
 }
 
 /// One open window. It's made on open and let go on close, and everything its view holds goes

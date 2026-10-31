@@ -75,14 +75,6 @@ private func view(on model: SettingsNavigation, core: FakeCore) throws -> Settin
 
 @MainActor
 @Suite struct OtherSkeletons {
-    @Test func onboardingHasItsBottomBar() throws {
-        let view = try OnboardingView().inspect()
-
-        for label in ["Back", "Continue"] {
-            #expect(try view.find(button: label).accessibilityIdentifier() == label)
-        }
-    }
-
     @Test func meetingsHasItsFourTabs() throws {
         let view = try MeetingsView().inspect()
 

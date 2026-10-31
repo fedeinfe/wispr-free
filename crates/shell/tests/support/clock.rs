@@ -110,8 +110,9 @@ impl Timer for ManualTimer {
 
     fn set_interval(&self, interval: Duration) {
         let mut slot = self.slot.borrow_mut();
+        // It may be firing, and what it fired may be what asks: it goes on at this rate.
+        slot.interval = interval;
         if matches!(slot.fire, Fire::Every(_)) {
-            slot.interval = interval;
             slot.due = Some(self.slots.now.get() + interval);
         }
     }

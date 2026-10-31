@@ -139,7 +139,7 @@ fn show_page(setup: &Setup<'_>, page: SetupPage) {
     show_trial(setup, page.trial);
 }
 
-fn show_trial(setup: &Setup<'_>, trial: trial::View) {
+fn show_trial(setup: &Setup<'_>, trial: trial::TrialView) {
     setup.set_trial_phase(match trial.phase {
         Phase::Idle => TrialPhase::Idle,
         Phase::Listening => TrialPhase::Listening,

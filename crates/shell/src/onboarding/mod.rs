@@ -2,6 +2,7 @@
 //! comes back only for a step that broke. [`Onboarding`] is one open window, with no window: it
 //! leaves models, shortcuts and the rest to [`Pages`], and adds the steps and the trial.
 
+pub mod desk;
 mod host;
 pub mod steps;
 mod system;
@@ -22,10 +23,10 @@ use wf_platform::permissions::{Access, Permission, Permissions, settings_link};
 use crate::settings::values::choose_tier;
 use crate::settings::{Pages, SettingsParts};
 use steps::{Facts, Hardware, Models, Step, first_open};
-use trial::Trial;
+use trial::{Check, Trial, TrialView};
 
 pub use host::{FlowWatcher, Make, OnboardingHost, OnboardingWindow, Opening, Walk};
-pub use system::SystemMachine;
+pub use system::{DevMachine, SystemMachine};
 
 /// Looks with both permissions on and no keys before suggesting a reopen. One look a second, so
 /// that the key listener has had its chance.
@@ -124,33 +125,129 @@ fn page_of(step: Step) -> i32 {
 }
 
 /// One step in the sidebar.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct StepRow {
     pub title: String,
     pub page: i32,
     pub done: bool,
 }
 
+/// One thing to allow: what it's for, whether it is, and the way to change that.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PermissionCard {
+    /// What [`Onboarding::ask`] and [`Onboarding::open_pane`] call it.
+    pub permission: i32,
+    pub name: String,
+    pub why: String,
+    pub access: Access,
+    pub status: String,
+    /// The OS's question still works for this one.
+    pub can_ask: bool,
+    pub can_open_pane: bool,
+    pub hint: String,
+}
+
+fn permission_card(permission: Permission, access: Access) -> PermissionCard {
+    let (index, name, why) = match permission {
+        Permission::Microphone => (
+            0,
+            "Microphone access",
+            "Wispr Free hears you only while you dictate, and your voice stays on this Mac.",
+        ),
+        Permission::Accessibility => (
+            1,
+            "Accessibility",
+            "Lets Wispr Free paste your words into the app you're using.",
+        ),
+        Permission::InputMonitoring => (
+            2,
+            "Input Monitoring",
+            "Lets Wispr Free see your shortcut while another app is in front.",
+        ),
+    };
+    let allowed = access == Access::Granted;
+    PermissionCard {
+        permission: index,
+        name: name.to_owned(),
+        why: why.to_owned(),
+        access,
+        status: match access {
+            Access::Granted => "Allowed",
+            Access::Unknown => "Not allowed yet",
+            Access::Denied => "Not allowed",
+        }
+        .to_owned(),
+        // macOS asks about the microphone once, and an answer stands.
+        can_ask: match permission {
+            Permission::Microphone => access == Access::Unknown,
+            _ => !allowed,
+        },
+        can_open_pane: !allowed,
+        hint: if access == Access::Denied {
+            "Turn on Wispr Free in the list. If it's on already, turn it off and on again: macOS \
+             sees a rebuilt app as a new one."
+                .to_owned()
+        } else {
+            String::new()
+        },
+    }
+}
+
+/// A part the trial proves, and how it stands in words.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct CheckRow {
+    pub name: String,
+    pub check: Check,
+    pub label: String,
+}
+
+fn check_row(name: &str, check: Check) -> CheckRow {
+    let word = match check {
+        Check::Waiting => "not tried",
+        Check::Passed => "works",
+        Check::Failed => "failed",
+    };
+    CheckRow {
+        name: name.to_owned(),
+        check,
+        label: format!("{name}: {word}"),
+    }
+}
+
 /// All there is to show but the level.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SetupPage {
     pub steps: Vec<StepRow>,
     /// The step on show, as an index into `steps`.
     pub current: i32,
     /// Which page that is: 0 microphone, 1 keyboard and paste, 2 models, 3 trial.
     pub page: i32,
+    pub step: Step,
+    pub title: String,
+    pub sentence: String,
+    /// "Step 2 of 4", counting only the steps this walk has.
+    pub step_label: String,
+    pub can_go_back: bool,
     pub can_continue: bool,
-    pub continue_label: &'static str,
+    pub continue_label: String,
+    /// What this step asks to allow, in order.
+    pub permissions: Vec<PermissionCard>,
     pub microphone: Access,
     pub accessibility: Access,
     pub input_monitoring: Access,
     pub microphone_looked: bool,
     pub microphone_name: String,
+    /// The hardware's own line, whatever the permission says.
+    pub microphone_mark: Check,
+    pub microphone_line: String,
+    pub microphone_hint: String,
     /// Both allowed, and keys still don't arrive.
     pub keys_stuck: bool,
     pub models_ready: bool,
     pub shortcut: String,
-    pub trial: trial::View,
+    pub trial: TrialView,
+    /// What the trial proves, in order.
+    pub checks: Vec<CheckRow>,
 }
 
 /// One thing for the window to show now.
@@ -162,6 +259,15 @@ pub enum Shown {
 
 /// Where onboarding says what to show. Takes no calls back in.
 pub type View = Rc<dyn Fn(Shown)>;
+
+/// The hardware, as `pages` last heard it.
+fn hardware_of(pages: &Pages) -> Hardware {
+    match pages.microphones() {
+        None => Hardware::NotLookedYet,
+        Some(devices) if devices.is_empty() => Hardware::NoMicrophone,
+        Some(_) => Hardware::Microphone,
+    }
+}
 
 /// One open onboarding window. Dropping it stops everything the window started.
 pub struct Onboarding {
@@ -191,7 +297,12 @@ impl Onboarding {
         walk: Walk,
         on_done: Rc<dyn Fn()>,
     ) -> Rc<Self> {
-        let current = first_open(&walk.steps, &walk.facts);
+        // Pages that outlive a window already know the hardware, and won't say it for the first time.
+        let facts = Facts {
+            hardware: hardware_of(&pages),
+            ..walk.facts
+        };
+        let current = first_open(&walk.steps, &facts);
         let this = Rc::new(Self {
             pages,
             view,
@@ -200,7 +311,7 @@ impl Onboarding {
             steps: RefCell::new(walk.steps),
             current: Cell::new(current),
             moved: Cell::default(),
-            facts: Cell::new(walk.facts),
+            facts: Cell::new(facts),
             trial: RefCell::default(),
             keyless_looks: Cell::default(),
             recommended: Cell::default(),
@@ -328,11 +439,7 @@ impl Onboarding {
 
     /// The hardware, as this window last heard it.
     pub fn hardware(&self) -> Hardware {
-        match self.pages.microphones() {
-            None => Hardware::NotLookedYet,
-            Some(devices) if devices.is_empty() => Hardware::NoMicrophone,
-            Some(_) => Hardware::Microphone,
-        }
+        hardware_of(&self.pages)
     }
 
     /// The whole picture again, from a re-check.
@@ -409,7 +516,7 @@ impl Onboarding {
         settings.shortcuts.get(Action::PushToTalk).label(platform)
     }
 
-    fn trial_view(&self, facts: &Facts) -> trial::View {
+    fn trial_view(&self, facts: &Facts) -> TrialView {
         self.trial.borrow().view(facts, &self.shortcut())
     }
 
@@ -452,6 +559,7 @@ impl Onboarding {
             })
             .collect();
         let last = self.current.get() + 1 == steps.len();
+        let step_label = format!("Step {} of {}", self.current.get() + 1, steps.len());
         drop(steps);
         let continue_label = match (last, self.first_run) {
             (false, _) => "Continue",
@@ -464,21 +572,61 @@ impl Onboarding {
         let microphone_name = devices
             .and_then(|devices| devices.first().map(|device| device.name.clone()))
             .unwrap_or_default();
+        let step = self.step();
+        let card = |permission| permission_card(permission, permissions.get(permission));
+        let cards = match step {
+            Step::Microphone => vec![card(Permission::Microphone)],
+            Step::Keys => vec![
+                card(Permission::InputMonitoring),
+                card(Permission::Accessibility),
+            ],
+            Step::Models | Step::Trial => Vec::new(),
+        };
+        let no_microphone = microphone_looked && microphone_name.is_empty();
+        let checks = vec![
+            check_row("Shortcut", trial.keys),
+            check_row("Microphone", trial.microphone),
+            check_row("Models", trial.models),
+        ];
         (self.view)(Shown::Page(Box::new(SetupPage {
             steps: rows,
             current: self.current.get() as i32,
-            page: page_of(self.step()),
+            page: page_of(step),
+            step,
+            title: step.title().to_owned(),
+            sentence: step.sentence().to_owned(),
+            step_label,
+            can_go_back: self.current.get() > 0,
             can_continue: self.can_continue(),
-            continue_label,
+            continue_label: continue_label.to_owned(),
+            permissions: cards,
             microphone: permissions.microphone,
             accessibility: permissions.accessibility,
             input_monitoring: permissions.input_monitoring,
             microphone_looked,
+            microphone_mark: match (microphone_looked, no_microphone) {
+                (false, _) => Check::Waiting,
+                (true, true) => Check::Failed,
+                (true, false) => Check::Passed,
+            },
+            microphone_line: match (microphone_looked, no_microphone) {
+                (false, _) => "Looking for a microphone…".to_owned(),
+                (true, true) => "No microphone connected".to_owned(),
+                (true, false) => microphone_name.clone(),
+            },
+            microphone_hint: if no_microphone {
+                "This Mac has no input to listen to yet. Plug in a headset, a USB microphone or a \
+                 webcam, or connect AirPods. This page notices by itself."
+                    .to_owned()
+            } else {
+                String::new()
+            },
             microphone_name,
             keys_stuck: self.keyless_looks.get() >= STUCK_LOOKS,
             models_ready: facts.models == Models::Ready,
             shortcut: self.shortcut(),
             trial,
+            checks,
         })));
     }
 }

@@ -158,7 +158,12 @@ impl Rig {
     fn orders(&self) -> Vec<ShellEvent> {
         let events = self.drain().into_iter();
         events
-            .filter(|event| !matches!(event, ShellEvent::Pages { .. }))
+            .filter(|event| {
+                !matches!(
+                    event,
+                    ShellEvent::Pages { .. } | ShellEvent::Setup { .. } | ShellEvent::Recent { .. }
+                )
+            })
             .collect()
     }
 
@@ -619,7 +624,13 @@ fn settings_asked_for_during_onboarding_raises_onboarding_until_it_closes() {
     assert_eq!(
         rig.orders(),
         [
-            ShellEvent::Open {
+            ShellEvent::Close {
+                window: AppWindow::Settings
+            },
+            ShellEvent::OpenQuietly {
+                window: AppWindow::Onboarding
+            },
+            ShellEvent::Raise {
                 window: AppWindow::Onboarding
             },
             ShellEvent::Raise {

@@ -9,7 +9,7 @@ use super::steps::{Facts, Hardware};
 /// Below this a level is the room, not a voice reaching the app.
 const LEVEL_HEARD: f32 = 0.02;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, uniffi::Enum)]
 pub enum Check {
     #[default]
     Waiting,
@@ -17,7 +17,7 @@ pub enum Check {
     Failed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, uniffi::Enum)]
 pub enum Phase {
     #[default]
     Idle,
@@ -26,8 +26,8 @@ pub enum Phase {
 }
 
 /// What the step shows right now.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct View {
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TrialView {
     pub phase: Phase,
     pub keys: Check,
     pub microphone: Check,
@@ -111,7 +111,7 @@ impl Trial {
 
     /// Combines what the trial saw with what is true now: a shortcut that passed still fails if the
     /// app has since lost the keyboard.
-    pub fn view(&self, facts: &Facts, shortcut: &str) -> View {
+    pub fn view(&self, facts: &Facts, shortcut: &str) -> TrialView {
         let keys = if facts.keys_listening {
             self.keys
         } else {
@@ -124,7 +124,7 @@ impl Trial {
         };
         let passed = [keys, microphone, self.models] == [Check::Passed; 3];
         let (message, problem) = self.message(facts, keys, microphone, shortcut);
-        View {
+        TrialView {
             phase: self.phase,
             keys,
             microphone,
@@ -199,7 +199,7 @@ mod tests {
         }
     }
 
-    fn view(trial: &Trial) -> View {
+    fn view(trial: &Trial) -> TrialView {
         trial.view(&working(), "Fn")
     }
 

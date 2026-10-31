@@ -3,7 +3,14 @@
 
 use wf_platform::permissions::{Access, Permission, Permissions};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[uniffi::remote(Enum)]
+pub enum Access {
+    Granted,
+    Denied,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum Step {
     Microphone,
     Keys,
@@ -20,6 +27,16 @@ impl Step {
             Step::Keys => "Keyboard and paste",
             Step::Models => "Models",
             Step::Trial => "Try a dictation",
+        }
+    }
+
+    /// The one line under the title.
+    pub fn sentence(self) -> &'static str {
+        match self {
+            Step::Microphone => "Wispr Free needs a microphone it's allowed to listen to.",
+            Step::Keys => "Two permissions let Wispr Free hear your shortcut and paste your words.",
+            Step::Models => "Your words stay on this Mac, so the models that read them live here.",
+            Step::Trial => "One dictation shows that the whole chain works.",
         }
     }
 }

@@ -212,6 +212,7 @@ fn child_changes_every_setting() {
                 reports: reports_for_desktop,
             })
         })),
+        None,
         |settings, on_event| Dictation::start(parts_at(&paths, settings, on_event)),
     );
     let settled = || now(shell.pages_state()).unwrap().unwrap();

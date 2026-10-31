@@ -6,7 +6,9 @@
 //! `ax-walk` only reads and presses. What the result means is decided here.
 //!
 //! Settings is walked page by page. On each, a control is pressed the way an assistive tool would,
-//! and this process then reads what reached the disk.
+//! and this process then reads what reached the disk. Onboarding is walked step by step from
+//! launch, on a reset data root. Nothing here brings up a question from macOS: a rehearsal's
+//! permissions are made up, and a run that isn't a person's only logs what it would have asked.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -39,6 +41,7 @@ pub struct Node {
     pub role: String,
     pub identifier: String,
     pub title: String,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -61,6 +64,13 @@ impl Walk {
         self.windows
             .iter()
             .filter(|window| !window.identifier.is_empty())
+    }
+
+    /// The first control with this identifier, in any window a menu opens.
+    pub fn control(&self, identifier: &str) -> Option<&Node> {
+        self.opened()
+            .flat_map(|window| &window.nodes)
+            .find(|node| node.identifier == identifier)
     }
 }
 
@@ -102,9 +112,95 @@ pub const CONTRACTS: [Contract; 3] = [
         item: "Finish setup…",
         window: SETUP,
         title: SETUP,
-        labels: &["Back", "Continue"],
+        labels: &[
+            "Step 1 of 4",
+            "Allow Microphone access",
+            "Open System Settings for Microphone access",
+            "Continue",
+        ],
     },
 ];
+
+/// One step of a first run, in a rehearsal, whose permissions start out unasked and are answered
+/// at once. Nothing here reaches a real prompt: the app logs what it would have asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StepContract {
+    pub title: &'static str,
+    /// Controls that show on arrival.
+    pub labels: &'static [&'static str],
+    /// Pressed in order, each with what comes of it.
+    pub presses: &'static [(&'static str, Outcome)],
+}
+
+pub const STEPS: [StepContract; 4] = [
+    StepContract {
+        title: "Step 1 of 4",
+        labels: &[
+            "Allow Microphone access",
+            "Open System Settings for Microphone access",
+            "Microphone access: Not allowed yet",
+            "Built-in Microphone",
+        ],
+        presses: &[
+            (
+                "Open System Settings for Microphone access",
+                Outcome::Said("would open x-apple.systempreferences"),
+            ),
+            (
+                "Allow Microphone access",
+                Outcome::Said("would ask for Microphone"),
+            ),
+        ],
+    },
+    StepContract {
+        title: "Step 2 of 4",
+        labels: &[
+            "Back",
+            "Allow Input Monitoring",
+            "Allow Accessibility",
+            "Input Monitoring: Not allowed yet",
+            "Accessibility: Not allowed",
+        ],
+        presses: &[
+            (
+                "Allow Input Monitoring",
+                Outcome::Said("would ask for InputMonitoring"),
+            ),
+            (
+                "Allow Accessibility",
+                Outcome::Said("would ask for Accessibility"),
+            ),
+        ],
+    },
+    StepContract {
+        title: "Step 3 of 4",
+        labels: &[
+            "Back",
+            "Quality tier",
+            "Change models folder",
+            "Open folder",
+        ],
+        presses: &[],
+    },
+    StepContract {
+        title: "Step 4 of 4",
+        labels: &[
+            "Back",
+            "Finish",
+            "Try without the shortcut",
+            "Shortcut: not tried",
+            "Microphone: not tried",
+            "Models: not tried",
+        ],
+        presses: &[
+            ("Try without the shortcut", Outcome::Shows("Stop")),
+            ("Stop", Outcome::Shows("Heard")),
+        ],
+    },
+];
+
+/// What the trial has shown once the mouse has run it.
+const TRIED: [&str; 3] = ["Shortcut: failed", "Microphone: works", "Models: works"];
 
 /// What happens when a control is pressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,7 +209,7 @@ pub enum Outcome {
     Saved(&'static str),
     /// The app logs this.
     Said(&'static str),
-    /// A control with this identifier shows up.
+    /// A control with this identifier shows up, in the window pressed.
     Shows(&'static str),
     /// A file in the dev root comes to hold this.
     Landed(&'static str),
@@ -306,6 +402,15 @@ struct Run {
 
 impl Run {
     fn start(walker: &Path, items: &[&str], prefs: Option<&str>) -> anyhow::Result<Self> {
+        Self::start_with(walker, &["--rehearse", "--behind"], items, prefs)
+    }
+
+    fn start_with(
+        walker: &Path,
+        flags: &[&str],
+        items: &[&str],
+        prefs: Option<&str>,
+    ) -> anyhow::Result<Self> {
         let home = Home::new("ax-check")?;
         if let Some(prefs) = prefs {
             fs::write(home.0.join(DEV_ROOT).join("pill.toml"), prefs)?;
@@ -313,11 +418,8 @@ impl Run {
         let log = home.0.join("app.log");
         let elsewhere = home.0.join(DEV_ROOT).join(ELSEWHERE);
         fs::create_dir_all(&elsewhere)?;
-        let mut args = vec![
-            "--rehearse".to_owned(),
-            "--behind".to_owned(),
-            format!("--pick-folder={}", elsewhere.display()),
-        ];
+        let mut args: Vec<_> = flags.iter().map(|flag| (*flag).to_owned()).collect();
+        args.push(format!("--pick-folder={}", elsewhere.display()));
         args.extend(items.iter().map(|item| format!("--pick={item}")));
         let app = start_logging(&home.0, &args, &log)?;
         Ok(Self {
@@ -403,11 +505,11 @@ impl Run {
         Ok(())
     }
 
-    fn wait_for_control(&self, control: &str) -> anyhow::Result<()> {
+    fn wait_for_control(&self, window: &str, control: &str) -> anyhow::Result<()> {
         self.walk_until(|walk| {
-            let settings = walk.opened().find(|window| window.identifier == SETTINGS);
-            let found = settings
-                .is_some_and(|window| window.nodes.iter().any(|node| node.identifier == control));
+            let open = walk.opened().find(|open| open.identifier == window);
+            let found =
+                open.is_some_and(|open| open.nodes.iter().any(|node| node.identifier == control));
             if found {
                 Vec::new()
             } else {
@@ -417,12 +519,12 @@ impl Run {
         Ok(())
     }
 
-    fn press(&self, control: &str, outcome: Outcome) -> anyhow::Result<()> {
-        self.walker_does("press", &[SETTINGS, control])?;
+    fn press(&self, window: &str, control: &str, outcome: Outcome) -> anyhow::Result<()> {
+        self.walker_does("press", &[window, control])?;
         match outcome {
             Outcome::Saved(line) => self.wait_for_settings(line),
             Outcome::Said(line) => self.wait_to_say(line),
-            Outcome::Shows(control) => self.wait_for_control(control),
+            Outcome::Shows(control) => self.wait_for_control(window, control),
             Outcome::Landed(folder) => self.wait_for_file(folder),
         }
     }
@@ -485,7 +587,7 @@ fn check_the_pages(walker: &Path) -> anyhow::Result<()> {
             .walk_until(|walk| broken(&contract, walk, app))
             .with_context(|| page.title)?;
         for (control, outcome) in page.presses {
-            run.press(control, *outcome)
+            run.press(SETTINGS, control, *outcome)
                 .with_context(|| format!("{} {control}", page.title))?;
         }
         let nodes: usize = walk.opened().map(|window| window.nodes.len()).sum();
@@ -534,13 +636,132 @@ fn check_the_rule(walker: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A reset data root's first run, by itself from launch to the trial, pressed the way an assistive
+/// tool would. Continue does nothing until a step has what it needs.
+fn check_the_first_run(walker: &Path) -> anyhow::Result<()> {
+    let flags = ["--rehearse", "--behind", "--setup"];
+    let run = Run::start_with(walker, &flags, &[], None)?;
+    let app = run.pid();
+    for (place, step) in STEPS.iter().enumerate() {
+        let contract = Contract {
+            item: "",
+            window: SETUP,
+            title: SETUP,
+            labels: step.labels,
+        };
+        let walk = run
+            .walk_until(|walk| {
+                let mut problems = broken(&contract, walk, app);
+                if walk.control(step.title).is_none() {
+                    problems.push(format!("not on {}", step.title));
+                }
+                problems
+            })
+            .with_context(|| step.title)?;
+        // Only these have anything to wait for: a rehearsal's models are there.
+        if !step.presses.is_empty() && place + 1 < STEPS.len() {
+            ensure!(!can_continue(&walk), "{} lets the user on", step.title);
+        }
+        for (control, outcome) in step.presses {
+            run.press(SETUP, control, *outcome)
+                .with_context(|| format!("{} {control}", step.title))?;
+        }
+        if place + 1 < STEPS.len() {
+            let next = STEPS[place + 1].title;
+            run.walk_until(|walk| {
+                if can_continue(walk) {
+                    Vec::new()
+                } else {
+                    vec!["Continue stays off".to_owned()]
+                }
+            })
+            .with_context(|| step.title)?;
+            run.press(SETUP, "Continue", Outcome::Shows(next))
+                .with_context(|| step.title)?;
+        }
+        let nodes: usize = walk.opened().map(|window| window.nodes.len()).sum();
+        println!(
+            "{}: {} labels among {nodes} nodes, {} presses",
+            step.title,
+            step.labels.len(),
+            step.presses.len()
+        );
+    }
+    for label in TRIED {
+        run.wait_for_control(SETUP, label)?;
+    }
+    run.walker_does("close", &[SETUP])?;
+    run.wait_to_say(&format!("released {SETUP}"))?;
+    let settings = fs::read_to_string(run.root().join("settings.toml"))?;
+    ensure!(
+        !settings.contains("finished = true"),
+        "closing isn't finishing"
+    );
+    run.finish()?;
+    println!("{SETUP}: from launch to the trial, nothing asked of macOS");
+    Ok(())
+}
+
+fn can_continue(walk: &Walk) -> bool {
+    walk.control("Continue").is_some_and(|node| node.enabled)
+}
+
+/// A run with the real `permissions::check` under it, on a reset data root. It opens on all four
+/// steps, at the first the Mac leaves to do, and only ever reads: this run isn't a person's, so
+/// "Allow…" would stay a line in its log.
+fn check_a_real_look(walker: &Path) -> anyhow::Result<()> {
+    let run = Run::start_with(walker, &["--behind", "--setup"], &[], None)?;
+    let app = run.pid();
+    let walk = run.walk_until(|walk| {
+        let front = if walk.front_pid == app {
+            vec!["the app is in front".to_owned()]
+        } else {
+            Vec::new()
+        };
+        let on_a_step = walk
+            .opened()
+            .flat_map(|window| &window.nodes)
+            .any(|node| node.identifier.ends_with(" of 4"));
+        if on_a_step {
+            front
+        } else {
+            vec!["on no step of 4".to_owned()]
+        }
+    })?;
+    let steps = walk.opened().flat_map(|window| &window.nodes);
+    let step = steps
+        .map(|node| node.identifier.as_str())
+        .find(|identifier| identifier.ends_with(" of 4"));
+    run.finish()?;
+    println!(
+        "{SETUP}: opens at launch on what the Mac really says, at {}",
+        step.unwrap_or_default()
+    );
+    Ok(())
+}
+
+/// The models step shares its files with Settings, so a walk with that step closes it.
+fn check_settings_closes(walker: &Path) -> anyhow::Result<()> {
+    let [settings, _, setup] = CONTRACTS;
+    let run = Run::start(walker, &[settings.item, setup.item], None)?;
+    let app = run.pid();
+    run.walk_until(|walk| broken(&setup, walk, app))?;
+    run.wait_to_say(&format!("released {SETTINGS}"))?;
+    run.finish()?;
+    println!("{SETTINGS}: closes for the models step");
+    Ok(())
+}
+
 pub fn run() -> anyhow::Result<()> {
     let walker = build_walker()?;
     for contract in &CONTRACTS {
         check_a_window(&walker, contract).with_context(|| contract.window)?;
     }
     check_the_pages(&walker)?;
-    check_the_rule(&walker)
+    check_the_rule(&walker)?;
+    check_the_first_run(&walker)?;
+    check_a_real_look(&walker)?;
+    check_settings_closes(&walker)
 }
 
 /// `cargo xtask bundle --dev` built it too, so this is usually nothing.

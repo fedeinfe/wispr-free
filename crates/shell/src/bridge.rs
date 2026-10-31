@@ -4,13 +4,13 @@
 //! Every call returns a `Result`, because a panic in a call that can't throw is fatal in Swift.
 
 use std::any::Any;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
+use std::{env, io};
 
 use wf_audio::{AudioBackend as _, CpalBackend, InputDevice, sounds};
 use wf_core::dictation::PillInput;
@@ -24,9 +24,11 @@ use wf_platform::desktop;
 use wf_platform::keys::KeySignal;
 
 use crate::app_windows::{OpenWindows, WindowOrder};
-use crate::flow::{self, KeySlot, rank_first};
+use crate::flow::{self, KeyWatch, rank_first};
 use crate::memory;
 use crate::menus::{self, MenuAction, MenuEntry};
+use crate::onboarding::desk::{MachineHooks, MakeMachine, SetupCall, SetupDesk, SetupRecipe};
+use crate::onboarding::{DevMachine, Onboarding, SetupPage, SystemMachine};
 use crate::paths::{self, Paths};
 use crate::pill::{PillCore, PillFrame, Question, save_prefs};
 use crate::prefs::Prefs;
@@ -122,9 +124,21 @@ pub enum ShellEvent {
     Open {
         window: AppWindow,
     },
+    /// The same, but the user is at work in another app, which keeps the focus.
+    OpenQuietly {
+        window: AppWindow,
+    },
     /// This window is open: bring it forward.
     Raise {
         window: AppWindow,
+    },
+    /// Close this window if it's open, and say so as any close does.
+    Close {
+        window: AppWindow,
+    },
+    /// What onboarding shows now. Sent when it changes, and before its window opens.
+    Setup {
+        page: SetupPage,
     },
     /// A menu asked the app to quit. The app calls [`Shell::quit`] on its way out.
     QuitAsked,
@@ -242,7 +256,11 @@ impl Desktop for DevDesktop {
     }
 
     fn look_for_microphones(&self, mailbox: &Mailbox) {
-        self.system.look_for_microphones(mailbox);
+        if self.rehearsing.load(Ordering::SeqCst) {
+            rehearsal::report_microphones(mailbox);
+        } else {
+            self.system.look_for_microphones(mailbox);
+        }
     }
 }
 
@@ -253,6 +271,7 @@ pub type MakeDesktop = Box<dyn FnOnce() -> Rc<dyn Desktop> + Send>;
 struct PagesRecipe {
     paths: Paths,
     make_desktop: MakeDesktop,
+    make_machine: MakeMachine,
 }
 
 /// What the pill needs from the machine.
@@ -302,6 +321,8 @@ struct Board {
     by_hand: Arc<AtomicBool>,
     /// Nothing real is under this run, not even the machine the pages describe.
     rehearsing: Arc<AtomicBool>,
+    /// What onboarding last said about the setup. It says nothing on a run that doesn't watch.
+    setup_needed: Arc<AtomicBool>,
     /// Made when something first needs the pages, so an app that never opens Settings pays nothing.
     pages: OnceLock<Option<Desk>>,
     recipe: Mutex<Option<PagesRecipe>>,
@@ -329,6 +350,7 @@ impl Board {
             .take()?;
         let sink = Arc::clone(&self.sink);
         let levels = Arc::clone(&self.sink);
+        let board = Arc::downgrade(self);
         let parts = DeskParts {
             store: Arc::clone(&self.store),
             catalog: Arc::clone(&self.catalog),
@@ -342,10 +364,33 @@ impl Board {
             make_desktop: recipe.make_desktop,
             publish: Box::new(move |state| sink.on_event(ShellEvent::Pages { state })),
             level: Box::new(move |value| levels.on_event(ShellEvent::Level { value })),
+            setup: SetupRecipe {
+                make_machine: recipe.make_machine,
+                hooks: self.machine_hooks(),
+                front: Box::new(move |call| {
+                    if let Some(board) = board.upgrade() {
+                        board.setup_said(call);
+                    }
+                }),
+            },
         };
         Desk::start(parts)
             .inspect_err(|error| eprintln!("could not start the settings pages: {error}"))
             .ok()
+    }
+
+    fn machine_hooks(&self) -> MachineHooks {
+        let needed = Arc::clone(&self.setup_needed);
+        let (sink, quitting) = (Arc::clone(&self.sink), Arc::clone(&self.sink));
+        MachineHooks {
+            set_setup_needed: Box::new(move |setup| needed.store(setup, Ordering::SeqCst)),
+            close_settings: Box::new(move || {
+                sink.on_event(ShellEvent::Close {
+                    window: AppWindow::Settings,
+                });
+            }),
+            quit: Box::new(move || quitting.on_event(ShellEvent::QuitAsked)),
+        }
     }
 
     /// Runs `work` on the pages, after what was asked of them before.
@@ -355,8 +400,41 @@ impl Board {
         }
     }
 
+    /// Runs `work` on onboarding, after what was asked of it before.
+    fn setup_do(self: &Arc<Self>, work: impl FnOnce(&SetupDesk) + Send + 'static) {
+        if let Some(desk) = self.desk() {
+            desk.setup(work);
+        }
+    }
+
+    /// What onboarding asks of the app.
+    fn setup_said(&self, call: SetupCall) {
+        let window = AppWindow::Onboarding;
+        let event = match call {
+            SetupCall::Show(page) => ShellEvent::Setup { page: *page },
+            SetupCall::Level(value) => ShellEvent::Level { value },
+            SetupCall::Open => match self.lock_windows().ask(window) {
+                WindowOrder::Open(window) => ShellEvent::OpenQuietly { window },
+                WindowOrder::Raise(window) => ShellEvent::Raise { window },
+            },
+            SetupCall::Raise => ShellEvent::Raise { window },
+            SetupCall::Close => ShellEvent::Close { window },
+            SetupCall::Gone => return self.lock_windows().closed(window),
+        };
+        self.sink.on_event(event);
+    }
+
     /// Asks for `window`, so the rule decides what the app does about it.
     fn ask_for(self: &Arc<Self>, window: AppWindow) {
+        if window == AppWindow::Onboarding {
+            return self.open_setup();
+        }
+        // Its window may just have closed, and the pages' thread hears of that first.
+        if self.lock_windows().is_open(AppWindow::Onboarding)
+            && let Some(Some(desk)) = self.pages.get()
+        {
+            desk.ask();
+        }
         let order = self.lock_windows().ask(window);
         if order == WindowOrder::Open(AppWindow::Settings) {
             self.fill_pages();
@@ -365,6 +443,15 @@ impl Board {
             WindowOrder::Open(window) => ShellEvent::Open { window },
             WindowOrder::Raise(window) => ShellEvent::Raise { window },
         });
+    }
+
+    /// Whether there's anything to do is onboarding's to say. It has said by the time this returns,
+    /// so a request right after this one meets the window.
+    fn open_setup(self: &Arc<Self>) {
+        self.setup_do(SetupDesk::open);
+        if let Some(desk) = self.desk() {
+            desk.ask();
+        }
     }
 
     /// Looks again at what's slow to learn. Swift has the pages by the time this returns, so the
@@ -448,9 +535,26 @@ impl Board {
         }
     }
 
+    /// An open onboarding follows the flow for its trial. With none open nothing goes to the pages'
+    /// thread, which a dictation would otherwise wake for every level.
+    fn tell_setup(&self, event: &Event) {
+        let wanted = matches!(
+            event,
+            Event::Pill(_) | Event::Level(_) | Event::Trial(_) | Event::TrialFailed { .. }
+        );
+        if wanted
+            && self.lock_windows().is_open(AppWindow::Onboarding)
+            && let Some(Some(desk)) = self.pages.get()
+        {
+            let event = event.clone();
+            desk.setup(move |setup| setup.on_flow_event(&event));
+        }
+    }
+
     /// The pill hears of everything here, on the flow's thread, so what it shows never waits for
     /// Swift. The events still cross for whoever else wants them.
     fn deliver(&self, event: Event) {
+        self.tell_setup(&event);
         let event = match event {
             Event::Pill(state) => {
                 self.set_pill_state(state.clone());
@@ -480,7 +584,7 @@ impl Board {
             }
             Event::WordLearned(word) => return self.learn_word(&word),
             Event::Unloaded => return memory::release_freed(),
-            // Their windows bring them across: Onboarding the trials, Meetings its news.
+            // Onboarding heard of the trials above. Meetings' window brings its news across.
             Event::Trial(_)
             | Event::TrialFailed { .. }
             | Event::Inserted(_)
@@ -495,7 +599,6 @@ impl Board {
 pub struct Shell {
     board: Arc<Board>,
     dictation: Dictation,
-    keys: KeySlot,
 }
 
 impl Shell {
@@ -508,16 +611,18 @@ impl Shell {
         paths: Paths,
         start_flow: impl FnOnce(Settings, flow::OnEvent) -> Dictation,
     ) -> Arc<Self> {
-        Self::wired_with(store, sink, pill, paths, None, start_flow)
+        Self::wired_with(store, sink, pill, paths, None, None, start_flow)
     }
 
-    /// [`Shell::wired`] with the pages on `make_desktop`, for a test.
+    /// [`Shell::wired`] with the pages on `make_desktop` and onboarding on `make_machine`, for a
+    /// test.
     pub fn wired_with(
         store: SettingsStore,
         sink: Arc<dyn EventSink>,
         pill: PillParts,
         paths: Paths,
         make_desktop: Option<MakeDesktop>,
+        make_machine: Option<MakeMachine>,
         start_flow: impl FnOnce(Settings, flow::OnEvent) -> Dictation,
     ) -> Arc<Self> {
         let PillParts {
@@ -535,6 +640,7 @@ impl Shell {
             in_meeting: AtomicBool::new(false),
             by_hand: Arc::default(),
             rehearsing: Arc::default(),
+            setup_needed: Arc::default(),
             pages: OnceLock::new(),
             recipe: Mutex::default(),
             store: Arc::new(store),
@@ -560,16 +666,14 @@ impl Shell {
         );
         let _ = board.dictation.set(dictation.clone());
         let make_desktop = make_desktop.unwrap_or_else(|| dev_desktop(&board, &dictation));
+        let make_machine = make_machine.unwrap_or_else(|| dev_machine(&board, &dictation));
         *board.recipe.lock().unwrap_or_else(PoisonError::into_inner) = Some(PagesRecipe {
             paths,
             make_desktop,
+            make_machine,
         });
         list_microphones(Arc::downgrade(&board), microphones);
-        Arc::new(Self {
-            board,
-            dictation,
-            keys: KeySlot::default(),
-        })
+        Arc::new(Self { board, dictation })
     }
 }
 
@@ -588,6 +692,27 @@ fn dev_desktop(board: &Board, dictation: &Dictation) -> MakeDesktop {
             by_hand,
             rehearsing,
         })
+    })
+}
+
+/// Onboarding's way to the machine, with a dev run's limits on it.
+fn dev_machine(board: &Board, dictation: &Dictation) -> MakeMachine {
+    let by_hand = Arc::clone(&board.by_hand);
+    let rehearsing = Arc::clone(&board.rehearsing);
+    let dictation = dictation.clone();
+    Box::new(move |clock, hooks| {
+        let executable = env::current_exe().ok();
+        let bundle = executable.and_then(|path| desktop::bundle_of(&path));
+        let keys = KeyWatch::idle(&dictation, clock);
+        let system = SystemMachine {
+            bundle: bundle.unwrap_or_default(),
+            dictation,
+            keys,
+            set_setup_needed: hooks.set_setup_needed,
+            close_settings: hooks.close_settings,
+            quit: hooks.quit,
+        };
+        Rc::new(DevMachine::new(Rc::new(system), by_hand, rehearsing))
     })
 }
 
@@ -665,11 +790,17 @@ impl Shell {
         Ok(())
     }
 
-    /// Starts listening to the keyboard, and keeps trying while the OS refuses, with the pill
-    /// saying why. Only the app a person started may call this: it would race the real app.
+    /// Hands the run the real keys and the OS's questions, and starts onboarding's watch, which is
+    /// what starts the key listener once listening can't raise a question out of turn. Only the app
+    /// a person started may call this: it would race the real app.
     pub fn listen_to_keys(&self) -> Result<(), ShellError> {
         self.board.by_hand.store(true, Ordering::SeqCst);
-        flow::listen_until_allowed(&self.dictation, &self.keys);
+        self.watch_setup()
+    }
+
+    /// Opens onboarding if it's needed, and keeps watching what would bring it back.
+    pub fn watch_setup(&self) -> Result<(), ShellError> {
+        self.board.setup_do(SetupDesk::watch);
         Ok(())
     }
 
@@ -729,7 +860,8 @@ impl Shell {
 
     pub fn status_menu(&self, debug: bool) -> Result<Vec<MenuEntry>, ShellError> {
         let in_meeting = self.board.in_meeting.load(Ordering::SeqCst);
-        let setup_needed = !self.board.store.get().onboarding.finished;
+        let setup_needed = self.board.setup_needed.load(Ordering::SeqCst)
+            || !self.board.store.get().onboarding.finished;
         Ok(menus::status_menu(in_meeting, setup_needed, debug))
     }
 
@@ -766,7 +898,12 @@ impl Shell {
 
     /// `window` is closed and Swift has let go of it.
     pub fn window_closed(&self, window: AppWindow) -> Result<(), ShellError> {
-        self.board.lock_windows().closed(window);
+        if window == AppWindow::Onboarding {
+            // Onboarding keeps its own side of the rule, as it can close and open again by itself.
+            self.board.setup_do(SetupDesk::window_closed);
+        } else {
+            self.board.lock_windows().closed(window);
+        }
         if window == AppWindow::Settings {
             self.board.pages_do(Pages::window_closed);
         }
@@ -887,6 +1024,61 @@ impl Shell {
     pub fn remove_snippet(&self, index: u32) -> Result<(), ShellError> {
         self.board
             .pages_do(move |pages| pages.remove_snippet(index as usize));
+        Ok(())
+    }
+
+    /// What onboarding shows, or nothing with its window closed.
+    pub async fn steps(&self) -> Result<Option<SetupPage>, ShellError> {
+        Ok(self.board.desk().and_then(Desk::setup_page))
+    }
+
+    pub fn setup_back(&self) -> Result<(), ShellError> {
+        self.board
+            .setup_do(|setup| setup.with_window(Onboarding::back));
+        Ok(())
+    }
+
+    pub fn setup_continue(&self) -> Result<(), ShellError> {
+        self.board
+            .setup_do(|setup| setup.with_window(Onboarding::forward));
+        Ok(())
+    }
+
+    /// Brings up the OS's own question, on a run a person started. `index` is a card's `permission`.
+    pub fn ask_permission(&self, index: i32) -> Result<(), ShellError> {
+        self.board
+            .setup_do(move |setup| setup.with_window(|walk| walk.ask(index)));
+        Ok(())
+    }
+
+    pub fn open_permission_pane(&self, index: i32) -> Result<(), ShellError> {
+        self.board
+            .setup_do(move |setup| setup.with_window(|walk| walk.open_pane(index)));
+        Ok(())
+    }
+
+    pub fn reopen_app(&self) -> Result<(), ShellError> {
+        self.board
+            .setup_do(|setup| setup.with_window(Onboarding::reopen_app));
+        Ok(())
+    }
+
+    /// Starts a dictation with the mouse, for the trial step.
+    pub fn start_trial(&self) -> Result<(), ShellError> {
+        self.board
+            .setup_do(|setup| setup.with_window(Onboarding::try_with_mouse));
+        Ok(())
+    }
+
+    pub fn stop_trial(&self) -> Result<(), ShellError> {
+        self.board
+            .setup_do(|setup| setup.with_window(Onboarding::stop_trial));
+        Ok(())
+    }
+
+    /// Fetches what the settings use, one model at a time. It goes on after its window closes.
+    pub fn download_models_in_use(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::download_models_in_use);
         Ok(())
     }
 

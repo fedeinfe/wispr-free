@@ -79,6 +79,7 @@ final class FakeCore: WindowsCore {
     }
     func removeSnippet(index: UInt32) throws { calls.append("remove snippet \(index)") }
     func download(index: Int32) throws { calls.append("download \(index)") }
+    func downloadModelsInUse() throws { calls.append("download all") }
     func cancelDownload() throws { calls.append("cancel download") }
     func verify(index: Int32) throws { calls.append("verify \(index)") }
     func deleteModel(index: Int32) throws { calls.append("delete model \(index)") }
@@ -95,6 +96,13 @@ final class FakeCore: WindowsCore {
     func exportAll() throws { calls.append("export all") }
     func deleteAll() throws { calls.append("delete all") }
     func checkForUpdates() throws { calls.append("check for updates") }
+    func setupBack() throws { calls.append("back") }
+    func setupContinue() throws { calls.append("continue") }
+    func askPermission(index: Int32) throws { calls.append("ask \(index)") }
+    func openPermissionPane(index: Int32) throws { calls.append("open pane \(index)") }
+    func reopenApp() throws { calls.append("reopen") }
+    func startTrial() throws { calls.append("start trial") }
+    func stopTrial() throws { calls.append("stop trial") }
 }
 
 /// A stage that shows nothing and records the order of things.
@@ -105,7 +113,8 @@ final class StageRecord {
     var stage: WindowStage {
         WindowStage(
             activate: { [self] in steps.append("activate") },
-            order: { [self] in steps.append("order \($0.identifier?.rawValue ?? "")") })
+            order: { [self] in steps.append("order \($0.identifier?.rawValue ?? "")") },
+            orderQuietly: { [self] in steps.append("quietly \($0.identifier?.rawValue ?? "")") })
     }
 }
 

@@ -17,6 +17,7 @@ fn node(identifier: &str) -> Node {
         role: "AXButton".to_owned(),
         identifier: identifier.to_owned(),
         title: String::new(),
+        enabled: true,
     }
 }
 

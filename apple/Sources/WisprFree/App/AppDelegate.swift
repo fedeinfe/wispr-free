@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: StatusItem?
     private var editor: SettingsEditor?
     private var pages: SettingsPages?
+    private var walk: SetupWalk?
     private var windows: Windows?
     /// Picks run in the order they were made.
     private var picking: Task<Void, Never>?
@@ -72,8 +73,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.editor = editor
         let pages = SettingsPages(core: shell)
         self.pages = pages
+        let walk = SetupWalk(core: shell)
+        self.walk = walk
         windows = Windows(
-            core: shell, editor: editor, pages: pages, stage: options.behind ? .behind : .front)
+            core: shell, editor: editor, pages: pages, walk: walk,
+            stage: options.behind ? .behind : .front)
         if options.byHand, editor.settings.general.showInDock {
             showInDock(true)
         }
@@ -96,6 +100,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyOptions(to shell: Shell) throws {
         if options.byHand {
             try shell.listenToKeys()
+        } else if options.watchesSetup {
+            try shell.watchSetup()
         }
         if let name = options.pillState, let state = pillStateNamed(name: name) {
             try shell.stage(scene: .state(state: state))
@@ -127,8 +133,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
             case .open(let window):
                 windows?.open(window)
+            case .openQuietly(let window):
+                windows?.openQuietly(window)
             case .raise(let window):
                 windows?.raise(window)
+            case .close(let window):
+                windows?.close(window)
+            case .setup(let page):
+                walk?.adopt(page)
             case .settingsChanged(let current):
                 editor?.adopt(current)
             case .pages(let state):
@@ -146,6 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func followLevels() async {
         for await level in events.levels {
             pages?.hear(level: level)
+            walk?.hear(level: level)
         }
     }
 
@@ -155,7 +168,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.pages?.ask { try $0.folderPicked(folder: folder) }
         }
         if options.byHand {
-            FolderPanel.ask(from: start, over: windows?.window(.settings), answer: answer)
+            // The models step asks too, and that step closed Settings.
+            let over = windows?.window(.settings) ?? windows?.window(.onboarding)
+            FolderPanel.ask(from: start, over: over, answer: answer)
         } else if let folder = options.pickFolder {
             answer(folder)
         } else {

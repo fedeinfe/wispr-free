@@ -1,8 +1,29 @@
 import Foundation
+import Synchronization
 import Testing
 import WfCore
 
 @testable import WisprFree
+
+/// The folders this run made up. Each is gone when the run ends, and no other folder is touched: a
+/// test can't remove its own, as the shell it started may still write there. A run that crashes
+/// leaves its folders behind.
+private enum MadeFolders {
+    private static let folders = Mutex<[URL]>([])
+    private static let removedAtExit: Void = {
+        atexit {
+            for folder in MadeFolders.folders.withLock({ $0 }) {
+                try? FileManager.default.removeItem(at: folder)
+            }
+        }
+    }()
+
+    static func keep(_ folder: URL) -> URL {
+        _ = removedAtExit
+        folders.withLock { $0.append(folder) }
+        return folder
+    }
+}
 
 /// `Shell` through the generated Swift, on the real flow in a temp folder. Nothing here starts a
 /// dictation, touches the clipboard or shows a window.
@@ -17,7 +38,8 @@ struct Rig {
     }
 
     static func temporaryFolder() -> URL {
-        FileManager.default.temporaryDirectory.appending(path: "wf-bridge-\(UUID().uuidString)")
+        MadeFolders.keep(
+            FileManager.default.temporaryDirectory.appending(path: "wf-bridge-\(UUID().uuidString)"))
     }
 
     static func paths(in folder: URL) -> Paths {

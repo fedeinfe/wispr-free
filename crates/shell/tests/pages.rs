@@ -152,6 +152,7 @@ impl Rig {
             pill,
             paths.clone(),
             Some(Box::new(move || Rc::new(FakeDesktop(desktop)))),
+            None,
             |settings, on_event| {
                 flow = Some(Arc::clone(&on_event));
                 Dictation::start(parts_at(&paths, settings, on_event))

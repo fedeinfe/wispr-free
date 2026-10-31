@@ -3,7 +3,7 @@ import SwiftUI
 import WfCore
 
 /// What the windows need of Rust, so that they can run on a fake. Each window adds its own.
-protocol WindowsCore: SettingsCore {
+protocol WindowsCore: SettingsCore, OnboardingCore {
     func windowClosed(window: AppWindow) throws
 }
 
@@ -14,15 +14,18 @@ final class Windows {
     private let core: any WindowsCore
     private let editor: SettingsEditor
     private let pages: SettingsPages
+    private let walk: SetupWalk
     private let stage: WindowStage
     private var controllers: [AppWindow: WindowController] = [:]
 
     init(
-        core: any WindowsCore, editor: SettingsEditor, pages: SettingsPages, stage: WindowStage
+        core: any WindowsCore, editor: SettingsEditor, pages: SettingsPages, walk: SetupWalk,
+        stage: WindowStage
     ) {
         self.core = core
         self.editor = editor
         self.pages = pages
+        self.walk = walk
         self.stage = stage
     }
 
@@ -36,10 +39,22 @@ final class Windows {
         stage.bringForward(controller.window)
     }
 
+    /// For when the user is at work in another app, which keeps the focus.
+    func openQuietly(_ window: AppWindow) {
+        let controller = controller(for: window)
+        controllers[window] = controller
+        stage.orderQuietly(controller.window)
+    }
+
     func raise(_ window: AppWindow) {
         if let controller = controllers[window] {
             stage.bringForward(controller.window)
         }
+    }
+
+    /// Goes the way the close button does, so Rust hears of it the same way.
+    func close(_ window: AppWindow) {
+        controllers[window]?.window.close()
     }
 
     private func controller(for window: AppWindow) -> WindowController {
@@ -56,7 +71,8 @@ final class Windows {
                 shape: MeetingsView.shape, content: MeetingsView(), onClose: onClose)
         case .onboarding:
             return WindowController(
-                shape: OnboardingView.shape, content: OnboardingView(), onClose: onClose)
+                shape: OnboardingView.shape,
+                content: OnboardingView(walk: walk, editor: editor, pages: pages), onClose: onClose)
         }
     }
 

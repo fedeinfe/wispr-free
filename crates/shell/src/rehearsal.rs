@@ -62,6 +62,11 @@ pub fn report_machine(mailbox: &Mailbox) {
         summary: "10 CPU cores · 16.0 GB RAM · Sample GPU (Metal)".to_owned(),
         recommended: PipelineTier::Balanced,
     });
+    report_microphones(mailbox);
+}
+
+/// Onboarding looks again and again, and a rehearsal hears of no real device.
+pub fn report_microphones(mailbox: &Mailbox) {
     let device = |id: &str, name: &str| InputDevice {
         id: id.to_owned(),
         name: name.to_owned(),

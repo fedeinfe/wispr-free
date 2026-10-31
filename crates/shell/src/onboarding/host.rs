@@ -65,6 +65,8 @@ struct Shared<W> {
     open: RefCell<Option<W>>,
     timer: Box<dyn Timer>,
     models: Cell<Models>,
+    /// The timer is looking, which starts at launch or with the first window.
+    watching: Cell<bool>,
     /// What was broken when the user closed the window. Only something new reopens it.
     dismissed: RefCell<Vec<Step>>,
     blocked: RefCell<Option<String>>,
@@ -82,6 +84,7 @@ impl<W: OnboardingWindow + 'static> OnboardingHost<W> {
                 open: RefCell::default(),
                 timer,
                 models: Cell::new(models),
+                watching: Cell::default(),
                 dismissed: RefCell::default(),
                 blocked: RefCell::default(),
             }),
@@ -127,9 +130,19 @@ impl<W: OnboardingWindow + 'static> OnboardingHost<W> {
 
     /// At launch: opens what is needed, then keeps watching.
     pub fn start(&self) -> Result<(), String> {
+        self.watch();
         self.shared.models.set(self.shared.parts.models());
         if !steps_to_show(self.finished(), &self.facts()).is_empty() {
             self.open(Opening::Foreground)?;
+        }
+        self.look();
+        Ok(())
+    }
+
+    /// Before any window opens: opening is what sets the faster rate.
+    fn watch(&self) {
+        if self.shared.watching.replace(true) {
+            return;
         }
         let host = self.weak();
         self.shared.timer.every(
@@ -140,8 +153,6 @@ impl<W: OnboardingWindow + 'static> OnboardingHost<W> {
                 }
             }),
         );
-        self.look();
-        Ok(())
     }
 
     /// Opens the window on what needs doing. The tray comes here too, so there's always a way back
@@ -154,6 +165,7 @@ impl<W: OnboardingWindow + 'static> OnboardingHost<W> {
             }
             return Ok(());
         }
+        self.watch();
         self.shared.models.set(self.shared.parts.models());
         let finished = self.finished();
         let facts = self.facts();

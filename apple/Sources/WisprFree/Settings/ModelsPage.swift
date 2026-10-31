@@ -10,7 +10,7 @@ struct ModelsPage: View {
     var body: some View {
         SettingsForm(page: .models, editor: editor, pages: pages) {
             computer
-            folder
+            ModelsFolderSection(pages: pages)
             ErrorLine(text: state.modelError)
             downloaded
             available
@@ -30,7 +30,48 @@ struct ModelsPage: View {
         }
     }
 
-    private var folder: some View {
+    private var downloadedRows: [ModelRow] { state.models.filter(\.installed) }
+    private var availableRows: [ModelRow] { state.models.filter { !$0.installed } }
+
+    private var downloaded: some View {
+        Section {
+            if downloadedRows.isEmpty {
+                Text(state.nothingDownloaded).foregroundStyle(.secondary)
+            }
+            ForEach(downloadedRows, id: \.index) { row in
+                ModelLine(row: row, pages: pages)
+            }
+        } header: {
+            Text("Downloaded")
+        } footer: {
+            Text(state.downloadedSummary)
+        }
+    }
+
+    @ViewBuilder private var available: some View {
+        if !availableRows.isEmpty {
+            Section {
+                ForEach(availableRows, id: \.index) { row in
+                    ModelLine(row: row, pages: pages)
+                }
+            } header: {
+                Text("Available")
+            } footer: {
+                Text(
+                    "Downloads start only when you ask, and every file is checked against its SHA-256."
+                )
+            }
+        }
+    }
+}
+
+/// Where the models live, and what's asked and running about that. Onboarding has it too.
+struct ModelsFolderSection: View {
+    let pages: SettingsPages
+
+    private var state: PagesState { pages.state }
+
+    var body: some View {
         Section {
             FolderLine(path: state.modelsFolder) {
                 Button("Open folder") { pages.ask { try $0.openModelsFolder() } }
@@ -97,40 +138,6 @@ struct ModelsPage: View {
             }
             Button("Cancel") { pages.ask { try $0.cancelMove() } }
                 .accessibilityIdentifier("Cancel moving models")
-        }
-    }
-
-    private var downloadedRows: [ModelRow] { state.models.filter(\.installed) }
-    private var availableRows: [ModelRow] { state.models.filter { !$0.installed } }
-
-    private var downloaded: some View {
-        Section {
-            if downloadedRows.isEmpty {
-                Text(state.nothingDownloaded).foregroundStyle(.secondary)
-            }
-            ForEach(downloadedRows, id: \.index) { row in
-                ModelLine(row: row, pages: pages)
-            }
-        } header: {
-            Text("Downloaded")
-        } footer: {
-            Text(state.downloadedSummary)
-        }
-    }
-
-    @ViewBuilder private var available: some View {
-        if !availableRows.isEmpty {
-            Section {
-                ForEach(availableRows, id: \.index) { row in
-                    ModelLine(row: row, pages: pages)
-                }
-            } header: {
-                Text("Available")
-            } footer: {
-                Text(
-                    "Downloads start only when you ask, and every file is checked against its SHA-256."
-                )
-            }
         }
     }
 }

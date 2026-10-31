@@ -524,6 +524,208 @@ fn a_first_run_opens_on_the_microphone_in_front_and_looks_like_every_step() {
 }
 
 #[test]
+fn a_step_says_what_it_is_and_where_it_stands() {
+    let harness = Harness::new(NOT_ASKED);
+    harness.start();
+
+    let page = harness.setup();
+    assert_eq!(page.step, Step::Microphone);
+    assert_eq!(page.title, "Microphone");
+    assert!(!page.sentence.is_empty());
+    assert_eq!(page.step_label, "Step 1 of 4");
+    assert!(!page.can_go_back);
+    assert_eq!(page.microphone_line, "Looking for a microphone…");
+    assert_eq!(page.microphone_mark, Check::Waiting);
+    assert_eq!(page.microphone_hint, "");
+
+    harness.microphones(&[]);
+    let page = harness.setup();
+    assert_eq!(page.microphone_line, "No microphone connected");
+    assert_eq!(page.microphone_mark, Check::Failed);
+    assert!(page.microphone_hint.contains("Plug in a headset"));
+
+    harness.microphones(&["AirPods"]);
+    let page = harness.setup();
+    assert_eq!(page.microphone_line, "AirPods");
+    assert_eq!(page.microphone_mark, Check::Passed);
+    assert_eq!(page.microphone_hint, "");
+}
+
+#[test]
+fn a_later_step_counts_from_where_the_walk_is() {
+    let harness = Harness::new(Permissions {
+        microphone: Access::Granted,
+        ..NOT_ASKED
+    });
+    harness.start();
+    harness.microphones(&["USB mic"]);
+
+    let page = harness.setup();
+    assert_eq!(page.step_label, "Step 2 of 4");
+    assert!(page.can_go_back);
+}
+
+#[test]
+fn a_fix_counts_only_the_steps_that_broke() {
+    let harness = Harness::finished();
+    harness.machine.permissions.set(Permissions {
+        microphone: Access::Denied,
+        ..GRANTED
+    });
+
+    harness.start();
+
+    assert_eq!(harness.setup().step_label, "Step 1 of 1");
+}
+
+#[test]
+fn a_permission_says_how_it_stands_and_what_can_be_done() {
+    let harness = Harness::new(NOT_ASKED);
+    harness.start();
+
+    let page = harness.setup();
+    let [microphone] = page.permissions.as_slice() else {
+        panic!("{:?}", page.permissions);
+    };
+    assert_eq!(microphone.name, "Microphone access");
+    assert_eq!(microphone.status, "Not allowed yet");
+    assert!(microphone.can_ask && microphone.can_open_pane);
+    assert_eq!(microphone.hint, "");
+
+    harness.set_permissions(Permissions {
+        microphone: Access::Denied,
+        ..NOT_ASKED
+    });
+    let page = harness.setup();
+    let microphone = &page.permissions[0];
+    assert_eq!(microphone.status, "Not allowed");
+    assert!(!microphone.can_ask, "the OS won't ask twice");
+    assert!(microphone.can_open_pane);
+    assert!(microphone.hint.contains("Turn on Wispr Free"));
+
+    harness.set_permissions(Permissions {
+        microphone: Access::Granted,
+        ..NOT_ASKED
+    });
+    let page = harness.setup();
+    let microphone = &page.permissions[0];
+    assert_eq!(microphone.status, "Allowed");
+    assert!(!microphone.can_ask && !microphone.can_open_pane);
+}
+
+#[test]
+fn the_keyboard_step_shows_its_two_permissions_and_a_denied_one_can_still_ask() {
+    let harness = Harness::new(Permissions {
+        microphone: Access::Granted,
+        ..NOT_ASKED
+    });
+    harness.start();
+    harness.microphones(&["USB mic"]);
+
+    let page = harness.setup();
+    let names: Vec<_> = page
+        .permissions
+        .iter()
+        .map(|card| card.name.as_str())
+        .collect();
+    assert_eq!(names, ["Input Monitoring", "Accessibility"]);
+    let accessibility = &page.permissions[1];
+    assert_eq!(accessibility.access, Access::Denied);
+    assert!(accessibility.can_ask, "macOS's own list comes up again");
+}
+
+#[test]
+fn the_models_and_trial_steps_ask_for_no_permission() {
+    let harness = Harness::new(GRANTED);
+    harness.start();
+    harness.microphones(&["USB mic"]);
+    assert_eq!(harness.step(), Step::Models);
+    assert!(harness.setup().permissions.is_empty());
+
+    harness.install_models(Tier::Balanced);
+    harness.host.look();
+    harness.click("Continue");
+    assert_eq!(harness.step(), Step::Trial);
+    assert!(harness.setup().permissions.is_empty());
+}
+
+#[test]
+fn the_trial_names_each_part_in_words() {
+    let harness = Harness::new(GRANTED);
+    harness.reach_the_trial();
+    let labels = |harness: &Harness| -> Vec<String> {
+        harness
+            .setup()
+            .checks
+            .into_iter()
+            .map(|row| row.label)
+            .collect()
+    };
+    assert_eq!(
+        labels(&harness),
+        [
+            "Shortcut: not tried",
+            "Microphone: not tried",
+            "Models: not tried"
+        ]
+    );
+
+    harness.pass_the_trial();
+
+    assert_eq!(
+        labels(&harness),
+        ["Shortcut: works", "Microphone: works", "Models: works"]
+    );
+}
+
+/// The window is up before anything else at launch, and it keeps the faster rate from then on.
+#[test]
+fn it_looks_every_second_with_the_window_open_and_every_five_with_it_closed() {
+    let harness = Harness::new(NOT_ASKED);
+    harness.start();
+    let looks = |harness: &Harness| harness.machine.key_refreshes.borrow().len();
+    let before = looks(&harness);
+
+    harness.clock.advance(Duration::from_millis(3100));
+    assert_eq!(looks(&harness), before + 3);
+
+    harness.host.close();
+    let closed = looks(&harness);
+    harness.clock.advance(Duration::from_millis(4900));
+    assert_eq!(looks(&harness), closed);
+    harness.clock.advance(Duration::from_millis(200));
+    assert_eq!(looks(&harness), closed + 1);
+}
+
+#[test]
+fn a_window_opened_with_no_start_still_looks() {
+    let harness = Harness::new(NOT_ASKED);
+    harness.host.open(Opening::Foreground).unwrap();
+    let before = harness.machine.key_refreshes.borrow().len();
+
+    harness.clock.advance(Duration::from_millis(1100));
+
+    assert_eq!(harness.machine.key_refreshes.borrow().len(), before + 1);
+}
+
+#[test]
+fn a_window_a_lost_permission_opens_looks_every_second_too() {
+    let harness = Harness::finished();
+    harness.start();
+    harness.machine.permissions.set(Permissions {
+        input_monitoring: Access::Denied,
+        ..GRANTED
+    });
+    harness.clock.advance(Duration::from_millis(5100));
+    assert!(harness.host.is_open());
+    let before = harness.machine.key_refreshes.borrow().len();
+
+    harness.clock.advance(Duration::from_millis(2100));
+
+    assert_eq!(harness.machine.key_refreshes.borrow().len(), before + 2);
+}
+
+#[test]
 fn a_finished_user_with_everything_working_never_sees_it() {
     let harness = Harness::finished();
 

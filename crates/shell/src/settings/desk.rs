@@ -19,6 +19,8 @@ use super::page::SettingsPage;
 use super::state::{Folded, PagesState};
 use super::{Desktop, Pages, Paths, SettingsParts, Shown};
 use crate::clock::{Clock, Timer};
+use crate::onboarding::SetupPage;
+use crate::onboarding::desk::{SetupDesk, SetupRecipe};
 
 /// How long quitting waits for the pages to let go. A job past that dies with the process, and its
 /// `.part` file stays for next time.
@@ -27,9 +29,11 @@ const STOP_LIMIT: Duration = Duration::from_secs(2);
 const ASK_LIMIT: Duration = Duration::from_secs(10);
 
 type Work = Box<dyn FnOnce(&Pages) + Send>;
+type SetupWork = Box<dyn FnOnce(&SetupDesk) + Send>;
 
 enum Order {
     Work(Work),
+    Setup(SetupWork),
     /// Other threads have reported something.
     Drain,
     /// Something else changed the settings.
@@ -52,6 +56,7 @@ pub struct DeskParts {
     pub publish: Box<dyn Fn(PagesState) + Send>,
     /// Runs on the thread with the microphone test's level.
     pub level: Box<dyn Fn(f32) + Send>,
+    pub setup: SetupRecipe,
 }
 
 /// The thread with the pages. Dropping this stops it.
@@ -76,6 +81,20 @@ impl Desk {
     /// Runs `work` on the pages, after everything sent before it.
     pub fn work(&self, work: impl FnOnce(&Pages) + Send + 'static) {
         let _ = self.orders.send(Order::Work(Box::new(work)));
+    }
+
+    /// Runs `work` on onboarding, after everything sent before it.
+    pub fn setup(&self, work: impl FnOnce(&SetupDesk) + Send + 'static) {
+        let _ = self.orders.send(Order::Setup(Box::new(work)));
+    }
+
+    /// What onboarding shows, once it has done all it was told. `None` with no window open.
+    pub fn setup_page(&self) -> Option<SetupPage> {
+        let (reply, answer) = mpsc::channel();
+        self.setup(move |setup| {
+            let _ = reply.send(setup.page());
+        });
+        answer.recv_timeout(ASK_LIMIT).ok().flatten()
     }
 
     /// Says the settings moved. The pages show their own changes, so they don't hear of those.
@@ -130,6 +149,7 @@ fn run(parts: DeskParts, inbox: &Receiver<Order>, wake: Sender<Order>) {
         make_desktop,
         publish,
         level,
+        setup,
     } = parts;
     let folded = Rc::new(RefCell::new(Folded::new(page)));
     let view = {
@@ -141,23 +161,25 @@ fn run(parts: DeskParts, inbox: &Receiver<Order>, wake: Sender<Order>) {
             folded.borrow_mut().take(shown);
         })
     };
-    let clock = DeskClock::default();
+    let clock = Rc::new(DeskClock::default());
+    let settings = SettingsParts {
+        store,
+        catalog,
+        desktop: make_desktop(),
+        // The store's watcher tells the rest of the run.
+        on_change: Rc::new(|_| {}),
+        paths,
+        platform,
+    };
     let pages = Pages::new(
-        SettingsParts {
-            store,
-            catalog,
-            desktop: make_desktop(),
-            // The store's watcher tells the rest of the run.
-            on_change: Rc::new(|_| {}),
-            paths,
-            platform,
-        },
+        settings.clone(),
         view,
-        &clock,
+        clock.as_ref(),
         Arc::new(move || {
             let _ = wake.send(Order::Drain);
         }),
     );
+    let setup = SetupDesk::new(setup, settings, Rc::clone(&pages), clock.clone());
 
     let mut shown = None;
     let send_out = |shown: &mut Option<PagesState>| {
@@ -185,6 +207,7 @@ fn run(parts: DeskParts, inbox: &Receiver<Order>, wake: Sender<Order>) {
         for order in std::iter::once(order).chain(inbox.try_iter()) {
             match order {
                 Order::Work(work) => guarded(|| work(&pages)),
+                Order::Setup(work) => guarded(|| work(&setup)),
                 Order::Drain => guarded(|| pages.drain_events()),
                 Order::Follow => guarded(|| pages.follow()),
                 Order::Page(page) => folded.borrow_mut().set_page(page),
@@ -193,6 +216,8 @@ fn run(parts: DeskParts, inbox: &Receiver<Order>, wake: Sender<Order>) {
                     let _ = reply.send(folded.borrow().state());
                 }
                 Order::Stop(done) => {
+                    // An open onboarding holds the pages too.
+                    drop(setup);
                     drop(pages);
                     if let Some(done) = done {
                         let _ = done.send(());
@@ -201,19 +226,23 @@ fn run(parts: DeskParts, inbox: &Receiver<Order>, wake: Sender<Order>) {
                 }
             }
         }
+        // A steady stream of orders, as a dictation sends, never lets the wait above time out.
+        clock.fire_due();
         send_out(&mut shown);
     }
 }
 
 enum Fire {
     Once(Box<dyn FnOnce()>),
-    Every(Duration, Box<dyn FnMut()>),
+    Every(Box<dyn FnMut()>),
 }
 
 #[derive(Default)]
 struct Alarm {
     due: Option<Instant>,
     fire: Option<Fire>,
+    /// Set while a repeating alarm goes on, which it still does while it's firing.
+    interval: Option<Duration>,
 }
 
 type Slot = Rc<RefCell<Alarm>>;
@@ -257,14 +286,13 @@ impl DeskClock {
             // Out of the borrow: what fires may set the same timer again.
             match fire {
                 Some(Fire::Once(fire)) => guarded(fire),
-                Some(Fire::Every(interval, mut fire)) => {
+                Some(Fire::Every(mut fire)) => {
                     guarded(&mut fire);
                     let mut alarm = slot.borrow_mut();
-                    if alarm.fire.is_none() {
-                        *alarm = Alarm {
-                            due: Some(Instant::now() + interval),
-                            fire: Some(Fire::Every(interval, fire)),
-                        };
+                    // What it fired may have stopped it, or started something else on this timer.
+                    if let (None, Some(interval)) = (&alarm.fire, alarm.interval) {
+                        alarm.due = Some(Instant::now() + interval);
+                        alarm.fire = Some(Fire::Every(fire));
                     }
                 }
                 None => {}
@@ -281,19 +309,25 @@ impl Timer for DeskTimer {
         *self.0.borrow_mut() = Alarm {
             due: Some(Instant::now() + delay),
             fire: Some(Fire::Once(fire)),
+            interval: None,
         };
     }
 
     fn every(&self, interval: Duration, fire: Box<dyn FnMut()>) {
         *self.0.borrow_mut() = Alarm {
             due: Some(Instant::now() + interval),
-            fire: Some(Fire::Every(interval, fire)),
+            fire: Some(Fire::Every(fire)),
+            interval: Some(interval),
         };
     }
 
     fn set_interval(&self, interval: Duration) {
-        if let Some(Fire::Every(period, _)) = &mut self.0.borrow_mut().fire {
-            *period = interval;
+        let mut alarm = self.0.borrow_mut();
+        if alarm.interval.is_some() {
+            alarm.interval = Some(interval);
+            if alarm.due.is_some() {
+                alarm.due = Some(Instant::now() + interval);
+            }
         }
     }
 
@@ -398,6 +432,50 @@ mod tests {
         timer.stop();
         fire_after_due(&clock);
         assert_eq!(seen.get(), 2);
+    }
+
+    #[test]
+    fn a_new_rate_counts_from_now_and_not_from_the_old_alarm() {
+        let clock = DeskClock::default();
+        let timer = clock.timer();
+        let (count, seen) = counter();
+
+        timer.every(LATER, Box::new(move || count.set(count.get() + 1)));
+        timer.set_interval(SOON);
+        fire_after_due(&clock);
+
+        assert_eq!(seen.get(), 1);
+    }
+
+    /// Onboarding opens from inside its own look, and that's what asks for the faster rate.
+    #[test]
+    fn a_repeating_alarm_can_change_its_rate_and_stop_itself_while_it_fires() {
+        let clock = DeskClock::default();
+        let timer: Rc<dyn Timer> = Rc::from(clock.timer());
+        let (count, seen) = counter();
+
+        let weak = Rc::downgrade(&timer);
+        timer.every(
+            SOON,
+            Box::new(move || {
+                count.set(count.get() + 1);
+                if let Some(timer) = weak.upgrade() {
+                    match count.get() {
+                        1 => timer.set_interval(LATER),
+                        _ => timer.stop(),
+                    }
+                }
+            }),
+        );
+        fire_after_due(&clock);
+        assert!(clock.next_due().unwrap() > Instant::now() + LATER / 2);
+        fire_after_due(&clock);
+        assert_eq!(seen.get(), 1, "the new rate holds");
+
+        timer.set_interval(SOON);
+        fire_after_due(&clock);
+        assert_eq!(seen.get(), 2);
+        assert_eq!(clock.next_due(), None, "it stopped itself");
     }
 
     #[test]

@@ -15,7 +15,7 @@ private struct WindowsRig {
         core = FakeCore(settings: try await defaultSettings())
         windows = Windows(
             core: core, editor: try SettingsEditor(core: core), pages: SettingsPages(core: core),
-            stage: record.stage)
+            walk: SetupWalk(core: core), stage: record.stage)
     }
 }
 
@@ -47,6 +47,49 @@ private struct HoldingView: View {
         #expect(rig.record.steps.suffix(2) == ["activate", "order Meetings"])
         #expect(rig.windows.window(.meetings) === window)
         rig.windows.window(.meetings)?.close()
+    }
+
+    /// The user is at work in another app, which keeps the focus.
+    @Test func aQuietWindowAsksForNoFocus() async throws {
+        let rig = try await WindowsRig()
+
+        rig.windows.openQuietly(.onboarding)
+
+        #expect(rig.record.steps == ["quietly Set up Wispr Free"])
+        #expect(rig.windows.window(.onboarding) != nil)
+        rig.windows.window(.onboarding)?.close()
+    }
+
+    @Test func aRunBehindKeepsAQuietWindowBehindToo() {
+        _ = NSApplication.shared
+        let window = NSWindow(
+            contentRect: NSRect(x: -20000, y: 0, width: 100, height: 100),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+
+        WindowStage.behind.orderQuietly(window)
+
+        #expect(window.isVisible)
+        #expect(!NSApp.isActive)
+        window.close()
+    }
+
+    @Test func closingFromRustGoesTheWayTheCloseButtonDoes() async throws {
+        let rig = try await WindowsRig()
+        rig.windows.open(.settings)
+
+        rig.windows.close(.settings)
+
+        #expect(rig.core.closed == [.settings])
+        #expect(rig.windows.window(.settings) == nil)
+    }
+
+    @Test func closingAWindowThatIsNotOpenDoesNothing() async throws {
+        let rig = try await WindowsRig()
+
+        rig.windows.close(.onboarding)
+
+        #expect(rig.core.closed.isEmpty)
     }
 
     @Test func raisingAClosedWindowDoesNothing() async throws {
@@ -163,5 +206,12 @@ private struct HoldingView: View {
         #expect(options.behind)
         #expect(options.picks == ["Finish setup…", "Settings…"])
         #expect(options.windowShots == "/tmp/x")
+    }
+
+    /// A launch window comes forward, so a run with nobody at the Mac has to be behind.
+    @Test func onlyARunBehindMayWatchTheSetup() {
+        #expect(LaunchOptions(arguments: ["app", "--setup", "--behind"]).watchesSetup)
+        #expect(!LaunchOptions(arguments: ["app", "--setup"]).watchesSetup)
+        #expect(!LaunchOptions(arguments: ["app", "--behind"]).watchesSetup)
     }
 }

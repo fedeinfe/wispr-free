@@ -24,6 +24,7 @@ protocol SettingsCore: AnyObject {
     func editSnippet(index: UInt32, row: Snippet) throws
     func removeSnippet(index: UInt32) throws
     func download(index: Int32) throws
+    func downloadModelsInUse() throws
     func cancelDownload() throws
     func verify(index: Int32) throws
     func deleteModel(index: Int32) throws
