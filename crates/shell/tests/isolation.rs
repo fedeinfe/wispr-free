@@ -4,6 +4,7 @@
 //! `HOME` is a temp folder. Anything that falls back to the real root lands in that folder's
 //! `wispr-free`, seeded here with files that would show it, and the user's own stays out of reach
 //! even when the code is wrong.
+#![cfg(target_os = "macos")]
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -39,7 +40,11 @@ fn seed_real_root(home: &Path) {
     fs::write(root.join("pill.toml"), "edge = \"left\"\nsounds = false\n").unwrap();
     fs::write(root.join("history.sqlite3"), "canary").unwrap();
     fs::write(root.join("media-note.json"), "canary").unwrap();
-    fs::write(root.join("meetings/2026-01-01-canary/meeting.json"), "canary").unwrap();
+    fs::write(
+        root.join("meetings/2026-01-01-canary/meeting.json"),
+        "canary",
+    )
+    .unwrap();
     fs::write(root.join("models/canary.gguf"), "canary").unwrap();
 }
 
@@ -151,10 +156,7 @@ fn child_starts_saves_and_quits() {
     let shell = now(Shell::start(dev_paths().unwrap(), sink)).unwrap();
 
     let current = shell.settings().unwrap();
-    assert!(
-        current.settings.general.show_pill,
-        "read the real settings"
-    );
+    assert!(current.settings.general.show_pill, "read the real settings");
     let mut changed = current.settings.clone();
     changed.style.dictionary.push("dev-only-word".to_owned());
     let saved = now(Arc::clone(&shell).save(changed, current.revision)).unwrap();
@@ -226,7 +228,11 @@ fn child_is_refused_unclear_paths() {
         return;
     }
     let safe = dev_paths().unwrap();
-    let climbing = safe.settings.parent().unwrap().join("../wispr-free/settings.toml");
+    let climbing = safe
+        .settings
+        .parent()
+        .unwrap()
+        .join("../wispr-free/settings.toml");
     for path in [PathBuf::new(), "settings.toml".into(), climbing] {
         let paths = Paths {
             settings: path.clone(),

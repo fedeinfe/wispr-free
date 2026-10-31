@@ -13,16 +13,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { await start() }
     }
 
+    /// Replies through the run loop, not the main actor: when `terminate` is called from a block on
+    /// the main queue, its modal loop runs inside that block, and the queue never gets to anything
+    /// else.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let shell else { return .terminateNow }
-        Task {
+        Task.detached {
             do {
                 try await shell.quit()
                 log("shell closed")
             } catch {
                 log("quitting failed: \(error)")
             }
-            sender.reply(toApplicationShouldTerminate: true)
+            RunLoop.main.perform(inModes: [.common]) {
+                MainActor.assumeIsolated {
+                    NSApp.reply(toApplicationShouldTerminate: true)
+                }
+            }
         }
         return .terminateLater
     }
@@ -47,8 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         source.resume()
         terminateSignal = source
     }
+}
 
-    private func log(_ text: String) {
-        FileHandle.standardError.write(Data("\(text)\n".utf8))
-    }
+private nonisolated func log(_ text: String) {
+    FileHandle.standardError.write(Data("\(text)\n".utf8))
 }

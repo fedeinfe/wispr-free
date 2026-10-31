@@ -43,9 +43,13 @@ pub struct Versioned {
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum SaveOutcome {
-    Saved { current: Versioned },
+    Saved {
+        current: Versioned,
+    },
     /// Something else saved first. Nothing changed: apply the edit to `current` and save again.
-    Stale { current: Versioned },
+    Stale {
+        current: Versioned,
+    },
 }
 
 /// What the app gets told. Delivered on the flow's threads.

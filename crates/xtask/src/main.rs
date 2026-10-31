@@ -23,8 +23,8 @@
 use std::process::ExitCode;
 
 use anyhow::{Context as _, bail};
-use xtask::{bridge, bundle};
 use xtask::eval::{self, Report, RulesOnly, TARGET};
+use xtask::{bridge, bundle};
 
 fn main() -> anyhow::Result<ExitCode> {
     let mut args = std::env::args().skip(1);

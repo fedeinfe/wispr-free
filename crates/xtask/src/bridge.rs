@@ -17,6 +17,7 @@ const LIBRARY: &str = "libwf_shell.a";
 /// Each UniFFI namespace, with the crate that sets it up.
 const NAMESPACES: [&str; 2] = ["wfshell", "wfsettings"];
 const LINK_NOTE: &str = "native-static-libs: ";
+const ENGINE_MEMBERS: [&str; 3] = ["llama", "whisper", "sherpa"];
 /// Linked into every program anyway.
 const IMPLICIT_LIBRARIES: [&str; 4] = ["System", "c", "m", "objc"];
 
@@ -49,6 +50,16 @@ pub fn link_list(messages: &str) -> Option<Vec<String>> {
     needed.sort();
     needed.dedup();
     Some(needed)
+}
+
+/// The members of an archive, as `ar t` lists them, that come from an engine. `cargo tree` can't
+/// see this: `cargo build --workspace` unifies features and leaves a library of the same name
+/// with every engine in it. `nm` can't either, as it fails on rustc's objects.
+pub fn engine_members(members: &str) -> Vec<&str> {
+    members
+        .lines()
+        .filter(|member| ENGINE_MEMBERS.iter().any(|name| member.contains(name)))
+        .collect()
 }
 
 /// What `Package.swift` doesn't list of `needed`.
@@ -97,7 +108,10 @@ pub fn build() -> anyhow::Result<()> {
             Some("h") => &headers,
             _ => continue,
         };
-        fs::copy(&path, folder.join(path.file_name().context("a generated file")?))?;
+        fs::copy(
+            &path,
+            folder.join(path.file_name().context("a generated file")?),
+        )?;
     }
     fs::write(headers.join("module.modulemap"), modulemap())?;
     make_xcframework(&library, &headers)
@@ -106,7 +120,14 @@ pub fn build() -> anyhow::Result<()> {
 /// On its own, or cargo would hand it the features of everything else and with them every engine.
 fn build_library() -> anyhow::Result<PathBuf> {
     let (_, messages) = tool("cargo")
-        .args(["rustc", "--release", "--locked", "--package", SHELL, "--lib"])
+        .args([
+            "rustc",
+            "--release",
+            "--locked",
+            "--package",
+            SHELL,
+            "--lib",
+        ])
         .args(["--", "--print", "native-static-libs"])
         .env(DEPLOYMENT_TARGET, DEV.minimum_macos)
         .current_dir(workspace_root())
@@ -119,7 +140,15 @@ fn build_library() -> anyhow::Result<PathBuf> {
     let package = fs::read_to_string(apple_dir().join("Package.swift"))?;
     let missing = unlisted(&needed, &package);
     ensure!(missing.is_empty(), "Package.swift doesn't list {missing:?}");
-    Ok(target_dir().join("release").join(LIBRARY))
+    let library = target_dir().join("release").join(LIBRARY);
+    let members = tool("ar").arg("t").arg(&library).text()?;
+    let linked = engine_members(&members);
+    ensure!(
+        linked.is_empty(),
+        "{SHELL} holds {} of an engine",
+        linked.len()
+    );
+    Ok(library)
 }
 
 /// Works from the library's own metadata. It has to run inside the workspace: it calls `cargo

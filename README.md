@@ -28,6 +28,13 @@ cargo build -p wf-engine-host
 cargo run -p wispr-free
 ```
 
+The Swift app is coming in beside it. Neither of these touches the installed app or its data.
+
+```sh
+cargo xtask bridge                    # makes what apple/ needs from Rust, then `swift test --package-path apple` works
+cargo xtask bundle --dev              # builds target/Wispr Free Dev.app, with its own id and its own data folder
+```
+
 ## License
 
 MIT for this project's code.

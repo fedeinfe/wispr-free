@@ -1,5 +1,6 @@
 //! `Shell` as Swift uses it, on the real flow with no key listener and no microphone. Nothing here
 //! starts a dictation.
+#![cfg(target_os = "macos")]
 
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, Sender};

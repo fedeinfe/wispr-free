@@ -412,7 +412,7 @@ pub(crate) fn workspace_root() -> PathBuf {
     fs::canonicalize(&root).unwrap_or(root)
 }
 
-pub(crate) fn target_dir() -> PathBuf {
+pub fn target_dir() -> PathBuf {
     std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| workspace_root().join("target"), Into::into)
 }
 
@@ -426,11 +426,7 @@ fn assemble(target: &Path, signer: &Signer) -> anyhow::Result<PathBuf> {
     render_icon(target, &layout.resources.join(format!("{ICON}.icns")))?;
 
     fs::copy(&binary, &layout.binary)?;
-    let linked = otool(&layout.binary)?;
-    ensure!(
-        rpath_libraries(&linked).is_empty() && foreign_libraries(&linked).is_empty(),
-        "the app should link macOS alone: {linked}"
-    );
+    links_macos_alone(&layout.binary)?;
     for package in [EXECUTABLE, SHELL] {
         let tree = cargo_tree(package)?;
         let engines = engines_in(&tree);
@@ -450,14 +446,13 @@ fn assemble_dev(target: &Path, signer: &Signer) -> anyhow::Result<PathBuf> {
     compile_icon(&layout.resources, target)?;
 
     fs::copy(products.join(SWIFT_EXECUTABLE), &layout.binary)?;
-    let linked = otool(&layout.binary)?;
-    ensure!(
-        rpath_libraries(&linked).is_empty() && foreign_libraries(&linked).is_empty(),
-        "the app should link macOS alone: {linked}"
-    );
+    links_macos_alone(&layout.binary)?;
     for entry in fs::read_dir(&products)? {
         let path = entry?.path();
-        if path.extension().is_some_and(|extension| extension == "bundle") {
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "bundle")
+        {
             let name = path.file_name().context("a resource bundle")?;
             tool("ditto")
                 .arg(&path)
@@ -467,6 +462,15 @@ fn assemble_dev(target: &Path, signer: &Signer) -> anyhow::Result<PathBuf> {
     }
     finish(&app, &DEV, &host, signer)?;
     Ok(app)
+}
+
+fn links_macos_alone(binary: &Path) -> anyhow::Result<()> {
+    let linked = otool(binary)?;
+    ensure!(
+        rpath_libraries(&linked).is_empty() && foreign_libraries(&linked).is_empty(),
+        "the app should link macOS alone: {linked}"
+    );
+    Ok(())
 }
 
 /// The folders of a bundle, made fresh, with its plist in place.
@@ -708,7 +712,10 @@ impl Tool {
         self
     }
 
-    pub(crate) fn args(&mut self, args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>) -> &mut Self {
+    pub(crate) fn args(
+        &mut self,
+        args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>,
+    ) -> &mut Self {
         self.0.args(args);
         self
     }
