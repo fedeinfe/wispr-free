@@ -40,3 +40,7 @@ Decisions the spec didn't cover:
 - `xtask` still verifies with `--verify --deep --strict`. `--deep` there only checks more. Signing never uses it.
 - The helper still links AppKit through `wf-platform`, and never calls it. That's no worse than the old host, but it falls short of "no toolkit" until `wf-dictation` stops depending on `wf-platform`'s UI side. It has no process tap import, so it needs no weak CoreAudio link.
 - `GLOSSARY.md` and ADR-0005 still say a host is the app's own binary, and ADR-0005 says there's nothing extra to sign. The spec leaves both to ticket 15. The README lines ticket 15 cites as 28 and 30 have moved down, see `grep -n Slint README.md`.
+
+### 2026-10-31, correction from the integrator
+
+The installed app's exit at 02:12:27 wasn't caused by the suite. The system log shows an AppKit `sendAction:` on its main thread 25 ms before a voluntary exit, so it was quit from its menu. `pkill` in `real_dictation.rs` is scoped with `-P` to the test's own children, and pid 40460 was the app's own engine host going down with it.
