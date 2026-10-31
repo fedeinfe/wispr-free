@@ -5,6 +5,8 @@
 mod clock;
 #[path = "support/memory_cap.rs"]
 mod memory_cap;
+#[path = "support/seen.rs"]
+mod seen;
 
 use std::any::Any;
 use std::cell::{Cell, Ref, RefCell};
@@ -25,13 +27,12 @@ use wf_core::shortcut::{Action, Bindings, Combo, KeyEvent, Platform};
 use wf_models::{Catalog, ModelStore};
 use wf_platform::keys::KeySignal;
 use wf_shell::settings::Event;
-use wf_shell::settings::rows::{LanguageRow, MicrophoneLine, ModelRow, ShortcutRow};
+use wf_shell::settings::rows::ModelRow;
 use wf_shell::settings::values::SettingsValues;
-use wf_shell::settings::{
-    Desktop, Facts, Mailbox, Pages, Paths, RECORDING_IDLE_LIMIT, SettingsParts, Shown,
-};
+use wf_shell::settings::{Desktop, Mailbox, Pages, Paths, RECORDING_IDLE_LIMIT, SettingsParts};
 
 use clock::ManualClock;
+use seen::Seen;
 
 /// Well above what these tests use, far below what would hurt.
 const MEMORY_LIMIT_MB: u64 = 1024;
@@ -120,103 +121,6 @@ impl FakeDesktop {
             .borrow()
             .as_ref()
             .is_some_and(|guard| Rc::strong_count(guard) > 1)
-    }
-}
-
-/// What the pages show, as a window would hold it.
-#[derive(Clone, Default)]
-struct Seen {
-    facts: Option<Facts>,
-    notice: String,
-    values: SettingsValues,
-    vad_forced: bool,
-    shortcuts: Vec<ShortcutRow>,
-    recording_action: i32,
-    recording_keys: String,
-    shortcut_error: String,
-    microphones: Vec<MicrophoneLine>,
-    microphone_auto: bool,
-    microphone_testing: bool,
-    microphone_level: f32,
-    microphone_error: String,
-    languages_auto: bool,
-    languages: Vec<LanguageRow>,
-    dictionary: Vec<String>,
-    replacements: Vec<Replacement>,
-    snippets: Vec<Snippet>,
-    hardware_summary: String,
-    recommended_tier: String,
-    models: Vec<ModelRow>,
-    models_in_use_summary: String,
-    downloaded_summary: String,
-    asr_options: Vec<String>,
-    vad_options: Vec<String>,
-    llm_options: Vec<String>,
-    model_busy: bool,
-    model_error: String,
-    models_folder: String,
-    models_folder_custom: bool,
-    models_folder_missing: bool,
-    pending_folder: String,
-    pending_summary: String,
-    moving_models: bool,
-    move_progress: f32,
-    data_status: String,
-}
-
-impl Seen {
-    fn take(&mut self, shown: Shown) {
-        match shown {
-            Shown::Facts(facts) => self.facts = Some(facts),
-            Shown::Notice(text) => self.notice = text,
-            Shown::Values(values) => self.values = *values,
-            Shown::VadForced(forced) => self.vad_forced = forced,
-            Shown::Shortcuts(rows) => self.shortcuts = rows,
-            Shown::RecordingAction(index) => self.recording_action = index,
-            Shown::RecordingKeys(keys) => self.recording_keys = keys,
-            Shown::ShortcutError(error) => self.shortcut_error = error,
-            Shown::Microphones(lines) => self.microphones = lines,
-            Shown::MicrophoneAuto(auto) => self.microphone_auto = auto,
-            Shown::MicrophoneTesting(testing) => self.microphone_testing = testing,
-            Shown::MicrophoneLevel(level) => self.microphone_level = level,
-            Shown::MicrophoneError(error) => self.microphone_error = error,
-            Shown::LanguagesAuto(auto) => self.languages_auto = auto,
-            Shown::Languages(rows) => self.languages = rows,
-            Shown::Dictionary(words) => self.dictionary = words,
-            Shown::Replacements(change) => change.apply(&mut self.replacements),
-            Shown::Snippets(change) => change.apply(&mut self.snippets),
-            Shown::HardwareSummary(summary) => self.hardware_summary = summary,
-            Shown::RecommendedTier(tier) => self.recommended_tier = tier,
-            Shown::Models(change) => change.apply(&mut self.models),
-            Shown::ModelsInUseSummary(summary) => self.models_in_use_summary = summary,
-            Shown::DownloadedSummary(summary) => self.downloaded_summary = summary,
-            Shown::ModelMenus { asr, vad, llm } => {
-                self.asr_options = asr;
-                self.vad_options = vad;
-                self.llm_options = llm;
-            }
-            Shown::ModelBusy(busy) => self.model_busy = busy,
-            Shown::ModelError(error) => self.model_error = error,
-            Shown::ModelsFolder(folder) => self.models_folder = folder,
-            Shown::ModelsFolderCustom(custom) => self.models_folder_custom = custom,
-            Shown::ModelsFolderMissing(missing) => self.models_folder_missing = missing,
-            Shown::PendingFolder(folder) => self.pending_folder = folder,
-            Shown::PendingSummary(summary) => self.pending_summary = summary,
-            Shown::MovingModels(moving) => self.moving_models = moving,
-            Shown::MoveProgress(fraction) => self.move_progress = fraction,
-            Shown::DataStatus(status) => self.data_status = status,
-        }
-    }
-
-    /// The pages filter the list of models this way.
-    fn downloaded_models(&self) -> Vec<ModelRow> {
-        let rows = self.models.iter().filter(|row| row.installed);
-        rows.cloned().collect()
-    }
-
-    fn available_models(&self) -> Vec<ModelRow> {
-        let rows = self.models.iter().filter(|row| !row.installed);
-        rows.cloned().collect()
     }
 }
 
@@ -318,13 +222,7 @@ impl Harness {
     }
 
     fn open_on(&mut self, parts: SettingsParts) {
-        // Each window starts from what its .slint defaults to.
-        *self.seen.borrow_mut() = Seen {
-            recording_action: -1,
-            microphone_auto: true,
-            languages_auto: true,
-            ..Seen::default()
-        };
+        *self.seen.borrow_mut() = Seen::new();
         let seen = Rc::clone(&self.seen);
         let view = Rc::new(move |shown| seen.borrow_mut().take(shown));
         self.pages = Some(Pages::new(parts, view, &self.clock, Arc::new(|| {})));
