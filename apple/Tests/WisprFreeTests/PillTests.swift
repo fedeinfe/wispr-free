@@ -335,7 +335,7 @@ struct PillRig {
             items.filter { $0.keyEquivalentModifierMask == .command }.map(\.keyEquivalent))
         #expect(keys.isSuperset(of: [",", "w", "z", "x", "c", "v", "a"]))
 
-        let settings = try? #require(items.first { $0.keyEquivalent == "," })
+        let settings = items.first { $0.keyEquivalent == "," }
         settings?.menu?.performActionForItem(at: 0)
 
         #expect(opened == 1)
