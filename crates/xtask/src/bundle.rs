@@ -22,8 +22,8 @@ pub struct Flavor {
     name: &'static str,
     id: &'static str,
     pub minimum_macos: &'static str,
-    /// `actool` made the icon, so the plist can name it.
-    icon_name: bool,
+    /// `actool` made the icon and the accent colour, so the plist can name them.
+    asset_catalogue: bool,
 }
 
 pub const SLINT: Flavor = Flavor {
@@ -31,7 +31,7 @@ pub const SLINT: Flavor = Flavor {
     name: "Wispr Free",
     id: BUNDLE_ID,
     minimum_macos: MINIMUM_MACOS,
-    icon_name: false,
+    asset_catalogue: false,
 };
 
 /// The Swift app until the cutover. Its id keeps it apart from the app the user dictates with.
@@ -40,7 +40,7 @@ pub const DEV: Flavor = Flavor {
     name: "Wispr Free Dev",
     id: "com.wispr-free.app.dev",
     minimum_macos: "26.0",
-    icon_name: true,
+    asset_catalogue: true,
 };
 
 const BUNDLE_ID: &str = "com.wispr-free.app";
@@ -51,7 +51,7 @@ const ENGINE_HOST_ID: &str = "com.wispr-free.wf-engine-host";
 const SWIFT_EXECUTABLE: &str = "WisprFree";
 const SHELL: &str = "wf-shell";
 /// This is a shared Mac.
-const SWIFT_JOBS: &str = "6";
+pub(crate) const SWIFT_JOBS: &str = "6";
 /// The crates ADR-0005 keeps out of everything but the engine host.
 const ENGINES: [&str; 3] = ["llama-cpp-2", "whisper-rs", "sherpa-onnx"];
 const HELPERS: &str = "Contents/Helpers";
@@ -59,6 +59,8 @@ const FRAMEWORKS: &str = "Contents/Frameworks";
 const ICON: &str = "AppIcon";
 const ICON_SOURCE: &str = "crates/app/ui/icons/app-icon.svg";
 const SWIFT_ICON: &str = "AppIcon.icon";
+const ASSETS: &str = "Assets.xcassets";
+const ACCENT: &str = "AccentColor";
 /// The oldest macOS the spec supports. Ticket 15's weak CoreAudio link is what makes it true.
 const MINIMUM_MACOS: &str = "13.0";
 const IDENTITY: &str = "Wispr Free Local";
@@ -98,8 +100,11 @@ pub fn info_plist(flavor: &Flavor, version: &str) -> String {
         minimum_macos,
         ..
     } = flavor;
-    let icon_name = if flavor.icon_name {
-        format!("\n    <key>CFBundleIconName</key>\n    <string>{ICON}</string>")
+    let icon_name = if flavor.asset_catalogue {
+        format!(
+            "\n    <key>CFBundleIconName</key>\n    <string>{ICON}</string>\n    \
+             <key>NSAccentColorName</key>\n    <string>{ACCENT}</string>"
+        )
     } else {
         String::new()
     };
@@ -443,7 +448,7 @@ fn assemble_dev(target: &Path, signer: &Signer) -> anyhow::Result<PathBuf> {
     let products = swift_build()?;
     let app = target.join(DEV.app);
     let layout = Layout::new(&app, &DEV)?;
-    compile_icon(&layout.resources, target)?;
+    compile_assets(&layout.resources, target)?;
 
     fs::copy(products.join(SWIFT_EXECUTABLE), &layout.binary)?;
     links_macos_alone(&layout.binary)?;
@@ -537,16 +542,20 @@ fn swift_build() -> anyhow::Result<PathBuf> {
     Ok(PathBuf::from(products.trim()))
 }
 
-/// Makes `Assets.car` and the `.icns` for older parts of the system.
-fn compile_icon(resources: &Path, target: &Path) -> anyhow::Result<()> {
+/// Makes `Assets.car`, with the icon and the accent colour, and the `.icns` for older parts of the
+/// system.
+fn compile_assets(resources: &Path, target: &Path) -> anyhow::Result<()> {
+    let apple = bridge::apple_dir();
     tool("xcrun")
         .arg("actool")
-        .arg(bridge::apple_dir().join(SWIFT_ICON))
+        .arg(apple.join(SWIFT_ICON))
+        .arg(apple.join(ASSETS))
         .arg("--compile")
         .arg(resources)
         .args(["--platform", "macosx", "--target-device", "mac"])
         .args(["--minimum-deployment-target", DEV.minimum_macos])
-        .args(["--app-icon", ICON, "--output-partial-info-plist"])
+        .args(["--app-icon", ICON, "--accent-color", ACCENT])
+        .arg("--output-partial-info-plist")
         .arg(target.join("wf-bridge/icon.plist"))
         .succeed()
 }

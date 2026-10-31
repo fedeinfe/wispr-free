@@ -200,6 +200,12 @@ fn the_dev_plist_names_its_own_app_on_the_swift_floor() {
     assert!(minimum.trim_start().starts_with("<string>26.0</string>"));
     let icon = plist.split("<key>CFBundleIconName</key>").nth(1).unwrap();
     assert!(icon.trim_start().starts_with("<string>AppIcon</string>"));
+    let accent = plist.split("<key>NSAccentColorName</key>").nth(1).unwrap();
+    assert!(
+        accent
+            .trim_start()
+            .starts_with("<string>AccentColor</string>")
+    );
     let no_dock = plist.split("<key>LSUIElement</key>").nth(1).unwrap();
     assert!(no_dock.trim_start().starts_with("<true/>"));
 }
@@ -212,6 +218,7 @@ fn the_default_bundle_stays_the_slint_app() {
     assert_eq!(DEV.app, "Wispr Free Dev.app");
     assert!(plist.contains("<string>Wispr Free</string>"));
     assert!(!plist.contains("CFBundleIconName"));
+    assert!(!plist.contains("NSAccentColorName"));
     let minimum = plist
         .split("<key>LSMinimumSystemVersion</key>")
         .nth(1)

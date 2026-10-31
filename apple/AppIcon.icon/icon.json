@@ -1,1 +1,11 @@
-{"fill":{"automatic-gradient":"display-p3:0.2,0.4,0.9,1"},"groups":[{"layers":[{"image-name":"mark.svg","name":"mark"}]}],"supported-platforms":{"squares":["macOS"]}}
+{
+  "fill": {
+    "linear-gradient": ["srgb:0.0902,0.5647,0.5412,1", "srgb:0.0431,0.3529,0.3294,1"],
+    "orientation": { "start": { "x": 0.5, "y": 0 }, "stop": { "x": 0.5, "y": 1 } }
+  },
+  "groups": [
+    { "layers": [{ "image-name": "bars.svg", "name": "bars" }] },
+    { "layers": [{ "image-name": "capsule.svg", "name": "capsule" }] }
+  ],
+  "supported-platforms": { "squares": ["macOS"] }
+}
