@@ -1,90 +1,18 @@
 //! Lets every pill state be reached by hand: the tray's "Debug pill" menu (always in debug builds,
-//! with `--debug-pill` in release) and `--pill-state`. `--probe-clip` runs the whole app on a
-//! recording instead of the mic and keyboard.
+//! with `--debug-pill` in release) and `--pill-state`.
 
 use std::cell::{Cell, RefCell};
-use std::io::{BufRead, stdin};
-use std::path::Path;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::thread;
 use std::time::{Duration, Instant};
 
 use slint::{Timer, TimerMode};
-use wf_core::audio::AudioClip;
-use wf_core::dictation::PillInput;
 use wf_core::pill::{PillState, Sound};
-use wf_dictation::probe::{ClipMicrophone, NoContext, NoMedia, TextLog, read_wav};
-use wf_dictation::{Dictation, Parts};
 
 use crate::mic_levels::MicLevels;
 use crate::pill::PillController;
 use crate::{PillLook, Tray};
 
 const LEVEL_POLL: Duration = Duration::from_millis(150);
-const PROBE_POLL: Duration = Duration::from_millis(5);
-
-/// The app with a recording for a mic and a log for the focused app, so it can be measured beside
-/// someone working: it opens no device, watches no keys and pastes nowhere. Each `dictate` on stdin
-/// dictates the recording once and prints the text. `quit` or the end of stdin quits.
-pub struct ClipRun {
-    clip: AudioClip,
-    microphone: Arc<ClipMicrophone>,
-    log: TextLog,
-}
-
-impl ClipRun {
-    /// Parses `--probe-clip=<16 kHz mono WAV>`.
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        let path = args
-            .iter()
-            .find_map(|arg| arg.strip_prefix("--probe-clip="))?;
-        let clip = read_wav(Path::new(path)).expect("the probe clip is readable");
-        Some(Self {
-            microphone: Arc::new(ClipMicrophone::new(clip.clone(), true)),
-            clip,
-            log: TextLog::default(),
-        })
-    }
-
-    pub fn fit(&self, parts: &mut Parts) {
-        let log = self.log.clone();
-        parts.microphone = Arc::clone(&self.microphone) as _;
-        parts.context = Arc::new(NoContext);
-        parts.media = Arc::new(NoMedia);
-        parts.insertion = Box::new(move || Box::new(log));
-    }
-
-    pub fn drive(self, flow: Dictation) {
-        thread::spawn(move || {
-            println!("ready");
-            for line in stdin().lock().lines().map_while(Result::ok) {
-                match line.as_str() {
-                    "dictate" => println!("inserted: {}", self.dictate(&flow)),
-                    "quit" => break,
-                    _ => {}
-                }
-            }
-            let _ = slint::quit_event_loop();
-        });
-    }
-
-    fn dictate(&self, flow: &Dictation) -> String {
-        let before = self.log.texts().len();
-        self.microphone.set_clip(self.clip.clone());
-        flow.on_pill(PillInput::Click);
-        while !self.microphone.played() {
-            thread::sleep(PROBE_POLL);
-        }
-        flow.on_pill(PillInput::Stop);
-        loop {
-            if let Some(text) = self.log.texts().get(before) {
-                return text.clone();
-            }
-            thread::sleep(PROBE_POLL);
-        }
-    }
-}
 
 /// Parses `--pill-state=<name>`.
 pub fn state_from_args(args: impl Iterator<Item = String>) -> Option<PillState> {

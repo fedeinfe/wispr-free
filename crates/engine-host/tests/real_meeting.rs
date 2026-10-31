@@ -4,7 +4,7 @@
 //!
 //! ```sh
 //! WF_MODELS=…/wispr-free-notes/models WF_MEETING_FIXTURE=…/fixtures/meeting-30min \
-//!     cargo test -p wispr-free --release --test real_meeting -- --ignored --nocapture --test-threads=1
+//!     cargo test -p wf-engine-host --release --test real_meeting -- --ignored --nocapture --test-threads=1
 //! ```
 //!
 //! `WF_MEETING_KEEP=<folder>` keeps the meeting there, for `cargo xtask-meeting meeting-chat-score`.
@@ -146,7 +146,7 @@ fn start(settings: Settings, you: AudioClip, others: AudioClip, pace: f32) -> Re
         microphone: Arc::clone(&microphone) as _,
         meeting_room: Arc::clone(&room) as _,
         engines: Arc::new(ChildEngines::new(PathBuf::from(env!(
-            "CARGO_BIN_EXE_wispr-free"
+            "CARGO_BIN_EXE_wf-engine-host"
         )))),
         context: Arc::new(NoContext),
         media: Arc::new(NoMedia),

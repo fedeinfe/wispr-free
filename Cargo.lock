@@ -6336,6 +6336,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "wf-engine-host"
+version = "0.1.0"
+dependencies = [
+ "mimalloc",
+ "tempfile",
+ "wf-core",
+ "wf-dictation",
+ "wf-meetings",
+ "wf-models",
+ "wf-pipeline",
+]
+
+[[package]]
 name = "wf-history"
 version = "0.1.0"
 dependencies = [
@@ -7139,6 +7152,7 @@ dependencies = [
  "tempfile",
  "toml",
  "wf-core",
+ "wf-dictation",
  "wf-meetings",
  "wf-models",
  "wf-pipeline",

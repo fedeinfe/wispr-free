@@ -1,0 +1,24 @@
+[package]
+name = "wf-engine-host"
+description = "The process that holds one loaded engine, so the app links none"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+wf-core.workspace = true
+wf-dictation = { workspace = true, features = ["engines"] }
+wf-models.workspace = true
+wf-pipeline.workspace = true
+mimalloc.workspace = true
+
+# Whisper needs this for the GPU. Windows and Linux stay on the CPU until they get a Vulkan build.
+[target.'cfg(target_os = "macos")'.dependencies]
+wf-pipeline = { workspace = true, features = ["metal"] }
+
+[dev-dependencies]
+wf-meetings.workspace = true
+tempfile.workspace = true

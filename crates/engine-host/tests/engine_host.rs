@@ -1,4 +1,4 @@
-//! The app's own binary as an engine host, in a real child process.
+//! The engine host binary, in a real child process.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -9,7 +9,7 @@ use wf_dictation::remote::ChildEngines;
 use wf_pipeline::PipelineError;
 
 fn engines() -> ChildEngines {
-    ChildEngines::new(PathBuf::from(env!("CARGO_BIN_EXE_wispr-free")))
+    ChildEngines::new(PathBuf::from(env!("CARGO_BIN_EXE_wf-engine-host")))
 }
 
 #[test]

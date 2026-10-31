@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use slint::Timer;
 use wf_core::settings::{Settings, SettingsStore};
-use wf_dictation::remote::{ENGINE_HOST_ARG, run_engine_host};
+use wf_dictation::remote::ENGINE_HOST_ARG;
 use wf_models::Catalog;
 use wf_platform::autostart::LaunchAtLogin;
 use wf_platform::desktop;
@@ -39,13 +39,16 @@ fn main() -> ExitCode {
         println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
     }
-    // The app runs its engines in copies of itself (ADR-0005). Before anything else, so that a
-    // host never touches the window system.
+    // Engines run in wf-engine-host (ADR-0005). An older app that was running when this one was
+    // installed still starts this path as a host, and a script may still ask it for a clip run.
+    // Neither may open a real app, with real keys.
     if args.iter().any(|arg| arg == ENGINE_HOST_ARG) {
-        return match run_engine_host() {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(_) => ExitCode::FAILURE,
-        };
+        eprintln!("the engine host is wf-engine-host now");
+        return ExitCode::FAILURE;
+    }
+    if args.iter().any(|arg| arg.starts_with("--probe-clip")) {
+        eprintln!("clip runs are in wf-probe now");
+        return ExitCode::FAILURE;
     }
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
@@ -74,17 +77,9 @@ fn run(args: &[String]) -> Result<(), slint::PlatformError> {
         .map(prefs::Prefs::load)
         .unwrap_or_default();
     let pill = PillController::new(prefs, prefs_path)?;
-    let clip_run = debug::ClipRun::from_args(args);
     let watcher = FlowWatcher::default();
     let board = MeetingsBoard::default();
-    let flow = dictation::start(
-        store.get(),
-        &pill,
-        &tray,
-        &board,
-        clip_run.as_ref(),
-        Rc::clone(&watcher),
-    );
+    let flow = dictation::start(store.get(), &pill, &tray, &board, Rc::clone(&watcher));
     tray.on_toggle_meeting({
         let flow = flow.clone();
         move || flow.toggle_meeting()
@@ -140,14 +135,10 @@ fn run(args: &[String]) -> Result<(), slint::PlatformError> {
         .ok()
         .and_then(|executable| desktop::bundle_of(&executable));
     let mut onboarding = None;
-    let _keys = match (clip_run, bundle) {
-        (Some(clip_run), _) => {
-            clip_run.drive(flow.clone());
-            None
-        }
+    let _keys = match bundle {
         // Permissions belong to a bundle, so a bare binary has nothing to walk anyone through.
-        (None, None) => Some(dictation::listen_to_keys(&flow)),
-        (None, Some(bundle)) => {
+        None => dictation::listen_to_keys(&flow),
+        Some(bundle) => {
             let keys = KeyWatch::idle(&flow);
             let machine = SystemMachine {
                 bundle,
@@ -181,7 +172,7 @@ fn run(args: &[String]) -> Result<(), slint::PlatformError> {
                 }
             });
             onboarding = Some(host);
-            Some(keys)
+            keys
         }
     };
 

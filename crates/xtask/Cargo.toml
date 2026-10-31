@@ -34,3 +34,4 @@ wf-pipeline = { workspace = true, features = ["metal"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+wf-dictation.workspace = true

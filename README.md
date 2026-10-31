@@ -21,6 +21,13 @@ cargo xtask bundle --install   # builds Wispr Free.app and copies it to ~/Applic
 
 Open the app from `~/Applications`. The first run asks for the microphone, keyboard access and models.
 
+To run it from the repo, build the engine host first: `cargo run` builds only the app, which starts its engines from the `wf-engine-host` beside it.
+
+```sh
+cargo build -p wf-engine-host
+cargo run -p wispr-free
+```
+
 ## License
 
 MIT for this project's code.

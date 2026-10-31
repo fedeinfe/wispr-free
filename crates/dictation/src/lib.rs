@@ -213,14 +213,14 @@ pub struct Parts {
 }
 
 impl Parts {
-    /// The real machine. `executable` is the app's binary, for engine hosts.
+    /// The real machine. `engine_host` is the binary hosts start from.
     pub fn system(
         settings: Settings,
         catalog: Arc<Catalog>,
         default_models: PathBuf,
         history: PathBuf,
         meetings: PathBuf,
-        executable: PathBuf,
+        engine_host: PathBuf,
         on_event: Arc<dyn Fn(Event) + Send + Sync>,
     ) -> Self {
         Self {
@@ -232,7 +232,7 @@ impl Parts {
             meetings,
             microphone: Arc::new(SystemMicrophone),
             meeting_room: Arc::new(SystemMeetingRoom),
-            engines: Arc::new(remote::ChildEngines::new(executable)),
+            engines: Arc::new(remote::ChildEngines::new(engine_host)),
             context: Arc::new(SystemContext),
             media: Arc::new(SystemMedia),
             insertion: Box::new(|| Box::new(SystemInserter::system())),

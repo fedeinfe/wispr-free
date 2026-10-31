@@ -20,12 +20,25 @@ use wf_pipeline::{
     Asr, AsrOptions, Diarizer, Llm, LlmPrompt, PipelineError, SpeakerTurn, SpeechSegment,
     Transcript, Vad,
 };
+use wf_platform::desktop::bundle_of;
 
 use crate::engines::Engines;
 use crate::plan::{AsrModel, DiarizerModel, LlmModel};
 
-/// The argument that turns the app's binary into an engine host.
+/// The argument that starts the `wf-engine-host` binary as an engine host.
 pub const ENGINE_HOST_ARG: &str = "--engine-host";
+
+const ENGINE_HOST_BINARY: &str = "wf-engine-host";
+const BUNDLE_HELPERS: &str = "Contents/Helpers";
+
+/// The host binary for the program at `executable`: a bundle's helper, or the one cargo builds
+/// beside it in `target`.
+pub fn engine_host_beside(executable: &Path) -> PathBuf {
+    match bundle_of(executable) {
+        Some(bundle) => bundle.join(BUNDLE_HELPERS).join(ENGINE_HOST_BINARY),
+        None => executable.with_file_name(ENGINE_HOST_BINARY),
+    }
+}
 
 /// What a host should load.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -442,7 +455,7 @@ impl Diarizer for RemoteDiarizer {
     }
 }
 
-/// [`Engines`] that run in hosts started from `executable`, the app's own binary.
+/// [`Engines`] that run in hosts started from `executable`, the `wf-engine-host` binary.
 pub struct ChildEngines {
     executable: PathBuf,
     running: Mutex<Vec<Weak<Process>>>,
@@ -533,6 +546,7 @@ impl Engines for ChildEngines {
 }
 
 /// Loads the real engines. Runs in the host process.
+#[cfg(feature = "engines")]
 pub fn load_engine(spec: &EngineSpec) -> Result<Hosted, PipelineError> {
     use wf_pipeline::diarization::{DiarizationConfig, SherpaDiarizer};
     use wf_pipeline::llama::{LlamaConfig, LlamaEngine};
@@ -561,6 +575,7 @@ pub fn load_engine(spec: &EngineSpec) -> Result<Hosted, PipelineError> {
 }
 
 /// The whole life of a host process: `main` calls this when it's given [`ENGINE_HOST_ARG`].
+#[cfg(feature = "engines")]
 pub fn run_engine_host() -> io::Result<()> {
     serve(io::stdin().lock(), io::stdout().lock(), &mut load_engine)
 }
@@ -790,6 +805,22 @@ mod tests {
         let mut host = Host::start();
 
         assert!(matches!(host.call(Call::Finish, &[]), Reply::Failed(_)));
+    }
+
+    #[test]
+    fn a_bundled_app_starts_its_hosts_from_helpers() {
+        assert_eq!(
+            engine_host_beside(Path::new("/A/Wispr Free.app/Contents/MacOS/wispr-free")),
+            Path::new("/A/Wispr Free.app/Contents/Helpers/wf-engine-host")
+        );
+    }
+
+    #[test]
+    fn a_binary_outside_a_bundle_starts_the_host_built_beside_it() {
+        assert_eq!(
+            engine_host_beside(Path::new("/repo/target/debug/wispr-free")),
+            Path::new("/repo/target/debug/wf-engine-host")
+        );
     }
 
     #[test]

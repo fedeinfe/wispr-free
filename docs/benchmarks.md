@@ -182,7 +182,7 @@ cargo xtask-meeting asr-bench --fixture $F --models $M --model whisper-small-q8_
 cargo xtask eval --model $M/qwen3-4b-instruct-2507-q4_k_m/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
 cargo xtask eval --model model.gguf --no-language
 
-cargo test -p wispr-free --release --test real_dictation --no-run
+cargo test -p wf-engine-host --release --test real_dictation --no-run
 WF_MODELS=$M WF_BENCH_TIER=high WF_BENCH_CLIP=$F/en-review-v2-clean.wav \
     target/release/deps/real_dictation-<hash> tier_benchmark --ignored --nocapture --test-threads=1
 

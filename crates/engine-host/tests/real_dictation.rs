@@ -1,6 +1,6 @@
 //! The real engines in real child processes, from audio to the insertion seam. Skipped by default:
 //!
-//! `WF_MODELS=…/wispr-free-notes/models cargo test -p wispr-free --release --test real_dictation -- --ignored --nocapture --test-threads=1`
+//! `WF_MODELS=…/wispr-free-notes/models cargo test -p wf-engine-host --release --test real_dictation -- --ignored --nocapture --test-threads=1`
 //!
 //! The spec's two sentences have no committed recording, so these tests have macOS's `say` speak
 //! them at run time, into a temp folder. Its voices can't be committed (see the fixtures README).
@@ -116,7 +116,7 @@ fn start(settings: Settings, real_time: bool) -> RealFlow {
         microphone: Arc::clone(&microphone) as _,
         meeting_room: Arc::new(SystemMeetingRoom),
         engines: Arc::new(ChildEngines::new(PathBuf::from(env!(
-            "CARGO_BIN_EXE_wispr-free"
+            "CARGO_BIN_EXE_wf-engine-host"
         )))),
         context: Arc::new(NoContext),
         media: Arc::new(NoMedia),

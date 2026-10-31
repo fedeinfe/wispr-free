@@ -1,11 +1,13 @@
 //! The parts of `cargo xtask bundle` that decide things. The real build runs by hand: it signs
 //! files and takes minutes.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
+use wf_dictation::remote::engine_host_beside;
 use xtask::bundle::{
-    Signer, codesign_args, foreign_libraries, iconset_files, info_plist, llama_libraries,
-    rpath_libraries,
+    Signer, built_binary, codesign_args, foreign_libraries, helper_path, iconset_files, info_plist,
+    llama_libraries, rpath_libraries, signing_order,
 };
 
 const OTOOL: &str = "\
@@ -50,6 +52,75 @@ fn the_llama_libraries_come_from_the_build_that_made_the_app() {
         Some(Path::new("/t/release/build/llama-cpp-sys-2-abc/out/lib"))
     );
     assert_eq!(llama_libraries(r#"{"reason":"build-finished"}"#), None);
+}
+
+#[test]
+fn a_binary_comes_from_the_messages_of_its_own_build() {
+    let messages = r#"{"reason":"compiler-artifact","target":{"name":"wf_core"},"executable":null}
+{"reason":"compiler-artifact","target":{"name":"wf-engine-host"},"executable":"/t/release/wf-engine-host"}
+{"reason":"build-finished","success":true}"#;
+
+    assert_eq!(
+        built_binary(messages, "wf-engine-host").as_deref(),
+        Some(Path::new("/t/release/wf-engine-host"))
+    );
+    assert_eq!(built_binary(messages, "wispr-free"), None);
+}
+
+#[test]
+fn the_helper_goes_where_the_app_looks_for_it() {
+    let app = Path::new("/t/Wispr Free.app");
+
+    assert_eq!(
+        helper_path(app),
+        Path::new("/t/Wispr Free.app/Contents/Helpers/wf-engine-host")
+    );
+    assert_eq!(
+        engine_host_beside(&app.join("Contents/MacOS/wispr-free")),
+        helper_path(app)
+    );
+}
+
+#[test]
+fn signing_goes_inside_out_and_the_helper_is_named() {
+    let app = Path::new("/t/Wispr Free.app");
+    let libraries = [
+        app.join("Contents/Frameworks/libllama.0.dylib"),
+        app.join("Contents/Frameworks/libggml.0.dylib"),
+    ];
+
+    let order = signing_order(app, &libraries);
+
+    assert_eq!(
+        order,
+        [
+            (libraries[0].clone(), None),
+            (libraries[1].clone(), None),
+            (
+                PathBuf::from("/t/Wispr Free.app/Contents/Helpers/wf-engine-host"),
+                Some("com.wispr-free.wf-engine-host")
+            ),
+            (app.to_path_buf(), Some("com.wispr-free.app")),
+        ]
+    );
+}
+
+/// ADR-0005. What cargo builds for the app alone, which is how `bundle` builds it.
+#[test]
+fn the_app_depends_on_no_engine() {
+    let output = Command::new(env!("CARGO"))
+        .args(["tree", "--locked", "--package", "wispr-free"])
+        .args(["--edges", "normal", "--prefix", "none"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("cargo runs");
+    assert!(output.status.success());
+    let tree = String::from_utf8_lossy(&output.stdout);
+
+    assert!(tree.contains("wf-dictation"));
+    for engine in ["llama-cpp-2", "whisper-rs", "sherpa-onnx"] {
+        assert!(!tree.contains(engine), "the app links {engine}");
+    }
 }
 
 #[test]

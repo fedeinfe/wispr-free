@@ -10,9 +10,12 @@ xtask-meeting = "run --release --package xtask --features meeting --"
 CMAKE_DISABLE_FIND_PACKAGE_OpenSSL = "TRUE"
 
 # ADR-0003: llama.cpp is a shared library so its ggml stays apart from whisper.cpp's. Binaries
-# look for it next to themselves.
+# look for it next to themselves in `target`, and an engine host in a bundle in `Frameworks`.
 [target.'cfg(target_os = "macos")']
-rustflags = ["-C", "link-arg=-Wl,-rpath,@executable_path"]
+rustflags = [
+    "-C", "link-arg=-Wl,-rpath,@executable_path",
+    "-C", "link-arg=-Wl,-rpath,@executable_path/../Frameworks",
+]
 
 # An executable exports static symbols that a shared library also uses, so without
 # --exclude-libs libllama binds to whisper.cpp's older ggml and aborts.

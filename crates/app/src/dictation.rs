@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use slint::{Timer, TimerMode, Weak};
 use wf_core::settings::{PipelineTier, Settings, SettingsStore, data_dir};
+use wf_dictation::remote::engine_host_beside;
 use wf_dictation::{Dictation, Event, Parts};
 use wf_history::History;
 use wf_models::{Catalog, ModelStore};
@@ -17,7 +18,6 @@ use wf_platform::keys::{self, KeyListener};
 use wf_platform::permissions::Permissions;
 
 use crate::Tray;
-use crate::debug::ClipRun;
 use crate::meetings_window::{MeetingsBoard, MeetingsHost};
 use crate::memory;
 use crate::onboarding::FlowWatcher;
@@ -41,7 +41,6 @@ pub fn start(
     pill: &PillController,
     tray: &Tray,
     board: &MeetingsBoard,
-    clip: Option<&ClipRun>,
     watcher: FlowWatcher,
 ) -> Dictation {
     let data = data_dir().unwrap_or_else(|| PathBuf::from("wispr-free"));
@@ -49,20 +48,24 @@ pub fn start(
     let history = History::default_path().unwrap_or_else(|| data.join("history.sqlite3"));
     let meetings = data.join("meetings");
     let executable = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("wispr-free"));
+    let engine_host = engine_host_beside(&executable);
+    // `cargo run` builds only the app.
+    if !engine_host.exists() {
+        eprintln!(
+            "no engine host at {}: run `cargo build -p wf-engine-host`",
+            engine_host.display()
+        );
+    }
     let on_event = deliver_to(pill, tray.as_weak(), board.clone(), watcher);
-    let mut parts = Parts::system(
+    Dictation::start(Parts::system(
         settings,
         Arc::new(Catalog::bundled()),
         default_models,
         history,
         meetings,
-        executable,
+        engine_host,
         on_event,
-    );
-    if let Some(clip) = clip {
-        clip.fit(&mut parts);
-    }
-    Dictation::start(parts)
+    ))
 }
 
 /// Returns the callback for the flow's threads. Events wait in a queue for the UI thread.

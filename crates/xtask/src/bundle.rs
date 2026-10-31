@@ -15,6 +15,10 @@ use anyhow::{Context as _, bail, ensure};
 pub const APP: &str = "Wispr Free.app";
 const BUNDLE_ID: &str = "com.wispr-free.app";
 const EXECUTABLE: &str = "wispr-free";
+const ENGINE_HOST: &str = "wf-engine-host";
+const ENGINE_HOST_ID: &str = "com.wispr-free.wf-engine-host";
+const HELPERS: &str = "Contents/Helpers";
+const FRAMEWORKS: &str = "Contents/Frameworks";
 const ICON: &str = "AppIcon";
 const ICON_SOURCE: &str = "crates/app/ui/icons/app-icon.svg";
 /// The oldest macOS the spec supports. Ticket 15's weak CoreAudio link is what makes it true.
@@ -151,6 +155,29 @@ pub fn llama_libraries(messages: &str) -> Option<PathBuf> {
                 .is_some_and(|id| id.contains(LLAMA_PACKAGE))
         })
         .find_map(|message| Some(Path::new(message["out_dir"].as_str()?).join("lib")))
+}
+
+/// The binary `name` from `cargo build --message-format=json`.
+pub fn built_binary(messages: &str, name: &str) -> Option<PathBuf> {
+    messages
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|message| message["target"]["name"] == name)
+        .find_map(|message| message["executable"].as_str().map(PathBuf::from))
+}
+
+/// Where a bundle keeps the engine host.
+pub fn helper_path(app: &Path) -> PathBuf {
+    app.join(HELPERS).join(ENGINE_HOST)
+}
+
+/// What to sign and under which identifier, in order. Inside out: signing a bundle seals what it
+/// holds, so `--deep` is never needed.
+pub fn signing_order(app: &Path, libraries: &[PathBuf]) -> Vec<(PathBuf, Option<&'static str>)> {
+    let mut order: Vec<_> = libraries.iter().map(|path| (path.clone(), None)).collect();
+    order.push((helper_path(app), Some(ENGINE_HOST_ID)));
+    order.push((app.to_path_buf(), Some(BUNDLE_ID)));
+    order
 }
 
 pub fn run(args: impl Iterator<Item = String>) -> anyhow::Result<()> {
@@ -312,15 +339,18 @@ fn target_dir() -> PathBuf {
 
 /// Lays out the bundle and signs it, replacing any earlier one.
 fn assemble(target: &Path, signer: &Signer) -> anyhow::Result<PathBuf> {
-    let (executable, libraries) = build_with_portable_libraries()?;
+    let built = build_with_portable_libraries()?;
     let app = target.join(APP);
     let contents = app.join("Contents");
     let macos = contents.join("MacOS");
+    let frameworks = app.join(FRAMEWORKS);
     if app.exists() {
         fs::remove_dir_all(&app)?;
     }
     let resources = contents.join("Resources");
     fs::create_dir_all(&macos)?;
+    fs::create_dir_all(app.join(HELPERS))?;
+    fs::create_dir_all(&frameworks)?;
     fs::create_dir_all(&resources)?;
     fs::write(
         contents.join("Info.plist"),
@@ -329,19 +359,24 @@ fn assemble(target: &Path, signer: &Signer) -> anyhow::Result<PathBuf> {
     render_icon(target, &resources.join(format!("{ICON}.icns")))?;
 
     let binary = macos.join(EXECUTABLE);
-    fs::copy(&executable, &binary)?;
-    let carried = carry_libraries(&binary, &libraries, &macos)?;
-    // Inside out: signing the app seals what it holds.
-    for library in &carried {
-        codesign(signer, library, None)?;
+    fs::copy(&built.app, &binary)?;
+    let linked = otool(&binary)?;
+    ensure!(
+        rpath_libraries(&linked).is_empty() && foreign_libraries(&linked).is_empty(),
+        "the app should link macOS alone: {linked}"
+    );
+    let helper = helper_path(&app);
+    fs::copy(&built.engine_host, &helper)?;
+    let carried = carry_libraries(&helper, &built.libraries, &frameworks)?;
+    for (path, identifier) in signing_order(&app, &carried) {
+        codesign(signer, &path, identifier)?;
     }
-    codesign(signer, &app, Some(BUNDLE_ID))?;
     tool("codesign")
         .args(["--verify", "--deep", "--strict"])
         .arg(&app)
         .succeed()?;
     // Fails if dyld can't find a library from inside the bundle.
-    tool(&binary).arg("--version").current_dir("/").succeed()?;
+    tool(&helper).arg("--version").current_dir("/").succeed()?;
     Ok(app)
 }
 
@@ -371,11 +406,17 @@ fn render_icon(target: &Path, icns: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Builds the app. `.cargo/config.toml` keeps OpenSSL out of llama.cpp, but nothing tells cargo
-/// that a build from before that line is stale, so such a build is cleaned once.
-fn build_with_portable_libraries() -> anyhow::Result<(PathBuf, PathBuf)> {
-    let (executable, libraries) = build()?;
-    if !foreign_in(&libraries)?.is_empty() {
+struct Built {
+    app: PathBuf,
+    engine_host: PathBuf,
+    libraries: PathBuf,
+}
+
+/// Builds the binaries. `.cargo/config.toml` keeps OpenSSL out of llama.cpp, but nothing tells
+/// cargo that a build from before that line is stale, so such a build is cleaned once.
+fn build_with_portable_libraries() -> anyhow::Result<Built> {
+    let built = build()?;
+    if !foreign_in(&built.libraries)?.is_empty() {
         println!("rebuilding llama.cpp: this build links libraries outside the app");
         tool("cargo")
             .args(["clean", "--release", "--package", "llama-cpp-sys-2"])
@@ -383,24 +424,31 @@ fn build_with_portable_libraries() -> anyhow::Result<(PathBuf, PathBuf)> {
             .succeed()?;
         return build();
     }
-    Ok((executable, libraries))
+    Ok(built)
 }
 
-fn build() -> anyhow::Result<(PathBuf, PathBuf)> {
-    let output = tool("cargo")
-        .args(["build", "--release", "--locked", "--package", EXECUTABLE])
+/// One binary at a time: built together, cargo would give the app the host's features, and with
+/// them every engine.
+fn build() -> anyhow::Result<Built> {
+    let app = cargo_build(EXECUTABLE)?;
+    let engine_host = cargo_build(ENGINE_HOST)?;
+    Ok(Built {
+        app: built_binary(&app, EXECUTABLE).context("cargo didn't report the app's binary")?,
+        engine_host: built_binary(&engine_host, ENGINE_HOST)
+            .context("cargo didn't report the engine host's binary")?,
+        libraries: llama_libraries(&engine_host)
+            .context("cargo didn't report llama.cpp's build")?,
+    })
+}
+
+fn cargo_build(binary: &str) -> anyhow::Result<String> {
+    tool("cargo")
+        .args(["build", "--release", "--locked", "--package", binary])
+        .args(["--bin", binary])
         .arg("--message-format=json-render-diagnostics")
         .current_dir(workspace_root())
         .stderr(Stdio::inherit())
-        .text()?;
-    let libraries = llama_libraries(&output).context("cargo didn't report llama.cpp's build")?;
-    let executable = output
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|message| message["target"]["name"] == EXECUTABLE)
-        .find_map(|message| message["executable"].as_str().map(PathBuf::from))
-        .context("cargo didn't report the app's binary")?;
-    Ok((executable, libraries))
+        .text()
 }
 
 fn foreign_in(libraries: &Path) -> anyhow::Result<Vec<String>> {
@@ -417,8 +465,8 @@ fn foreign_in(libraries: &Path) -> anyhow::Result<Vec<String>> {
     Ok(foreign)
 }
 
-/// Copies every library `binary` reaches through the rpath next to it, where ADR-0003's
-/// `@executable_path` rpath looks, under the name it asks for. Returns the copies.
+/// Copies every library `binary` reaches through the rpath to `to`, where its
+/// `@executable_path/../Frameworks` rpath looks, under the name it asks for. Returns the copies.
 fn carry_libraries(binary: &Path, from: &Path, to: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let mut carried = Vec::new();
     let mut waiting = vec![binary.to_path_buf()];
