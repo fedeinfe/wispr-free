@@ -361,12 +361,18 @@ fn what_each_late_millisecond_costs() {
 }
 
 /// The models on a real volume that goes away under loaded engines, the way an unplugged drive
-/// does, and comes back. Uses a disk image in a temp folder, which Finder never shows.
+/// does, and comes back. Uses a disk image, which Finder never shows. It holds copies of the models,
+/// so it sits on the models' own drive rather than the internal disk.
 #[test]
 #[ignore = "needs models"]
 fn an_unplugged_models_drive_is_an_error_and_plugging_it_back_recovers() {
     let folder = tempfile::tempdir().unwrap();
-    let image = folder.path().join("models.sparseimage");
+    let source = std::env::var("WF_MODELS").expect("set WF_MODELS");
+    let drive = tempfile::Builder::new()
+        .prefix(".wf-test-")
+        .tempdir_in(source)
+        .unwrap();
+    let image = drive.path().join("models.sparseimage");
     let volume = folder.path().join("volume");
     let hdiutil = |args: &[&str]| {
         let status = Command::new("hdiutil").args(args).status().unwrap();
