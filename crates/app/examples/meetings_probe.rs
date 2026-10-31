@@ -243,7 +243,7 @@ fn render(target: &Path) {
         window.window().set_size(LogicalSize::new(980.0, 680.0));
         window.show().expect("window shows");
         let ui = window.global::<MeetingsUi>();
-        assert_eq!(window.global::<Prefs>().get_values().theme, theme);
+        assert_eq!(window.global::<Prefs>().get_theme(), theme);
         pump(&controller, |ui| ui.get_meetings().row_count() == 3);
         save_png(window, &target.join(format!("{name}-nothing-open.png")));
         ui.invoke_select(id.as_str().into(), -1);

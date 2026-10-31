@@ -2,10 +2,8 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use slint::{CloseRequestResponse, ComponentHandle, Weak};
-use wf_core::settings::SettingsStore;
 use wf_dictation::{Dictation, MeetingNews};
 use wf_shell::meetings::{system_folders, system_parts};
 use wf_shell::windows::{Window, WindowHost};

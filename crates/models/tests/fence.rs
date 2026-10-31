@@ -67,7 +67,13 @@ fn a_move_is_refused_from_or_to_a_folder_outside_the_fence_before_anything_is_co
     let (from, to) = (store(&outside, &fence), store(&inside, &fence));
     let cancel = AtomicBool::new(false);
 
-    let refused = from.move_to(&to, &[model.clone()], &cancel, &mut |_| {}, || Ok(()));
+    let refused = from.move_to(
+        &to,
+        std::slice::from_ref(&model),
+        &cancel,
+        &mut |_| {},
+        || Ok(()),
+    );
 
     assert!(matches!(refused, Err(DownloadError::ReadOnly(_))));
     assert!(outside.join(&model.id).is_dir());
@@ -75,7 +81,13 @@ fn a_move_is_refused_from_or_to_a_folder_outside_the_fence_before_anything_is_co
 
     fs::remove_dir_all(outside.join(&model.id)).unwrap();
     lay_out(&inside, &model);
-    let refused = to.move_to(&from, &[model.clone()], &cancel, &mut |_| {}, || Ok(()));
+    let refused = to.move_to(
+        &from,
+        std::slice::from_ref(&model),
+        &cancel,
+        &mut |_| {},
+        || Ok(()),
+    );
 
     assert!(matches!(refused, Err(DownloadError::ReadOnly(_))));
     assert!(inside.join(&model.id).is_dir());

@@ -317,7 +317,7 @@ mod tests {
     #[test]
     fn a_stage_that_is_off_needs_no_model_unless_it_is_forced_on() {
         let mut folded = folded(vec![row(0), row(1), row(2)]);
-        folded.take(Shown::Values(Box::new(SettingsValues::default())));
+        folded.take(Shown::Values(Box::default()));
 
         let state = folded.state();
         let (vad, llm) = (state.vad_menu.model.unwrap(), state.llm_menu.model.unwrap());
