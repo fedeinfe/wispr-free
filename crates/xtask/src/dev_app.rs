@@ -3,8 +3,9 @@
 //! listen to the keys or catch a click. `cargo xtask bundle --dev` first.
 //!
 //! `cargo xtask shots --out dir` takes every pill state over its own backdrop, once per edge the
-//! pill docks to. Read `sheet.png` in each edge's folder. `cargo xtask footprint` reports what the
-//! idle app costs, against the spec's goal.
+//! pill docks to, and every window in light and dark. Read `sheet.png` in each edge's folder and
+//! the pictures in `windows`. `cargo xtask footprint` reports what the idle app costs, against the
+//! spec's goal.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,13 +20,15 @@ use crate::bundle::{DEV, target_dir, tool};
 const EDGES: [&str; 3] = ["bottom", "left", "right"];
 /// Every edge's pictures take under a minute.
 const SHOTS_LIMIT: Duration = Duration::from_secs(120);
-const QUIT_LIMIT: Duration = Duration::from_secs(10);
+pub(crate) const QUIT_LIMIT: Duration = Duration::from_secs(10);
 /// Long enough for the footprint to settle.
 const IDLE: Duration = Duration::from_secs(30);
 /// The spec's goal for an idle app before any window opens.
 const IDLE_GOAL_MB: f64 = 25.0;
-const POLL: Duration = Duration::from_millis(100);
-const DEV_ROOT: &str = "Library/Application Support/wispr-free-dev";
+pub(crate) const POLL: Duration = Duration::from_millis(100);
+/// What the app logs if anything ever activates it.
+const TOOK_THE_FOCUS: &str = "took the focus";
+pub(crate) const DEV_ROOT: &str = "Library/Application Support/wispr-free-dev";
 
 /// What `vmmap --summary` calls the footprint, in MB.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -81,10 +84,10 @@ pub fn pill_file(edge: &str) -> String {
 }
 
 /// A temp `HOME`, gone when this is.
-struct Home(PathBuf);
+pub(crate) struct Home(pub(crate) PathBuf);
 
 impl Home {
-    fn new(name: &str) -> anyhow::Result<Self> {
+    pub(crate) fn new(name: &str) -> anyhow::Result<Self> {
         let home = std::env::temp_dir().join(format!("wf-{name}-{}", std::process::id()));
         if home.exists() {
             fs::remove_dir_all(&home)?;
@@ -119,8 +122,25 @@ fn start(home: &Path, args: &[String]) -> anyhow::Result<Child> {
         .context("starting the dev bundle")
 }
 
+/// Starts it with what it says going to `log`, where a check can read it while it runs.
+pub(crate) fn start_logging(home: &Path, args: &[String], log: &Path) -> anyhow::Result<Child> {
+    Command::new(binary()?)
+        .args(args)
+        .env("HOME", home)
+        .current_dir("/")
+        .stderr(fs::File::create(log)?)
+        .spawn()
+        .context("starting the dev bundle")
+}
+
+/// Holds a run to what it logged: the app says so if anything ever activates it.
+pub fn no_focus_taken(said: &str) -> anyhow::Result<()> {
+    ensure!(!said.contains(TOOK_THE_FOCUS), "it took the focus: {said}");
+    Ok(())
+}
+
 /// Waits for `app` to end by itself. One that hangs is killed, and that's an error.
-fn wait_for_exit(app: &mut Child, limit: Duration) -> anyhow::Result<String> {
+pub(crate) fn wait_for_exit(app: &mut Child, limit: Duration) -> anyhow::Result<String> {
     let deadline = Instant::now() + limit;
     while app.try_wait()?.is_none() {
         if Instant::now() >= deadline {
@@ -145,6 +165,11 @@ pub fn shots(mut args: impl Iterator<Item = String>) -> anyhow::Result<()> {
             other => bail!("unknown flag {other:?}"),
         }
     }
+    edge_shots(&out)?;
+    window_shots(&out.join("windows"))
+}
+
+fn edge_shots(out: &Path) -> anyhow::Result<()> {
     for edge in EDGES {
         let home = Home::new("shots")?;
         fs::write(home.0.join(DEV_ROOT).join("pill.toml"), pill_file(edge))?;
@@ -158,8 +183,26 @@ pub fn shots(mut args: impl Iterator<Item = String>) -> anyhow::Result<()> {
         )?;
         let said = wait_for_exit(&mut app, SHOTS_LIMIT)?;
         ensure!(said.contains("shots taken"), "{edge}: {said}");
+        no_focus_taken(&said)?;
         println!("{}", folder.join("sheet.png").display());
     }
+    Ok(())
+}
+
+fn window_shots(folder: &Path) -> anyhow::Result<()> {
+    let home = Home::new("shots")?;
+    let mut app = start(
+        &home.0,
+        &[
+            "--rehearse".to_owned(),
+            "--behind".to_owned(),
+            format!("--window-shots={}", folder.display()),
+        ],
+    )?;
+    let said = wait_for_exit(&mut app, SHOTS_LIMIT)?;
+    ensure!(said.contains("shots taken"), "windows: {said}");
+    no_focus_taken(&said)?;
+    println!("{}", folder.display());
     Ok(())
 }
 

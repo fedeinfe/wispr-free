@@ -3,6 +3,7 @@
 #[cfg(feature = "meeting")]
 pub mod asr_bench;
 pub mod asr_score;
+pub mod ax_check;
 pub mod bridge;
 pub mod bundle;
 pub mod dev_app;

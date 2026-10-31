@@ -1,7 +1,7 @@
 //! The parts of `cargo xtask shots` and `cargo xtask footprint` that decide things. The bundle
 //! itself runs in `dev_bundle.rs`.
 
-use xtask::dev_app::{Footprint, footprint_in, pill_file, verdict};
+use xtask::dev_app::{Footprint, footprint_in, no_focus_taken, pill_file, verdict};
 
 const SUMMARY: &str = "Process:         wispr-free [123]\n\
     Physical footprint:         18.4M\n\
@@ -47,4 +47,10 @@ fn the_report_states_any_gap_to_the_goal() {
 #[test]
 fn the_pill_file_is_one_the_app_reads() {
     assert_eq!(pill_file("left"), "edge = \"left\"\nsounds = false\n");
+}
+
+#[test]
+fn a_run_that_was_activated_fails() {
+    assert!(no_focus_taken("shell started\nshell closed\n").is_ok());
+    assert!(no_focus_taken("shell started\ntook the focus\nshell closed\n").is_err());
 }
