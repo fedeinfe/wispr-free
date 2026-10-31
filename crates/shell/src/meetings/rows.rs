@@ -207,7 +207,11 @@ pub fn stage_rows(stages: &Stages) -> Vec<StageRow> {
             StageState::Skipped { reason } => (StageMark::Skipped, reason.as_str()),
             StageState::Failed { reason } => (StageMark::Failed, reason.as_str()),
         };
-        let off = if state == StageMark::Skipped { " off" } else { "" };
+        let off = if state == StageMark::Skipped {
+            " off"
+        } else {
+            ""
+        };
         StageRow {
             label: label.into(),
             state,
@@ -421,7 +425,10 @@ mod tests {
     #[test]
     fn a_time_says_whether_a_line_is_behind_it() {
         let real = time_chip("[00:12]", 1);
-        assert_eq!((real.text.as_str(), real.help.as_str()), ("[00:12]", "Go to [00:12]"));
+        assert_eq!(
+            (real.text.as_str(), real.help.as_str()),
+            ("[00:12]", "Go to [00:12]")
+        );
 
         let made_up = time_chip("[09:09]", -1);
         assert_eq!(made_up.text, "[09:09] ?");

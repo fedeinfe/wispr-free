@@ -9,24 +9,21 @@ mod disk;
 pub mod rows;
 
 use std::cell::{Cell, RefCell};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
-use wf_core::settings::data_dir;
 use wf_dictation::{ChatRun, ChatUpdate, Dictation, MeetingNews, MeetingsStatus, SummaryMode};
 use wf_meetings::{
     LiveEvent, MeetingDetail, MeetingEntry, MeetingStore, SearchHit, SpeakerId, Transcript,
     TranscriptRow, suggested_questions,
 };
-use wf_platform::desktop;
 
 use crate::clock::{Clock, Timer};
 use crate::lists::Rows;
-use crate::settings::system::export_folder;
 use disk::Task;
 use rows::{
     ChatMessage, MeetingRow, SpeakerRow, StageRow, SummaryLine, TranscriptLine, chat_message,
@@ -99,35 +96,10 @@ impl MeetingActions for Dictation {
 pub struct MeetingsParts {
     pub store: MeetingStore,
     pub actions: Rc<dyn MeetingActions>,
-    /// As the windows' `Prefs.values` hold it.
-    pub theme: i32,
     /// Where exports go.
     pub export_dir: PathBuf,
     /// Gives an opened window the foreground, which an app without a Dock icon doesn't get.
     pub bring_to_front: Rc<dyn Fn()>,
-}
-
-/// What a window on the real machine is built from, each time one opens.
-pub fn system_parts(
-    data: &Path,
-    export_dir: &Path,
-    theme: i32,
-    actions: Dictation,
-) -> MeetingsParts {
-    MeetingsParts {
-        store: MeetingStore::new(data.join("meetings")),
-        actions: Rc::new(actions),
-        theme,
-        export_dir: export_dir.to_path_buf(),
-        bring_to_front: Rc::new(desktop::activate_app),
-    }
-}
-
-/// The data folder and where exports go, on the real machine.
-pub fn system_folders() -> (PathBuf, PathBuf) {
-    let data = data_dir().unwrap_or_else(|| PathBuf::from("wispr-free"));
-    let export_dir = export_folder(&data);
-    (data, export_dir)
 }
 
 /// What the disk thread reports to the window.
@@ -624,7 +596,11 @@ impl Meetings {
     fn show_status(&self) {
         let status = self.parts.actions.status();
         self.show(Shown::Recording(status.recording.is_some()));
-        let start = if status.recording.is_some() { STOP } else { START };
+        let start = if status.recording.is_some() {
+            STOP
+        } else {
+            START
+        };
         self.show(Shown::StartLabel(start.to_owned()));
         let id = self.selected();
         let detail = self.detail.borrow();

@@ -26,6 +26,7 @@ use wf_platform::keys::KeySignal;
 
 use crate::app_windows::{OpenWindows, WindowOrder};
 use crate::flow::{self, KeyWatch, rank_first};
+use crate::launch::{self, Launch, Run};
 use crate::meetings::changes::MeetingsChange;
 use crate::meetings::desk::{self as meetings_desk, MeetingsDesk};
 use crate::meetings::{Meetings, MeetingsParts};
@@ -62,6 +63,8 @@ pub enum ShellError {
     RealData { path: String },
     #[error("{path} isn't an absolute path")]
     UnclearPath { path: String },
+    #[error("only the real bundle, started plainly, is the real app")]
+    NotTheRealApp,
     #[error("Couldn't save settings: {reason}")]
     Disk { reason: String },
 }
@@ -184,7 +187,6 @@ pub trait EventSink: Send + Sync {
 /// the keys and the microphone: any other could race the real app for them.
 struct DevDesktop {
     system: SystemDesktop,
-    sink: Arc<dyn EventSink>,
     by_hand: Arc<AtomicBool>,
     rehearsing: Arc<AtomicBool>,
 }
@@ -196,8 +198,9 @@ impl DevDesktop {
 }
 
 impl Desktop for DevDesktop {
-    /// Swift brings its windows forward.
-    fn bring_to_front(&self) {}
+    fn bring_to_front(&self) {
+        self.system.bring_to_front();
+    }
 
     fn start_probes(&self, mailbox: &Mailbox) {
         if self.rehearsing.load(Ordering::SeqCst) {
@@ -209,7 +212,7 @@ impl Desktop for DevDesktop {
 
     /// The login entry has one name, and it's the installed app's: writing it here would start this
     /// bundle at login in that app's place, and removing it would stop that app. So nothing here
-    /// touches it. **Ticket 15 gives this to `SystemDesktop`.**
+    /// touches it.
     fn set_launch_at_login(&self, enabled: bool) -> io::Result<()> {
         if enabled {
             Err(io::Error::other("a dev run leaves it to the installed app"))
@@ -219,7 +222,7 @@ impl Desktop for DevDesktop {
     }
 
     fn set_dock_icon_visible(&self, visible: bool) {
-        self.sink.on_event(ShellEvent::ShowInDock { visible });
+        self.system.set_dock_icon_visible(visible);
     }
 
     fn open(&self, target: &str) -> io::Result<()> {
@@ -254,10 +257,8 @@ impl Desktop for DevDesktop {
         }
     }
 
-    fn pick_folder(&self, start: &Path, _done: Box<dyn FnOnce(PathBuf)>) {
-        self.sink.on_event(ShellEvent::PickFolder {
-            start: start.to_owned(),
-        });
+    fn pick_folder(&self, start: &Path, done: Box<dyn FnOnce(PathBuf)>) {
+        self.system.pick_folder(start, done);
     }
 
     fn before_delete_all(&self) {
@@ -278,6 +279,7 @@ pub type MakeDesktop = Box<dyn FnOnce() -> Rc<dyn Desktop> + Send>;
 
 /// What the pages are made of, kept until something first needs them.
 struct PagesRecipe {
+    run: Run,
     paths: Paths,
     make_desktop: MakeDesktop,
     make_machine: MakeMachine,
@@ -371,7 +373,7 @@ impl Board {
             paths: settings::Paths {
                 data_dir: recipe.paths.data.clone(),
                 export_dir: recipe.paths.exports.clone(),
-                model_fence: recipe.paths.model_fence(),
+                model_fence: recipe.paths.model_fence(recipe.run),
             },
             platform: Platform::current(),
             page: self.lock_pill().prefs().settings_page,
@@ -468,7 +470,6 @@ impl Board {
             make_parts: Box::new(move || MeetingsParts {
                 store: MeetingStore::new(store),
                 actions: Rc::new(dictation),
-                theme: 0,
                 export_dir: exports,
                 bring_to_front: Rc::new(|| {}),
             }),
@@ -692,6 +693,19 @@ impl Shell {
         make_machine: Option<MakeMachine>,
         start_flow: impl FnOnce(Settings, flow::OnEvent) -> Dictation,
     ) -> Arc<Self> {
+        let makers = (make_desktop, make_machine);
+        Self::assemble(Run::Dev, store, sink, pill, paths, makers, start_flow)
+    }
+
+    fn assemble(
+        run: Run,
+        store: SettingsStore,
+        sink: Arc<dyn EventSink>,
+        pill: PillParts,
+        paths: Paths,
+        (make_desktop, make_machine): (Option<MakeDesktop>, Option<MakeMachine>),
+        start_flow: impl FnOnce(Settings, flow::OnEvent) -> Dictation,
+    ) -> Arc<Self> {
         let PillParts {
             prefs,
             play,
@@ -735,9 +749,16 @@ impl Shell {
             }),
         );
         let _ = board.dictation.set(dictation.clone());
-        let make_desktop = make_desktop.unwrap_or_else(|| dev_desktop(&board, &dictation));
-        let make_machine = make_machine.unwrap_or_else(|| dev_machine(&board, &dictation));
+        let make_desktop = make_desktop.unwrap_or_else(|| match run {
+            Run::Real => real_desktop(&board, &dictation),
+            Run::Dev => dev_desktop(&board, &dictation),
+        });
+        let make_machine = make_machine.unwrap_or_else(|| match run {
+            Run::Real => real_machine(&dictation),
+            Run::Dev => dev_machine(&board, &dictation),
+        });
         *board.recipe.lock().unwrap_or_else(PoisonError::into_inner) = Some(PagesRecipe {
+            run,
             paths,
             make_desktop,
             make_machine,
@@ -745,24 +766,79 @@ impl Shell {
         list_microphones(Arc::downgrade(&board), microphones);
         Arc::new(Self { board, dictation })
     }
+
+    /// The real app on `paths`, with nothing between it and the Mac. Nothing listens to the keys
+    /// until Swift says [`Shell::listen_to_keys`].
+    fn real(paths: Paths, sink: Arc<dyn EventSink>) -> Arc<Self> {
+        let store = SettingsStore::open(&paths.settings);
+        let pill = PillParts::system(paths.pill.clone());
+        let for_pages = paths.clone();
+        let shell = Self::assemble(
+            Run::Real,
+            store,
+            sink,
+            pill,
+            for_pages,
+            (None, None),
+            |settings, on_event| Dictation::start(flow::parts_at(&paths, settings, on_event)),
+        );
+        if shell.board.store.get().general.launch_at_login {
+            system::refresh_login_entry();
+        }
+        shell
+    }
+
+    /// The real app's wiring on `paths`, for a test: it's the only way there that isn't
+    /// [`Shell::start_real`], so it stays off the real folders whatever a test gets wrong.
+    pub fn real_wiring(paths: Paths, sink: Arc<dyn EventSink>) -> Result<Arc<Self>, ShellError> {
+        paths.check(&paths::real_folders())?;
+        Ok(Self::real(paths, sink))
+    }
+}
+
+fn system_desktop(board: &Board, dictation: &Dictation) -> SystemDesktop {
+    SystemDesktop {
+        dictation: dictation.clone(),
+        sink: Arc::clone(&board.sink),
+    }
+}
+
+/// The pages' way to the machine, with nothing in front of it.
+fn real_desktop(board: &Board, dictation: &Dictation) -> MakeDesktop {
+    let system = system_desktop(board, dictation);
+    Box::new(move || Rc::new(system))
 }
 
 fn dev_desktop(board: &Board, dictation: &Dictation) -> MakeDesktop {
-    let (sink, by_hand) = (Arc::clone(&board.sink), Arc::clone(&board.by_hand));
+    let system = system_desktop(board, dictation);
+    let by_hand = Arc::clone(&board.by_hand);
     let rehearsing = Arc::clone(&board.rehearsing);
-    let dictation = dictation.clone();
     Box::new(move || {
         Rc::new(DevDesktop {
-            system: SystemDesktop {
-                dictation,
-                // Swift's picker runs on its own and comes back through `folder_picked`.
-                pick_folder: Rc::new(|_, _| {}),
-            },
-            sink,
+            system,
             by_hand,
             rehearsing,
         })
     })
+}
+
+fn system_machine(dictation: Dictation, hooks: MachineHooks) -> SystemMachine {
+    let executable = env::current_exe().ok();
+    let bundle = executable.and_then(|path| desktop::bundle_of(&path));
+    SystemMachine {
+        bundle: bundle.unwrap_or_default(),
+        keys: KeyWatch::idle(&dictation),
+        dictation,
+        set_setup_needed: hooks.set_setup_needed,
+        close_settings: hooks.close_settings,
+        quit: hooks.quit,
+    }
+}
+
+/// Onboarding's way to the machine, with nothing in front of it.
+fn real_machine(dictation: &Dictation) -> MakeMachine {
+    let dictation = dictation.clone();
+    Box::new(move |hooks| Rc::new(system_machine(dictation, hooks)))
 }
 
 /// Onboarding's way to the machine, with a dev run's limits on it.
@@ -770,18 +846,8 @@ fn dev_machine(board: &Board, dictation: &Dictation) -> MakeMachine {
     let by_hand = Arc::clone(&board.by_hand);
     let rehearsing = Arc::clone(&board.rehearsing);
     let dictation = dictation.clone();
-    Box::new(move |clock, hooks| {
-        let executable = env::current_exe().ok();
-        let bundle = executable.and_then(|path| desktop::bundle_of(&path));
-        let keys = KeyWatch::idle(&dictation, clock);
-        let system = SystemMachine {
-            bundle: bundle.unwrap_or_default(),
-            dictation,
-            keys,
-            set_setup_needed: hooks.set_setup_needed,
-            close_settings: hooks.close_settings,
-            quit: hooks.quit,
-        };
+    Box::new(move |hooks| {
+        let system = system_machine(dictation, hooks);
         Rc::new(DevMachine::new(Rc::new(system), by_hand, rehearsing))
     })
 }
@@ -816,8 +882,20 @@ fn list_microphones(board: Weak<Board>, microphones: Box<dyn FnOnce() -> Vec<Inp
 
 #[uniffi::export]
 impl Shell {
-    /// Nothing listens to the keys or opens a microphone here, so a dev app that's only been
-    /// started can't race the real one.
+    /// The real app, on the user's own data. It refuses any process but the real bundle started
+    /// plainly, and that's the one way past [`Paths::check`] and the model fence.
+    #[uniffi::constructor]
+    pub async fn start_real(sink: Arc<dyn EventSink>) -> Result<Arc<Self>, ShellError> {
+        if launch::this_launch() != Launch::Real {
+            return Err(ShellError::NotTheRealApp);
+        }
+        let paths = paths::real_paths()?;
+        paths.check(&[])?;
+        Ok(Self::real(paths, sink))
+    }
+
+    /// A dev run. Nothing listens to the keys or opens a microphone here, so a dev app that's only
+    /// been started can't race the real one.
     #[uniffi::constructor]
     pub async fn start(paths: Paths, sink: Arc<dyn EventSink>) -> Result<Arc<Self>, ShellError> {
         paths.check(&paths::real_folders())?;
@@ -862,8 +940,8 @@ impl Shell {
     }
 
     /// Hands the run the real keys and the OS's questions, and starts onboarding's watch, which is
-    /// what starts the key listener once listening can't raise a question out of turn. Only the app
-    /// a person started may call this: it would race the real app.
+    /// what starts the key listener once listening can't raise a question out of turn. Only the
+    /// real app, or a dev app a person started, may call this: any other would race the real app.
     pub fn listen_to_keys(&self) -> Result<(), ShellError> {
         self.board.by_hand.store(true, Ordering::SeqCst);
         self.watch_setup()
@@ -1262,13 +1340,15 @@ impl Shell {
     /// Shows a meeting, at line `row` of its transcript if that isn't -1. What it holds comes back
     /// as [`ShellEvent::Meetings`], off the disk.
     pub fn select_meeting(&self, id: String, row: i32) -> Result<(), ShellError> {
-        self.board.meetings_do(move |meetings| meetings.select(&id, row));
+        self.board
+            .meetings_do(move |meetings| meetings.select(&id, row));
         Ok(())
     }
 
     /// The search box changed. The search runs a moment after the last change.
     pub fn search_meetings(&self, query: String) -> Result<(), ShellError> {
-        self.board.meetings_do(move |meetings| meetings.search(query));
+        self.board
+            .meetings_do(move |meetings| meetings.search(query));
         Ok(())
     }
 
@@ -1332,7 +1412,8 @@ impl Shell {
 
     /// Asks about the shown meeting. The answer streams through [`ShellEvent::Meetings`].
     pub fn ask_meeting(&self, question: String) -> Result<(), ShellError> {
-        self.board.meetings_do(move |meetings| meetings.ask(&question));
+        self.board
+            .meetings_do(move |meetings| meetings.ask(&question));
         Ok(())
     }
 

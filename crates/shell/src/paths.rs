@@ -1,13 +1,18 @@
-//! Where a run keeps its files. `Shell` gets every one of them from its caller: `ProjectDirs` names
-//! the user's real folder by itself, so a process with its own bundle id would still land in it.
+//! Where a run keeps its files. `Shell` gets every one of them from its caller, or from
+//! [`real_paths`] once the run is proven to be the real app: `ProjectDirs` names the user's real
+//! folder by itself, so a process with its own bundle id would still land in it.
 
 use std::path::{Component, Path, PathBuf};
 
 use wf_core::settings::{SettingsStore, data_dir};
 use wf_dictation::remote::engine_host_beside;
-use wf_models::resolved;
+use wf_history::History;
+use wf_models::{ModelStore, resolved};
 
 use crate::bridge::ShellError;
+use crate::launch::Run;
+use crate::prefs;
+use crate::settings::system::export_folder;
 
 /// The dev app's folder, beside the real one.
 const DEV_ROOT: &str = "wispr-free-dev";
@@ -17,14 +22,14 @@ uniffi::use_remote_type!(wf_core::PathBuf);
 /// Every path a run touches.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Paths {
-    /// The run's own folder. Delete all removes it, and no model changes outside it (see
-    /// [`Paths::model_fence`]).
+    /// The run's own folder. Delete all removes it, and on a dev run no model changes outside it
+    /// (see [`Paths::model_fence`]).
     pub data: PathBuf,
     pub settings: PathBuf,
     /// Where the pill was left.
     pub pill: PathBuf,
     /// Where models live unless the settings name a folder. One the settings name may be anywhere,
-    /// so a dev run can read models that are already on disk.
+    /// which is how the real app reaches an external drive and a dev run reads what's on disk.
     pub models: PathBuf,
     /// The media note goes beside it.
     pub history: PathBuf,
@@ -67,12 +72,15 @@ impl Paths {
         Ok(())
     }
 
-    /// The one folder a run may change models in. A run may read models anywhere its settings say,
-    /// but until the cutover every `Shell` is the dev app's, and the user's real models folder is
-    /// named only in their real settings, which a dev run can't read. So this says what's allowed
-    /// rather than what isn't. **Ticket 15 must lift it on purpose**, with `check`.
-    pub fn model_fence(&self) -> Option<PathBuf> {
-        Some(self.data.clone())
+    /// The one folder a run may change models in, if it's fenced. A dev run may read models
+    /// anywhere its settings say, but the user's real models folder is named only in their real
+    /// settings, which a dev run can't read. So this says what's allowed rather than what isn't.
+    /// The real app owns its models wherever they are.
+    pub fn model_fence(&self, run: Run) -> Option<PathBuf> {
+        match run {
+            Run::Real => None,
+            Run::Dev => Some(self.data.clone()),
+        }
     }
 
     fn all(&self) -> [&PathBuf; 8] {
@@ -97,11 +105,27 @@ fn is_plain(path: &Path) -> bool {
             .all(|part| !matches!(part, Component::ParentDir | Component::CurDir))
 }
 
-/// The folders that hold the user's own data, by the names the other crates hard-code. Until the
-/// cutover every `Shell` is the dev app's, so it may start on none of them.
+/// The folders that hold the user's own data, by the names the other crates hard-code. A dev run
+/// may start on none of them.
 pub(crate) fn real_folders() -> Vec<PathBuf> {
     let settings = SettingsStore::default_path().and_then(|path| Some(path.parent()?.to_owned()));
     data_dir().into_iter().chain(settings).collect()
+}
+
+/// The real app's paths: where the app has always kept the user's data, by those same names.
+pub fn real_paths() -> Result<Paths, ShellError> {
+    let data = data_dir().ok_or(ShellError::NoHome)?;
+    let executable = std::env::current_exe().map_err(|_| ShellError::NoHome)?;
+    Ok(Paths {
+        settings: SettingsStore::default_path().ok_or(ShellError::NoHome)?,
+        pill: prefs::path().ok_or(ShellError::NoHome)?,
+        models: ModelStore::default_root().ok_or(ShellError::NoHome)?,
+        history: History::default_path().ok_or(ShellError::NoHome)?,
+        meetings: data.join("meetings"),
+        exports: export_folder(&data),
+        engine_host: engine_host_beside(&executable),
+        data,
+    })
 }
 
 /// The dev app's paths. Fails rather than guess when there's no home folder to put them in.

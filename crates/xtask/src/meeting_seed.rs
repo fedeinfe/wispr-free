@@ -77,7 +77,10 @@ fn finished(store: &MeetingStore) -> anyhow::Result<()> {
         partial: false,
         transcript_hash: hash,
     })?;
-    done(&mut meeting, &[Stage::Diarization, Stage::Refine, Stage::Summary])
+    done(
+        &mut meeting,
+        &[Stage::Diarization, Stage::Refine, Stage::Summary],
+    )
 }
 
 fn done(meeting: &mut Meeting, stages: &[Stage]) -> anyhow::Result<()> {

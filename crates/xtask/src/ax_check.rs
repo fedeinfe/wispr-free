@@ -77,7 +77,7 @@ impl Walk {
     }
 }
 
-/// What one window has to show. Its labels are the Slint app's, unchanged.
+/// What one window has to show. Its labels are the contract the app was ported against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Contract {
     /// The status menu item that opens it.
@@ -740,16 +740,14 @@ fn check_the_meetings(walker: &Path) -> anyhow::Result<()> {
         item: "",
         window: MEETINGS,
         title: MEETINGS,
-        labels: &[
-            FINISHED_TITLE,
-            UNFINISHED_TITLE,
-            "Detail hint",
-            START,
-        ],
+        labels: &[FINISHED_TITLE, UNFINISHED_TITLE, "Detail hint", START],
     };
     let walk = run.walk_until(|walk| broken(&empty, walk, app))?;
     for control in NEEDING_A_MEETING {
-        ensure!(walk.control(control).is_none(), "{control} shows with nothing picked");
+        ensure!(
+            walk.control(control).is_none(),
+            "{control} shows with nothing picked"
+        );
     }
     run.walker_does("select", &[MEETINGS, UNFINISHED_TITLE])?;
     let unfinished = Contract {
@@ -811,7 +809,10 @@ fn check_what_meetings_save(run: &Run) -> anyhow::Result<()> {
     run.walker_does("set", &[MEETINGS, "Meeting notes", notes])?;
     let deadline = Instant::now() + WAIT;
     while !meeting_noted(&root, notes)? {
-        ensure!(Instant::now() < deadline, "the notes never reached the disk");
+        ensure!(
+            Instant::now() < deadline,
+            "the notes never reached the disk"
+        );
         thread::sleep(POLL);
     }
     run.press(MEETINGS, "Export", Outcome::Landed("exports"))

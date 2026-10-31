@@ -207,7 +207,7 @@ impl Rig {
             pill,
             paths.clone(),
             Some(Box::new(|| Rc::new(QuietDesktop))),
-            Some(Box::new(move |_clock, hooks| {
+            Some(Box::new(move |hooks| {
                 Rc::new(FakeMachine(for_shell, hooks))
             })),
             |settings, on_event| Dictation::start(rehearsal::parts(&paths, settings, on_event)),

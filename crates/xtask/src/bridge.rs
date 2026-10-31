@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use uniffi::SwiftBindingsOptions;
 
-use crate::bundle::{DEV, cargo_tree, engines_in, target_dir, tool, workspace_root};
+use crate::bundle::{MINIMUM_MACOS, cargo_tree, engines_in, target_dir, tool, workspace_root};
 
 const SHELL: &str = "wf-shell";
 /// What rustc and the C compilers aim at unless told, which would be this Mac's own version.
@@ -129,7 +129,7 @@ fn build_library() -> anyhow::Result<PathBuf> {
             "--lib",
         ])
         .args(["--", "--print", "native-static-libs"])
-        .env(DEPLOYMENT_TARGET, DEV.minimum_macos)
+        .env(DEPLOYMENT_TARGET, MINIMUM_MACOS)
         .current_dir(workspace_root())
         .outputs()?;
     let tree = cargo_tree(SHELL)?;

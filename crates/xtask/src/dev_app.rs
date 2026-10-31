@@ -294,9 +294,14 @@ fn tour_footprint(rounds: u32, rehearse: bool, kept: Option<&Path>) -> anyhow::R
     ensure!(said.contains("shell closed"), "it didn't quit: {said}");
     no_focus_taken(&said)?;
     let footprint = footprint_in(&summary?).context("vmmap gave no footprint")?;
-    let run = if rehearse { "a rehearsal" } else { "the real flow" };
-    let what =
-        format!("after {rounds} round(s) of every window on {run} in {took:.0?}, closed for {SETTLE:?}:");
+    let run = if rehearse {
+        "a rehearsal"
+    } else {
+        "the real flow"
+    };
+    let what = format!(
+        "after {rounds} round(s) of every window on {run} in {took:.0?}, closed for {SETTLE:?}:"
+    );
     println!("{}", verdict_against(&what, footprint, USED_GOAL_MB));
     Ok(())
 }
@@ -318,7 +323,11 @@ fn tour_finished(log: &Path, limit: Duration) -> anyhow::Result<bool> {
 pub fn walk_report(said: &str) -> Vec<&str> {
     let lines = said.lines();
     lines
-        .filter(|line| ["stalls ", "meeting: ", "chat: ", "scrolled "].iter().any(|s| line.starts_with(s)))
+        .filter(|line| {
+            ["stalls ", "meeting: ", "chat: ", "scrolled "]
+                .iter()
+                .any(|s| line.starts_with(s))
+        })
         .collect()
 }
 

@@ -1,6 +1,6 @@
 # ADR-0002: Slint for all UI
 
-Status: accepted · 2026-10-30
+Status: superseded by ADR-0006 · 2026-10-31
 
 ## Context
 

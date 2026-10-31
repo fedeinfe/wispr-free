@@ -27,7 +27,7 @@ pub struct SystemContext;
 
 impl ContextSource for SystemContext {
     fn read(&self, depth: ContextDepth) -> Context {
-        // AX on our own windows re-enters Slint's accessibility adapter, which panics.
+        // Context is for the app being dictated into, and that's never this one.
         if let Some(app) = frontmost_app().filter(|app| app.pid == Some(std::process::id())) {
             return without_ax(Some(app), Focus::Unknown);
         }

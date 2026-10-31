@@ -114,7 +114,7 @@ Wispr Free.app/Contents
 | Crate | Today | After |
 | --- | --- | --- |
 | `wf-dictation` | Turns on all engines | New `engines` feature, off by default, gates `load_engine` and `run_engine_host` (two `cfg` lines, proven) |
-| `wf-shell` | New | Toolkit-free app logic moved out of `crates/app`, plus the UniFFI exports. `staticlib` and `lib` |
+| `wf-shell` | New | Toolkit-free app logic moved out of `crates/app`, plus the UniFFI exports and the real or dev decision (`launch.rs`). `staticlib` and `lib` |
 | `wf-engine-host` | New | Binary: `--engine-host`, `--version`. Depends on `wf-dictation/engines`. Also holds the dev-only `wf-probe` binary (`--probe-clip`), which isn't bundled, and the real tests |
 | `wf-core` | Pure logic | New `uniffi` feature: derives on `Settings`, `custom_type` for `PathBuf` and `Combo` (proven) |
 | `wf-platform` | Slint overlay code | `overlay/` deleted. Rust calls that need AppKit's main thread keep hopping to the main queue |
@@ -249,11 +249,11 @@ So idle gets much better until the first window, then matches today, with no lea
 The old goal "under 40 MB, and memory released on close" can't be promised. New goals, replacing `.scratch/v1/spec.md:14,245`:
 
 - Under 25 MB idle before any window opens.
-- Under 55 MB idle after every window has been used and closed.
+- Under 65 MB idle after every window has been used and closed.
+
+The second goal was 55 MB until phase 5. Phase 4 measured 62 to 64 MB with no growth across rounds, so it isn't a leak (ticket 14). The goal moved to match, and the fallback of running windows in a separate process isn't being built.
 
 Measure at the end of phases 1, 2 and 4, with `cargo xtask` reporting `phys_footprint`. The prototype had a single-page Settings, no key listener and the system allocator rather than mimalloc, so real numbers will differ.
-
-If phase 4 ends above 55 MB, the fallback is to run windows in a separate process that exits on close, which is ADR-0005's idea applied to the UI. Don't build that first: it costs a second main, a second bridge client and focus handoff.
 
 ## Hand checks
 

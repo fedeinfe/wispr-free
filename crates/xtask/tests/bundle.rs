@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use wf_dictation::remote::engine_host_beside;
+use wf_shell::launch::{Launch, decide};
 use xtask::bundle::{
-    DEV, Options, SLINT, Signer, built_binary, codesign_args, engines_in, foreign_libraries,
-    helper_path, iconset_files, info_plist, llama_libraries, options, rpath_libraries,
-    signing_order,
+    DEV, Options, REAL, Signer, built_binary, codesign_args, engines_in, foreign_libraries,
+    helper_path, info_plist, llama_libraries, options, rpath_libraries, signing_order,
 };
 
 const OTOOL: &str = "\
@@ -90,7 +90,7 @@ fn signing_goes_inside_out_and_the_helper_is_named() {
         app.join("Contents/Frameworks/libggml.0.dylib"),
     ];
 
-    let order = signing_order(&SLINT, app, &libraries);
+    let order = signing_order(&REAL, app, &libraries);
 
     assert_eq!(
         order,
@@ -139,12 +139,10 @@ fn tree_of(package: &str) -> String {
 /// ADR-0005.
 #[test]
 fn the_app_depends_on_no_engine() {
-    for package in ["wispr-free", "wf-shell"] {
-        let tree = tree_of(package);
+    let tree = tree_of("wf-shell");
 
-        assert!(tree.contains("wf-dictation"), "{package}");
-        assert_eq!(engines_in(&tree), Vec::<&str>::new(), "{package}");
-    }
+    assert!(tree.contains("wf-dictation"));
+    assert_eq!(engines_in(&tree), Vec::<&str>::new());
 }
 
 #[test]
@@ -162,7 +160,7 @@ fn a_tree_with_an_engine_in_it_is_caught() {
 
 #[test]
 fn the_plist_says_what_macos_asks_for() {
-    let plist = info_plist(&SLINT, "1.2.3");
+    let plist = info_plist(&REAL, "1.2.3");
 
     for key in [
         "NSMicrophoneUsageDescription",
@@ -210,20 +208,39 @@ fn the_dev_plist_names_its_own_app_on_the_swift_floor() {
     assert!(no_dock.trim_start().starts_with("<true/>"));
 }
 
+/// macOS ties the user's permissions to these, so they mustn't change.
 #[test]
-fn the_default_bundle_stays_the_slint_app() {
-    let plist = info_plist(&SLINT, "1.2.3");
+fn the_default_bundle_is_the_real_app_on_the_swift_floor() {
+    let plist = info_plist(&REAL, "1.2.3");
 
-    assert_eq!(SLINT.app, "Wispr Free.app");
+    assert_eq!(REAL.app, "Wispr Free.app");
     assert_eq!(DEV.app, "Wispr Free Dev.app");
     assert!(plist.contains("<string>Wispr Free</string>"));
-    assert!(!plist.contains("CFBundleIconName"));
-    assert!(!plist.contains("NSAccentColorName"));
+    let id = plist.split("<key>CFBundleIdentifier</key>").nth(1).unwrap();
+    assert!(
+        id.trim_start()
+            .starts_with("<string>com.wispr-free.app</string>")
+    );
+    let executable = plist.split("<key>CFBundleExecutable</key>").nth(1).unwrap();
+    assert!(
+        executable
+            .trim_start()
+            .starts_with("<string>wispr-free</string>")
+    );
     let minimum = plist
         .split("<key>LSMinimumSystemVersion</key>")
         .nth(1)
         .unwrap();
-    assert!(minimum.trim_start().starts_with("<string>13.0</string>"));
+    assert!(minimum.trim_start().starts_with("<string>26.0</string>"));
+    let icon = plist.split("<key>CFBundleIconName</key>").nth(1).unwrap();
+    assert!(icon.trim_start().starts_with("<string>AppIcon</string>"));
+}
+
+/// The build's ids and the app's decision are written in two crates.
+#[test]
+fn only_the_bundle_this_builds_as_real_starts_as_the_real_app() {
+    assert_eq!(decide(Some(REAL.id), &[]), Launch::Real);
+    assert_eq!(decide(Some(DEV.id), &[]), Launch::Dev);
 }
 
 fn parsed(args: &[&str]) -> anyhow::Result<Options> {
@@ -231,7 +248,7 @@ fn parsed(args: &[&str]) -> anyhow::Result<Options> {
 }
 
 #[test]
-fn with_no_flags_the_bundle_is_the_slint_app_and_stays_in_target() {
+fn with_no_flags_the_bundle_is_the_real_app_and_stays_in_target() {
     assert_eq!(
         parsed(&[]).unwrap(),
         Options {
@@ -252,18 +269,8 @@ fn the_dev_bundle_is_never_installed() {
 }
 
 #[test]
-fn the_icon_set_has_every_size_macos_looks_for() {
-    let files = iconset_files();
-
-    assert_eq!(files.len(), 10);
-    assert!(files.contains(&("icon_16x16.png".to_owned(), 16)));
-    assert!(files.contains(&("icon_16x16@2x.png".to_owned(), 32)));
-    assert!(files.contains(&("icon_512x512@2x.png".to_owned(), 1024)));
-}
-
-#[test]
 fn the_app_has_no_dock_icon_until_the_setting_asks_for_one() {
-    let plist = info_plist(&SLINT, "1.0.0");
+    let plist = info_plist(&REAL, "1.0.0");
     let after_key = plist.split("<key>LSUIElement</key>").nth(1).unwrap();
     assert!(after_key.trim_start().starts_with("<true/>"));
 }

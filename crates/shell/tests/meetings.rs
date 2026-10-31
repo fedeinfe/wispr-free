@@ -263,7 +263,6 @@ impl Harness {
         MeetingsParts {
             store: self.store.clone(),
             actions: Rc::clone(&self.actions) as Rc<dyn MeetingActions>,
-            theme: 0,
             export_dir: self.export_dir(),
             bring_to_front: Rc::new(|| {}),
         }

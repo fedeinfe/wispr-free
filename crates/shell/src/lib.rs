@@ -5,6 +5,7 @@ pub mod app_windows;
 pub mod bridge;
 pub mod clock;
 pub mod flow;
+pub mod launch;
 pub mod lists;
 pub mod meetings;
 pub mod memory;

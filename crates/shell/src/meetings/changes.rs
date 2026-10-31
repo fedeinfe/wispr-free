@@ -236,10 +236,7 @@ mod tests {
 
         assert_eq!(place(Rows::All(vec![line("a")])), RowsPlace::All);
         assert_eq!(place(Rows::Add(line("a"))), RowsPlace::End);
-        assert_eq!(
-            place(Rows::One(2, line("a"))),
-            RowsPlace::At { index: 2 }
-        );
+        assert_eq!(place(Rows::One(2, line("a"))), RowsPlace::At { index: 2 });
         assert_eq!(
             place(Rows::Insert(3, line("a"))),
             RowsPlace::Before { index: 3 }

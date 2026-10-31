@@ -356,6 +356,14 @@ struct PillRig {
         #expect(options.shots == nil)
     }
 
+    @Test func theRealAppIsARunAPersonStarted() {
+        let options = LaunchOptions(arguments: ["wispr-free"], real: true)
+
+        #expect(options.byHand)
+        #expect(!options.rehearse)
+        #expect(!options.behind)
+    }
+
     @Test func everyFlagIsRead() {
         let options = LaunchOptions(arguments: [
             "wispr-free", "--by-hand", "--debug-pill", "--rehearse", "--pill-state=locked",

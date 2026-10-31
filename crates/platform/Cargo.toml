@@ -11,12 +11,11 @@ publish.workspace = true
 # frameworks directly.
 [dependencies]
 wf-core.workspace = true
-raw-window-handle.workspace = true
 thiserror.workspace = true
 directories.workspace = true
 
-# Insertion + context (04): NSPasteboard, CGEvent paste, AX focused-text reads. Pill overlay (05):
-# NSPanel swap, screens, cursor and Esc state. Media while dictating (20): the output's mute.
+# Insertion + context (04): NSPasteboard, CGEvent paste, AX focused-text reads. Media while
+# dictating (20): the output's mute.
 [target.'cfg(target_os = "macos")'.dependencies]
 block2.workspace = true
 objc2.workspace = true
@@ -29,7 +28,7 @@ objc2-core-graphics.workspace = true
 objc2-application-services.workspace = true
 
 # Key capture (03): low-level hooks. Insertion + context (04): SendInput paste, clipboard,
-# UI Automation reads. Pill overlay (05): window styles, monitors, cursor and Esc state.
+# UI Automation reads.
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
@@ -54,7 +53,7 @@ windows = { workspace = true, features = [
 ] }
 
 # Key capture (03): evdev. Insertion + context (04): XTest paste (wtype/ydotool on Wayland),
-# clipboard, X11 window info. Pill overlay (05): stacking, monitors, cursor and Esc state.
+# clipboard, X11 window info.
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev.workspace = true
 arboard = { workspace = true, features = ["wayland-data-control"] }

@@ -10,7 +10,7 @@ env:
 
 jobs:
   fmt:
-    runs-on: ubuntu-latest
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -19,25 +19,16 @@ jobs:
       - run: cargo fmt --all --check
 
   build:
-    name: build (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      # Slint (winit + femtovg) needs fontconfig and xkbcommon headers, cpal needs ALSA. Later
-      # tickets add the evdev/X11/Wayland deps for the platform crate.
-      - name: Install Linux system deps
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libfontconfig1-dev libxkbcommon-dev libasound2-dev
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo build --workspace --locked
       - run: cargo test --workspace --locked
+      # What the Swift package needs from Rust is git-ignored, so it's made here first.
+      - run: cargo run --package xtask --locked -- bridge
+      - run: swift build --package-path apple
+      - run: swift test --package-path apple

@@ -4,7 +4,8 @@ import WfCore
 /// The app's life: start the shell, put up the pill and the menus, and let the shell put things
 /// back before going away. It never activates, so starting it can't take the focus from the user.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let options = LaunchOptions(arguments: CommandLine.arguments)
+    private let real: Bool
+    private let options: LaunchOptions
     private var shell: Shell?
     private var pill: PillController?
     private var statusItem: StatusItem?
@@ -16,6 +17,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var picking: Task<Void, Never>?
     private var terminateSignal: DispatchSourceSignal?
     private let events = EventStreams()
+
+    init(launch: Launch) {
+        real = launch == .real
+        options = LaunchOptions(arguments: CommandLine.arguments, real: real)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         quitOnTerminateSignal()
@@ -51,11 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func start() async {
         do {
-            let paths = try devPaths()
-            let shell =
-                options.rehearse
-                ? try await Shell.rehearse(paths: paths, sink: events.sink)
-                : try await Shell.start(paths: paths, sink: events.sink)
+            let shell = try await startShell()
             self.shell = shell
             log("shell started")
             Task { await follow() }
@@ -68,6 +70,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func startShell() async throws -> Shell {
+        if real {
+            return try await Shell.startReal(sink: events.sink)
+        }
+        let paths = try devPaths()
+        return options.rehearse
+            ? try await Shell.rehearse(paths: paths, sink: events.sink)
+            : try await Shell.start(paths: paths, sink: events.sink)
+    }
+
     private func show(on shell: Shell) throws {
         let editor = try SettingsEditor(core: shell)
         self.editor = editor
@@ -78,8 +90,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windows = Windows(
             core: shell, editor: editor, pages: pages, walk: walk,
             stage: options.behind ? .behind : .front)
+        // Launching never takes the foreground from the app in use, so this one doesn't activate.
         if options.byHand, editor.settings.general.showInDock {
-            showInDock(true)
+            NSApp.setActivationPolicy(.regular)
         }
         let pick: (MenuAction) -> Void = { [weak self] action in self?.pick(action) }
         let pill = PillController(

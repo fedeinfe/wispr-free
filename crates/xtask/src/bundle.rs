@@ -1,7 +1,8 @@
 //! `cargo xtask bundle` builds `target/Wispr Free.app` for this Mac; `--install` also copies it to
-//! `~/Applications`. `--dev` builds the Swift app instead, `target/Wispr Free Dev.app`, which is
-//! never installed. `cargo xtask signing-identity` makes a local certificate, once, so macOS keeps
-//! the app's permissions across rebuilds. Releases (signed for other people) are ticket 18's.
+//! `~/Applications`. `--dev` builds the same app as `target/Wispr Free Dev.app`, under its own id,
+//! which keeps it a dev run and is never installed. `cargo xtask signing-identity` makes a local
+//! certificate, once, so macOS keeps the app's permissions across rebuilds. Releases (signed for
+//! other people) are ticket 18's.
 //!
 //! macOS ties a permission to the code's designated requirement. For an ad-hoc signature that is
 //! the hash of the code, so any rebuilt binary is a stranger. For a certificate it is the
@@ -15,32 +16,27 @@ use anyhow::{Context as _, bail, ensure};
 
 use crate::bridge;
 
-/// One of the apps this builds. Its binary is called `wispr-free` either way.
+/// One of the apps this builds. Its binary is called `wispr-free` either way, and which it is
+/// comes from `id` alone (`wf_shell::launch`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Flavor {
     pub app: &'static str,
     name: &'static str,
-    id: &'static str,
-    pub minimum_macos: &'static str,
-    /// `actool` made the icon and the accent colour, so the plist can name them.
-    asset_catalogue: bool,
+    pub id: &'static str,
 }
 
-pub const SLINT: Flavor = Flavor {
+/// The app the user dictates with. Its id and certificate keep its permissions (ADR-0006).
+pub const REAL: Flavor = Flavor {
     app: "Wispr Free.app",
     name: "Wispr Free",
     id: BUNDLE_ID,
-    minimum_macos: MINIMUM_MACOS,
-    asset_catalogue: false,
 };
 
-/// The Swift app until the cutover. Its id keeps it apart from the app the user dictates with.
+/// Its id keeps it apart from the app the user dictates with, and off their data.
 pub const DEV: Flavor = Flavor {
     app: "Wispr Free Dev.app",
     name: "Wispr Free Dev",
     id: "com.wispr-free.app.dev",
-    minimum_macos: "26.0",
-    asset_catalogue: true,
 };
 
 const BUNDLE_ID: &str = "com.wispr-free.app";
@@ -49,7 +45,6 @@ const ENGINE_HOST: &str = "wf-engine-host";
 const ENGINE_HOST_ID: &str = "com.wispr-free.wf-engine-host";
 /// What SwiftPM calls the app's binary.
 const SWIFT_EXECUTABLE: &str = "WisprFree";
-const SHELL: &str = "wf-shell";
 /// This is a shared Mac.
 pub(crate) const SWIFT_JOBS: &str = "6";
 /// The crates ADR-0005 keeps out of everything but the engine host.
@@ -57,12 +52,11 @@ const ENGINES: [&str; 3] = ["llama-cpp-2", "whisper-rs", "sherpa-onnx"];
 const HELPERS: &str = "Contents/Helpers";
 const FRAMEWORKS: &str = "Contents/Frameworks";
 const ICON: &str = "AppIcon";
-const ICON_SOURCE: &str = "crates/app/ui/icons/app-icon.svg";
 const SWIFT_ICON: &str = "AppIcon.icon";
 const ASSETS: &str = "Assets.xcassets";
 const ACCENT: &str = "AccentColor";
-/// The oldest macOS the spec supports. Ticket 15's weak CoreAudio link is what makes it true.
-const MINIMUM_MACOS: &str = "13.0";
+/// The oldest macOS the spec supports (ADR-0006).
+pub const MINIMUM_MACOS: &str = "26.0";
 const IDENTITY: &str = "Wispr Free Local";
 const IDENTITY_DAYS: &str = "3650";
 /// Outside the login keychain, so signing never brings up a password dialog, and outside `target`,
@@ -94,20 +88,7 @@ pub fn codesign_args(signer: &Signer) -> Vec<String> {
 }
 
 pub fn info_plist(flavor: &Flavor, version: &str) -> String {
-    let Flavor {
-        name,
-        id,
-        minimum_macos,
-        ..
-    } = flavor;
-    let icon_name = if flavor.asset_catalogue {
-        format!(
-            "\n    <key>CFBundleIconName</key>\n    <string>{ICON}</string>\n    \
-             <key>NSAccentColorName</key>\n    <string>{ACCENT}</string>"
-        )
-    } else {
-        String::new()
-    };
+    let Flavor { name, id, .. } = flavor;
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -120,7 +101,9 @@ pub fn info_plist(flavor: &Flavor, version: &str) -> String {
     <key>CFBundleExecutable</key>
     <string>{EXECUTABLE}</string>
     <key>CFBundleIconFile</key>
-    <string>{ICON}</string>{icon_name}
+    <string>{ICON}</string>
+    <key>CFBundleIconName</key>
+    <string>{ICON}</string>
     <key>CFBundleIdentifier</key>
     <string>{id}</string>
     <key>CFBundleInfoDictionaryVersion</key>
@@ -134,11 +117,13 @@ pub fn info_plist(flavor: &Flavor, version: &str) -> String {
     <key>CFBundleVersion</key>
     <string>{version}</string>
     <key>LSMinimumSystemVersion</key>
-    <string>{minimum_macos}</string>
+    <string>{MINIMUM_MACOS}</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSAppleEventsUsageDescription</key>
     <string>Wispr Free pauses this player while you dictate and resumes it afterwards, if you turned that on in Settings.</string>
+    <key>NSAccentColorName</key>
+    <string>{ACCENT}</string>
     <key>NSAudioCaptureUsageDescription</key>
     <string>Wispr Free records the other side of a meeting, only after you start meeting notes. It stays on this Mac.</string>
     <key>NSHighResolutionCapable</key>
@@ -151,19 +136,6 @@ pub fn info_plist(flavor: &Flavor, version: &str) -> String {
 </plist>
 "#
     )
-}
-
-/// The files of a macOS `.iconset`, with the pixels each one has.
-pub fn iconset_files() -> Vec<(String, u32)> {
-    [16, 32, 128, 256, 512]
-        .into_iter()
-        .flat_map(|points: u32| {
-            [
-                (format!("icon_{points}x{points}.png"), points),
-                (format!("icon_{points}x{points}@2x.png"), points * 2),
-            ]
-        })
-        .collect()
 }
 
 /// What `otool -L` reports as loaded through the rpath, by file name.
@@ -272,11 +244,8 @@ pub fn run(args: impl Iterator<Item = String>) -> anyhow::Result<()> {
 
     let target = target_dir();
     let signer = local_signer()?.unwrap_or(Signer::AdHoc);
-    let app = if dev {
-        assemble_dev(&target, &signer)?
-    } else {
-        assemble(&target, &signer)?
-    };
+    let flavor = if dev { DEV } else { REAL };
+    let app = assemble(&flavor, &target, &signer)?;
     println!("built {}", app.display());
     match signer {
         Signer::AdHoc => println!(
@@ -421,33 +390,14 @@ pub fn target_dir() -> PathBuf {
     std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| workspace_root().join("target"), Into::into)
 }
 
-/// Lays out the bundle and signs it, replacing any earlier one.
-fn assemble(target: &Path, signer: &Signer) -> anyhow::Result<PathBuf> {
-    let binary = built_binary(&cargo_build(EXECUTABLE)?, EXECUTABLE)
-        .context("cargo didn't report the app's binary")?;
-    let host = build_host_with_portable_libraries()?;
-    let app = target.join(SLINT.app);
-    let layout = Layout::new(&app, &SLINT)?;
-    render_icon(target, &layout.resources.join(format!("{ICON}.icns")))?;
-
-    fs::copy(&binary, &layout.binary)?;
-    links_macos_alone(&layout.binary)?;
-    for package in [EXECUTABLE, SHELL] {
-        let tree = cargo_tree(package)?;
-        let engines = engines_in(&tree);
-        ensure!(engines.is_empty(), "{package} links {engines:?}");
-    }
-    finish(&app, &SLINT, &host, signer)?;
-    Ok(app)
-}
-
-/// The Swift app. Its Rust is `wf-shell`, linked in by `swift build`, and the rest is the same.
-fn assemble_dev(target: &Path, signer: &Signer) -> anyhow::Result<PathBuf> {
+/// Lays out the bundle and signs it, replacing any earlier one. Its Rust is `wf-shell`, linked in by
+/// `swift build`. `bridge::build` has checked that holds no engine.
+fn assemble(flavor: &Flavor, target: &Path, signer: &Signer) -> anyhow::Result<PathBuf> {
     bridge::build()?;
     let host = build_host_with_portable_libraries()?;
     let products = swift_build()?;
-    let app = target.join(DEV.app);
-    let layout = Layout::new(&app, &DEV)?;
+    let app = target.join(flavor.app);
+    let layout = Layout::new(&app, flavor)?;
     compile_assets(&layout.resources, target)?;
 
     fs::copy(products.join(SWIFT_EXECUTABLE), &layout.binary)?;
@@ -465,7 +415,7 @@ fn assemble_dev(target: &Path, signer: &Signer) -> anyhow::Result<PathBuf> {
                 .succeed()?;
         }
     }
-    finish(&app, &DEV, &host, signer)?;
+    finish(&app, flavor, &host, signer)?;
     Ok(app)
 }
 
@@ -553,37 +503,11 @@ fn compile_assets(resources: &Path, target: &Path) -> anyhow::Result<()> {
         .arg("--compile")
         .arg(resources)
         .args(["--platform", "macosx", "--target-device", "mac"])
-        .args(["--minimum-deployment-target", DEV.minimum_macos])
+        .args(["--minimum-deployment-target", MINIMUM_MACOS])
         .args(["--app-icon", ICON, "--accent-color", ACCENT])
         .arg("--output-partial-info-plist")
         .arg(target.join("wf-bridge/icon.plist"))
         .succeed()
-}
-
-/// Draws the icon from its SVG, each size from the source so small ones stay sharp.
-fn render_icon(target: &Path, icns: &Path) -> anyhow::Result<()> {
-    let source = workspace_root().join(ICON_SOURCE);
-    let iconset = target.join(format!("{ICON}.iconset"));
-    if iconset.exists() {
-        fs::remove_dir_all(&iconset)?;
-    }
-    fs::create_dir_all(&iconset)?;
-    for (name, pixels) in iconset_files() {
-        let pixels = pixels.to_string();
-        tool("sips")
-            .args(["-s", "format", "png", "-z", &pixels, &pixels])
-            .arg(&source)
-            .arg("--out")
-            .arg(iconset.join(name))
-            .succeed()?;
-    }
-    tool("iconutil")
-        .args(["-c", "icns", "-o"])
-        .arg(icns)
-        .arg(&iconset)
-        .succeed()?;
-    fs::remove_dir_all(&iconset)?;
-    Ok(())
 }
 
 /// The engine host and where the build left the libraries it needs.
@@ -694,7 +618,7 @@ fn codesign(signer: &Signer, path: &Path, identifier: Option<&str>) -> anyhow::R
 fn install_app(app: &Path) -> anyhow::Result<PathBuf> {
     let folder = home()?.join("Applications");
     fs::create_dir_all(&folder)?;
-    let installed = folder.join(SLINT.app);
+    let installed = folder.join(REAL.app);
     if installed.exists() {
         let plist = fs::read_to_string(installed.join("Contents/Info.plist")).unwrap_or_default();
         ensure!(

@@ -59,5 +59,8 @@ fn a_run_that_was_activated_fails() {
 fn a_walks_report_is_what_it_timed_and_not_the_rest_of_the_log() {
     let said = "shell started\nstalls open: longest 5 ms\nreleased Meetings\nmeeting: 195 lines\n";
 
-    assert_eq!(walk_report(said), ["stalls open: longest 5 ms", "meeting: 195 lines"]);
+    assert_eq!(
+        walk_report(said),
+        ["stalls open: longest 5 ms", "meeting: 195 lines"]
+    );
 }

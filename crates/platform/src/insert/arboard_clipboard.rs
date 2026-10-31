@@ -1,5 +1,5 @@
-//! Windows and Linux clipboard through arboard, which Slint already depends on. It keeps text
-//! and images; other formats (file lists, rich text) are not restored.
+//! Windows and Linux clipboard through arboard. It keeps text and images; other formats (file
+//! lists, rich text) are not restored.
 
 use arboard::ImageData;
 

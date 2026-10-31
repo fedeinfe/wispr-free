@@ -1,4 +1,5 @@
-//! The dev app must never reach the user's data, however it gets started (ticket 09).
+//! The dev app must never reach the user's data, however it gets started (ticket 09), and only the
+//! real app is free of that (ticket 15).
 //!
 //! `ProjectDirs` finds the real root through `HOME`, so these run `Shell` in a child process whose
 //! `HOME` is a temp folder. Anything that falls back to the real root lands in that folder's
@@ -16,11 +17,13 @@ use std::time::{Duration, SystemTime};
 
 use tempfile::TempDir;
 use wf_core::pill::dock::{Display, Rect};
-use wf_core::settings::Settings;
+use wf_core::settings::{PipelineTier, Settings};
 use wf_models::Catalog;
 use wf_shell::bridge::{EventSink, SaveOutcome, Shell, ShellError, ShellEvent};
 use wf_shell::flow::parts_at;
-use wf_shell::paths::{Paths, dev_paths};
+use wf_shell::launch::Run;
+use wf_shell::paths::{Paths, dev_paths, real_paths};
+use wf_shell::settings::page::SettingsPage;
 use wf_shell::settings::values::RuledChange;
 
 type AimAtReal = fn(&mut Paths, PathBuf);
@@ -505,4 +508,166 @@ fn a_real_root_is_a_folder_not_a_prefix_of_the_dev_one() {
             .check(&[real.to_owned()])
             .is_err()
     );
+}
+
+/// The fence is only ever off for the real app.
+#[test]
+fn only_the_real_app_has_no_model_fence() {
+    let root = Path::new("/Users/someone/Library/Application Support/wispr-free-dev");
+    let paths = Paths::under(root, "/app/wf-engine-host".into());
+
+    assert_eq!(paths.model_fence(Run::Dev).as_deref(), Some(root));
+    assert_eq!(paths.model_fence(Run::Real), None);
+}
+
+/// Whatever a test gets wrong, it can't start on the real data: it isn't the real bundle, and the
+/// real wiring it may use stays off the real folders.
+#[test]
+fn a_test_can_never_start_the_real_app_on_the_real_folders() {
+    let home = TempDir::new().unwrap();
+    seed_real_root(home.path());
+    let before = snapshot(&real_root(home.path()));
+
+    run_child(home.path(), "child_tries_to_be_the_real_app");
+
+    assert_eq!(snapshot(&real_root(home.path())), before);
+    assert!(!home.path().join("Library/LaunchAgents").exists());
+}
+
+#[test]
+#[ignore = "the child of a_test_can_never_start_the_real_app_on_the_real_folders"]
+fn child_tries_to_be_the_real_app() {
+    if !in_child() {
+        return;
+    }
+    let started = now(Shell::start_real(Arc::new(NoSink)));
+    assert!(matches!(started, Err(ShellError::NotTheRealApp)));
+
+    let wired = Shell::real_wiring(real_paths().unwrap(), Arc::new(NoSink));
+    assert!(matches!(wired, Err(ShellError::RealData { .. })));
+}
+
+#[test]
+fn the_real_paths_are_where_the_app_always_kept_the_data() {
+    let home = TempDir::new().unwrap();
+
+    run_child(home.path(), "child_reads_the_real_paths");
+
+    assert_eq!(walk(home.path()), Vec::<PathBuf>::new());
+}
+
+#[test]
+#[ignore = "the child of the_real_paths_are_where_the_app_always_kept_the_data"]
+fn child_reads_the_real_paths() {
+    if !in_child() {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    let root = real_root(&home);
+
+    let paths = real_paths().unwrap();
+
+    assert_eq!(paths.data, root);
+    assert_eq!(paths.settings, root.join("settings.toml"));
+    assert_eq!(paths.pill, root.join("pill.toml"));
+    assert_eq!(paths.models, root.join("models"));
+    assert_eq!(paths.history, root.join("history.sqlite3"));
+    assert_eq!(paths.meetings, root.join("meetings"));
+    assert_eq!(paths.exports, home.join("Downloads"));
+}
+
+/// As the Slint app left it: `theme` and `app_language` beside what has to survive them.
+fn old_settings(models: &Path) -> String {
+    format!(
+        "[general]\ntheme = \"dark\"\napp_language = \"en\"\nlanguages = [\"it\"]\n\
+         show_pill = false\nlaunch_at_login = true\n\n\
+         [pipeline]\ntier = \"lite\"\nmodels_folder = {:?}\n\n\
+         [style]\ndictionary = [\"Infelici\"]\n\n\
+         [media]\nsounds = false\n",
+        models.display().to_string()
+    )
+}
+
+/// The real app's rules, on a folder of the test's and a `HOME` of the test's: everything a dev run
+/// is kept off, this one reaches.
+#[test]
+fn the_real_wiring_keeps_old_settings_and_takes_the_login_entry_and_the_models() {
+    let home = TempDir::new().unwrap();
+    let root = home.path().join("data");
+    let models = home.path().join("Extreme SSD/test");
+    let (_, model) = fake_model(&models);
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("settings.toml"), old_settings(&models)).unwrap();
+    fs::write(
+        root.join("pill.toml"),
+        "edge = \"left\"\nsounds = false\nsettings_page = \"privacy\"\n",
+    )
+    .unwrap();
+
+    run_child(home.path(), "child_is_the_real_app_on_its_own_folder");
+
+    assert!(!model.exists(), "the fence is still up");
+    let written = fs::read_to_string(root.join("settings.toml")).unwrap();
+    assert!(!written.contains("theme") && !written.contains("app_language"));
+    assert!(written.contains("Infelici"), "{written}");
+    assert!(
+        fs::read_to_string(home.path().join(LOGIN_ENTRY))
+            .unwrap()
+            .contains("<string>com.wispr-free.app</string>")
+    );
+}
+
+const LOGIN_ENTRY: &str = "Library/LaunchAgents/com.wispr-free.app.plist";
+
+#[test]
+#[ignore = "the child of the_real_wiring_keeps_old_settings_and_takes_the_login_entry_and_the_models"]
+fn child_is_the_real_app_on_its_own_folder() {
+    if !in_child() {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    let entry = home.join(LOGIN_ENTRY);
+    let paths = Paths::under(&home.join("data"), "/app/wf-engine-host".into());
+    let shell = Shell::real_wiring(paths, Arc::new(NoSink)).unwrap();
+    let pages = |shell: &Shell| now(shell.pages_state()).unwrap().unwrap();
+
+    let current = shell.settings().unwrap();
+    let settings = &current.settings;
+    assert_eq!(settings.general.languages, ["it"]);
+    assert!(!settings.general.show_pill);
+    assert!(settings.general.launch_at_login);
+    assert_eq!(settings.pipeline.tier, PipelineTier::Lite);
+    assert_eq!(
+        settings.pipeline.models_folder.as_deref(),
+        Some(home.join("Extreme SSD/test").as_path())
+    );
+    assert_eq!(settings.style.dictionary, ["Infelici"]);
+    assert!(!settings.media.sounds);
+    assert_eq!(shell.settings_page().unwrap(), SettingsPage::Privacy);
+    assert!(entry.is_file(), "the start didn't write the login entry");
+
+    shell
+        .change_setting(RuledChange::LaunchAtLogin { on: false })
+        .unwrap();
+    assert_eq!(pages(&shell).notice, "");
+    assert!(!entry.exists());
+    shell
+        .change_setting(RuledChange::LaunchAtLogin { on: true })
+        .unwrap();
+    assert_eq!(pages(&shell).notice, "");
+    assert!(entry.is_file());
+
+    let state = pages(&shell);
+    assert!(!state.models_read_only, "{:?}", state.models_folder);
+    let installed = state.models.iter().find(|row| row.installed).unwrap().index;
+    shell.delete_model(installed).unwrap();
+    let said = pages(&shell).model_error;
+    assert_eq!(said, "");
+
+    let current = shell.settings().unwrap();
+    let mut changed = current.settings.clone();
+    changed.general.show_pill = true;
+    let saved = now(Arc::clone(&shell).save(changed, current.revision)).unwrap();
+    assert!(matches!(saved, SaveOutcome::Saved { .. }));
+    now(shell.quit()).unwrap();
 }

@@ -34,7 +34,7 @@
 
 **Trial dictation**: a real dictation that pastes nothing and shows its text in the onboarding window, to prove the shortcut, microphone and models. It names the part that failed.
 
-**Engine host**: the child process, the app's own binary, that holds one loaded engine. Killing it is how a model unloads (ADR-0005).
+**Engine host**: the child process, the separate `wf-engine-host` binary, that holds one loaded engine. Killing it is how a model unloads (ADR-0005).
 
 **Model catalog**: the versioned manifest of downloadable models with size, checksum, license and RAM needs.
 

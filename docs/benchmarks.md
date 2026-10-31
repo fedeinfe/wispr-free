@@ -46,7 +46,7 @@ No model outside the catalog is needed. Qwen3.5 runs on the bundled llama.cpp, w
 - **WER** is pooled, all edits over all reference words, ignoring case and punctuation. Accents count.
 - **Speed.** Three runs per clip after a discarded warm-up. "10 s clip" is the median over the short clips, each its own median.
 - **Memory.** `peak RSS` from a watchdog sampling the process tree every 0.5 s, which kills a job above 16 GB. No job came near it. RSS counts mapped model pages. `ram_mb` in the catalog is the larger of RSS and footprint, rounded up to 50 MB.
-- **End to end.** `tier_benchmark` in `crates/app/tests/real_dictation.rs`: real child processes, the clip played at real speed, 0.4 s of silence each side, one cold and four warm dictations, and the median of the warm ones. Time runs from release to the insertion seam, so it leaves out the paste itself. The engines load while the user speaks, so cold runs matched warm ones. The model files were already in the OS cache, so a load from a cold disk was not measured.
+- **End to end.** `tier_benchmark` in `crates/engine-host/tests/real_dictation.rs`: real child processes, the clip played at real speed, 0.4 s of silence each side, one cold and four warm dictations, and the median of the warm ones. Time runs from release to the insertion seam, so it leaves out the paste itself. The engines load while the user speaks, so cold runs matched warm ones. The model files were already in the OS cache, so a load from a cold disk was not measured.
 - **Lite-class estimates** are not measurements of such a machine. See below.
 
 ## ASR

@@ -25,19 +25,11 @@ wf-dictation = { path = "crates/dictation" }
 wf-meetings = { path = "crates/meetings" }
 wf-shell = { path = "crates/shell" }
 
-# UI
-slint = "1.18.1"
-slint-build = "1.18.1"
-i-slint-backend-testing = "1.18.1"
-
 # The bridge to Swift. Pre-1.0, so pinned exactly (spec, Bridge).
 uniffi = { version = "=0.32.2", default-features = false }
 
 # Allocator that hands freed pages back, so closing a window shrinks the process (ticket 12)
 mimalloc = { version = "0.1.52", default-features = false }
-
-# Native dialogs
-rfd = "0.17.2"
 
 # Files
 same-file = "1.0.6"
@@ -65,8 +57,7 @@ sherpa-onnx = "2.0.1"
 whisper-rs = "0.16.0"
 llama-cpp-2 = { version = "0.1.160", default-features = false, features = ["dynamic-link"] }
 
-# Platform: insertion and context (ticket 04). objc2 0.6 / windows 0.62 / x11rb 0.13 match
-# what Slint already pulls in.
+# Platform: insertion and context (ticket 04).
 objc2 = "0.6.5"
 dispatch2 = "0.3.1"
 objc2-foundation = "0.3.2"
@@ -84,7 +75,6 @@ rusqlite = { version = "0.41.1", features = ["bundled"] }
 # Platform
 windows-sys = "0.61.2"
 evdev = "0.13.2"
-raw-window-handle = { version = "0.6.2", features = ["std"] }
 
 # Common
 anyhow = "1.0.104"

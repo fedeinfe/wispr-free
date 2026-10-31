@@ -266,6 +266,14 @@ private func changed(_ event: ShellEvent) -> Versioned? {
         try await rig.shell.quit()
     }
 
+    /// However a test goes wrong, it isn't the real bundle, so it never gets the real data.
+    @Test func aTestRunIsADevRunAndCannotStartTheRealApp() async {
+        #expect(thisLaunch() == .dev)
+        await #expect(throws: ShellError.NotTheRealApp) {
+            _ = try await Shell.startReal(sink: EventStreams().sink)
+        }
+    }
+
     @Test func devPathsAreBesideTheRealRootNotInIt() throws {
         let paths = try devPaths()
 

@@ -1,6 +1,6 @@
 # ADR-0006: SwiftUI and AppKit over the Rust core
 
-Status: proposed · 2026-10-31. Takes effect at the cutover in `.scratch/apple-ui/spec.md`, and then supersedes ADR-0002.
+Status: accepted · 2026-10-31. Supersedes ADR-0002.
 
 ## Context
 
@@ -19,4 +19,5 @@ The pill is a solid dark capsule, not Liquid Glass. Glass on a never-key panel a
 - The Slint attribution goes, along with the private activation call and most of the `objc2` window code.
 - ADR-0001: the "warm settings window" gives way to system colours. Our own palette, icon and sounds stay.
 - ADR-0005: an engine host is no longer the app's own binary, and it needs its own signature.
-- Memory after the first window goes from a promise of under 40 MB to a goal of under 55 MB, because SwiftUI keeps its state. Idle before any window improves to about 18 MB.
+- Memory after the first window goes from a promise of under 40 MB to a goal of under 65 MB after every window has been used, because SwiftUI keeps its state. Measured at the cutover: 62 to 64 MB, flat across rounds, so not a leak. The separate-process fallback isn't being built. Idle before any window stays under 25 MB, at about 20 MB.
+- Only the real bundle, `com.wispr-free.app` started plainly, is the real app. Everything else, tests and tools included, is a dev run on its own folder with no keys or microphone unless a person asks. `wf_shell::launch` decides this from what the OS says.

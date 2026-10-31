@@ -10,7 +10,7 @@ wispr-free aims for feature and UX parity with Wispr Flow's dictation, notetaker
 
 - We reproduce **behaviour** (state machines, timings, defaults, UX flows) and write all code, prompts, copy, icons, sounds and illustrations ourselves.
 - No Wispr code, prompts, strings, assets, API keys or endpoints enter this repository. The raw study notes stay private, outside the repo.
-- Visual design: similar layout and feel (a small dark capsule pill, a warm, calm settings window). We use our own palette, iconography and sounds. Fonts come only from their original OFL sources.
+- Visual design: similar layout and feel (a small dark capsule pill). Windows use system colours and controls (ADR-0006). Our own icon, pill and sounds stay.
 - The product name and branding must not suggest an affiliation with Wispr.
 
 ## Consequences

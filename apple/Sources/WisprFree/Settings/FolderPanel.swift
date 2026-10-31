@@ -1,6 +1,6 @@
 import AppKit
 
-/// The system's folder picker, in place of the one the Slint app borrows from `rfd`.
+/// The system's folder picker.
 enum FolderPanel {
     static func make(from start: String) -> NSOpenPanel {
         let panel = NSOpenPanel()

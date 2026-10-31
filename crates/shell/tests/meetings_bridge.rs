@@ -230,7 +230,9 @@ fn asking_again_raises_the_window_and_keeps_what_it_shows() {
         })
     });
 
-    rig.shell.edit_meeting_notes("Still here".to_owned()).unwrap();
+    rig.shell
+        .edit_meeting_notes("Still here".to_owned())
+        .unwrap();
     let store = rig.store();
     eventually("the save", || {
         store.open(&id).unwrap().notes().unwrap() == "Still here"
@@ -257,7 +259,10 @@ fn a_meeting_lands_all_in_one_change_so_nothing_shows_half_drawn() {
         .unwrap();
     let has = |wanted: fn(&MeetingsChange) -> bool| batch.iter().any(wanted);
     assert!(has(|change| matches!(change, MeetingsChange::Title { .. })));
-    assert!(has(|change| matches!(change, MeetingsChange::Stages { .. })));
+    assert!(has(|change| matches!(
+        change,
+        MeetingsChange::Stages { .. }
+    )));
     assert!(has(|change| matches!(change, MeetingsChange::Chat { .. })));
     assert_eq!(rig.book.title, "Launch");
     assert_eq!(rig.book.speakers, [1]);
@@ -271,12 +276,16 @@ fn a_title_a_note_and_a_name_reach_the_disk_in_the_order_typed() {
     rig.pick(&id);
 
     rig.shell.edit_meeting_title("Launch".to_owned()).unwrap();
-    rig.shell.edit_meeting_title("Launch plan".to_owned()).unwrap();
+    rig.shell
+        .edit_meeting_title("Launch plan".to_owned())
+        .unwrap();
     rig.shell.edit_meeting_notes("One".to_owned()).unwrap();
     rig.shell.edit_meeting_notes("One two".to_owned()).unwrap();
     rig.shell.name_speaker(1, "Giulia".to_owned()).unwrap();
 
-    rig.until("the title in the list", |rig| rig.book.rows == ["Launch plan"]);
+    rig.until("the title in the list", |rig| {
+        rig.book.rows == ["Launch plan"]
+    });
     let saved = rig.store().open(&id).unwrap();
     assert_eq!(saved.notes().unwrap(), "One two");
     assert_eq!(saved.record().title.as_deref(), Some("Launch plan"));
@@ -291,7 +300,9 @@ fn what_was_being_typed_survives_closing_the_window_and_the_next_one_finds_it() 
     rig.open_with(1);
     rig.pick(&id);
 
-    rig.shell.edit_meeting_notes("Last words".to_owned()).unwrap();
+    rig.shell
+        .edit_meeting_notes("Last words".to_owned())
+        .unwrap();
     rig.close();
     rig.open();
     rig.book = Book::default();
@@ -308,7 +319,9 @@ fn what_was_being_typed_survives_quitting() {
     rig.open_with(1);
     rig.pick(&id);
 
-    rig.shell.edit_meeting_notes("Goodnight".to_owned()).unwrap();
+    rig.shell
+        .edit_meeting_notes("Goodnight".to_owned())
+        .unwrap();
     now(rig.shell.quit()).unwrap();
 
     assert_eq!(rig.store().open(&id).unwrap().notes().unwrap(), "Goodnight");
@@ -390,8 +403,12 @@ fn an_answer_streams_through_the_whole_way_and_its_times_are_checked() {
     rig.pick(&id);
 
     rig.shell.ask_meeting("Who sends it?".to_owned()).unwrap();
-    rig.until("the first word", |rig| rig.book.streaming.starts_with("Send"));
-    rig.until("the answer", |rig| !rig.book.chat.is_empty() && !rig.book.running);
+    rig.until("the first word", |rig| {
+        rig.book.streaming.starts_with("Send")
+    });
+    rig.until("the answer", |rig| {
+        !rig.book.chat.is_empty() && !rig.book.running
+    });
 
     let [message] = rig.book.chat.as_slice() else {
         panic!("one answer");
@@ -412,7 +429,9 @@ fn stop_ends_an_answer_where_it_got_to() {
     rig.pick(&id);
 
     rig.shell.ask_meeting("Who sends it?".to_owned()).unwrap();
-    rig.until("the first word", |rig| rig.book.streaming.starts_with("Send"));
+    rig.until("the first word", |rig| {
+        rig.book.streaming.starts_with("Send")
+    });
     rig.shell.stop_meeting_chat().unwrap();
 
     rig.until("the end of it", |rig| !rig.book.running);

@@ -2,7 +2,7 @@
 
 Status: needs-triage
 
-A free, open-source, fully local voice-typing app for macOS, Windows and Linux, written in Rust with a Slint UI. It covers the useful core of Wispr Flow: system-wide dictation with a floating pill, a meeting notetaker with chat, and a settings window. Nothing leaves the machine.
+A free, open-source, fully local voice-typing app for macOS, written in Rust with a SwiftUI interface (ADR-0006). Windows and Linux are parked, and what this spec says about them is kept for when they return. It covers the useful core of Wispr Flow: system-wide dictation with a floating pill, a meeting notetaker with chat, and a settings window. Nothing leaves the machine.
 
 This spec describes behaviour in our own words. It is based on a clean-room study of Wispr Flow 1.6.1297 (see ADR-0001). The private study notes are not part of this repo.
 
@@ -11,7 +11,7 @@ This spec describes behaviour in our own words. It is based on a clean-room stud
 1. **Dictation anywhere.** Hold a shortcut, speak, release, and polished text appears in the focused app.
 2. **Local only.** Audio, transcripts, notes and models stay on the device. No account, no telemetry, no network except model downloads the user starts.
 3. **Wispr-level output where the hardware allows.** Same cleanup behaviour (fillers, stutters, self-corrections, formatting), using a local pipeline whose heavy stages can be turned off on weak machines.
-4. **Light.** Idle RAM under 40 MB with no models loaded. One small native binary per platform, with the inference libraries it needs beside it (ADR-0003). Models load lazily and unload after an idle timeout.
+4. **Light.** Idle footprint under 25 MB before any window opens, and under 65 MB after every window has been used and closed, with no models loaded (`.scratch/apple-ui/spec.md`, Memory). One small native app, with the inference libraries it needs beside it (ADR-0003). Models load lazily and unload after an idle timeout.
 
 ## Non-goals (v1)
 
@@ -197,14 +197,14 @@ If no text field is focused, keep the text as "last transcript", leave the clipb
 
 Opened from the tray or the pill menu. Created on open and destroyed on close to save memory. Sidebar pages:
 
-- **General:** shortcuts (recorder), microphone (auto / ranked list / test meter), my languages (or auto-detect), app language, theme (system/light/dark), launch at login, show pill, show in Dock (mac).
+- **General:** shortcuts (recorder), microphone (auto / ranked list / test meter), my languages (or auto-detect), launch at login, show pill, show in Dock (mac).
 - **Models:** hardware summary, recommended tier, the models folder (any folder, external drives included), downloaded models apart from the available ones, each with size, RAM and the stage that uses it, and download / delete / verify (see §6).
 - **Pipeline:** quality tier (Lite / Balanced / High / Custom) plus per-stage toggles (denoise, VAD, LLM cleanup), cleanup strength, VAD auto-stop, the model per stage with its download state and a Download button when it is missing, and keep models loaded (always / 5 min / unload after use).
 - **Style & dictionary:** styles per app category, dictionary words and replacements, snippets, auto-add corrected words to the dictionary.
 - **Meetings:** auto-detect suggestion, live transcript, refine pass, diarization, keep audio, max length, summary template.
 - **Sounds & media:** sounds, mute or pause media while dictating.
 - **Privacy & data:** context awareness, history retention, data folder, export all, delete all data.
-- **About:** version, licenses (including Slint attribution), check for updates (manual link only).
+- **About:** version, licenses, check for updates (manual link only).
 
 ## 6. Models and hardware tiers
 
@@ -242,6 +242,6 @@ Exact model picks are validated by benchmark (ticket 14) and live in the manifes
 - [ ] "I like the red one, oh no, I meant the blue one" → "I like the blue one." on Balanced and High.
 - [ ] "um so I I think we should uh ship it" → "So I think we should ship it." on every tier, including with the LLM off.
 - [ ] With no network, every feature works once the models are downloaded.
-- [ ] Idle RSS < 40 MB with no models loaded. Settings window closed → its memory is released.
+- [ ] Idle footprint < 25 MB before any window, and < 65 MB after every window has been used and closed, with no models loaded.
 - [ ] A 30-minute meeting produces a timestamped transcript, a summary and a working chat on Balanced.
 - [ ] Turning off LLM cleanup on a Lite machine, and VAD where the engine allows it, keeps dictation latency within the Lite target.

@@ -1,7 +1,8 @@
 import Foundation
 
-/// What the command line asks of a run. With none of it the app takes no keys and no clicks, so a
-/// test that starts it can't race the real app or open the microphone.
+/// What the command line asks of a run. With none of it a dev run takes no keys and no clicks, so a
+/// test that starts it can't race the real app or open the microphone. The real app is always a run
+/// a person started, and Rust has ruled out every tool's flag before it gets here.
 struct LaunchOptions: Equatable {
     /// A person started this: listen to the keys and let the pill catch the mouse.
     var byHand = false
@@ -29,7 +30,8 @@ struct LaunchOptions: Equatable {
     /// Moves through the first meeting, timing the main thread, then quits.
     var walkMeeting = false
 
-    init(arguments: [String]) {
+    init(arguments: [String], real: Bool = false) {
+        byHand = real
         #if DEBUG
             debugPill = true
         #endif

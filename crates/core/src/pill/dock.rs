@@ -2,7 +2,7 @@
 //!
 //! Positions are in **desktop units**: one top-left-origin coordinate space across all screens,
 //! whatever the OS natively uses for placing windows (points on macOS, pixels on Windows and
-//! X11). Sizes of Slint content are in logical points; `Display::units_per_point` converts.
+//! X11). Sizes of what the pill draws are in logical points; `Display::units_per_point` converts.
 
 use std::str::FromStr;
 

@@ -35,7 +35,7 @@ pub struct MachineHooks {
 }
 
 /// Makes the machine on the pages' thread, where its timers and `Rc`s can live.
-pub type MakeMachine = Box<dyn FnOnce(&dyn Clock, MachineHooks) -> Rc<dyn Machine> + Send>;
+pub type MakeMachine = Box<dyn FnOnce(MachineHooks) -> Rc<dyn Machine> + Send>;
 
 /// What onboarding is built from, kept until the pages' thread starts.
 pub struct SetupRecipe {
@@ -133,7 +133,7 @@ impl SetupDesk {
                 },
             )
         };
-        let machine = make_machine(clock.as_ref(), hooks);
+        let machine = make_machine(hooks);
         let parts = OnboardingParts { settings, machine };
         Self {
             host: OnboardingHost::new(parts, make, clock),

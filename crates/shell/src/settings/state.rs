@@ -1,5 +1,5 @@
 //! What the pages show, whole, for a front end that can't hold a [`crate::settings::View`]'s
-//! changes the way a Slint model does. [`Folded`] takes each [`Shown`] and gives back one record.
+//! changes as a stream of rows. [`Folded`] takes each [`Shown`] and gives back one record.
 
 use wf_core::settings::{PipelineTier, Replacement, Snippet};
 

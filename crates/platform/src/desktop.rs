@@ -1,5 +1,5 @@
-//! Small asks of the desktop: open a folder or link with the default app, and show or hide the
-//! Dock icon.
+//! Small asks of the desktop: open a folder or link with the default app, and say which app this
+//! process is.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -45,45 +45,16 @@ pub fn reopen_after_quit(bundle: &Path) -> io::Result<()> {
         .map(drop)
 }
 
-/// Shows or hides the app's Dock icon (macOS). Call on the main thread, with the event loop
-/// running. Elsewhere there's nothing to do.
-pub fn set_dock_icon_visible(visible: bool) {
+/// The id of the bundle this process was started from. A bare binary has none.
+pub fn bundle_id() -> Option<String> {
     #[cfg(target_os = "macos")]
-    macos::set_dock_icon_visible(visible);
+    {
+        objc2_foundation::NSBundle::mainBundle()
+            .bundleIdentifier()
+            .map(|id| id.to_string())
+    }
     #[cfg(not(target_os = "macos"))]
-    let _ = visible;
-}
-
-/// Brings the app to the front, which an app without a Dock icon doesn't get by opening a window.
-/// Call on the main thread.
-pub fn activate_app() {
-    #[cfg(target_os = "macos")]
-    macos::activate();
-}
-
-#[cfg(target_os = "macos")]
-mod macos {
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
-
-    pub fn set_dock_icon_visible(visible: bool) {
-        let Some(main_thread) = MainThreadMarker::new() else {
-            return;
-        };
-        NSApplication::sharedApplication(main_thread).setActivationPolicy(if visible {
-            NSApplicationActivationPolicy::Regular
-        } else {
-            NSApplicationActivationPolicy::Accessory
-        });
-    }
-
-    pub fn activate() {
-        if let Some(main_thread) = MainThreadMarker::new() {
-            // Deprecated, but its replacement needs macOS 14 and the app supports 13.
-            #[allow(deprecated)]
-            NSApplication::sharedApplication(main_thread).activateIgnoringOtherApps(true);
-        }
-    }
+    None
 }
 
 #[cfg(test)]
