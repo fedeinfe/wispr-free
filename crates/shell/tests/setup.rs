@@ -605,11 +605,19 @@ fn opening_again_in_the_same_run_starts_where_the_work_is() {
 
     rig.pick(MenuAction::OpenOnboarding);
 
-    let first = rig.seen().into_iter().find_map(|event| match event {
-        ShellEvent::Setup { page } => Some(page.step),
-        _ => None,
-    });
-    assert_eq!(first, Some(Step::Trial), "the pages know the hardware");
+    let shown: Vec<_> = rig
+        .seen()
+        .into_iter()
+        .filter_map(|event| match event {
+            ShellEvent::Setup { page } => Some(page.step),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        shown.iter().all(|step| *step == Step::Trial),
+        "the pages know the hardware: {shown:?}"
+    );
+    assert_eq!(rig.page().unwrap().step, Step::Trial);
 }
 
 #[test]

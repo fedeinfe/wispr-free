@@ -85,13 +85,25 @@ fn the_pills_panel_is_no_window_of_the_menus() {
 }
 
 #[test]
+fn a_control_is_found_in_a_window_a_menu_opened_and_not_in_the_pill() {
+    let mut pill = window("", &["Hidden"]);
+    pill.identifier = String::new();
+    let walk = walk(vec![pill, window("Meetings", &["Summary"])]);
+
+    assert!(walk.control("Summary").is_some());
+    assert!(walk.control("Hidden").is_none());
+}
+
+#[test]
 fn a_walk_comes_out_of_what_ax_walk_prints() {
     let printed = r#"{"trusted":true,"front_pid":12,"windows":[{"identifier":"Settings",
-        "title":"General","nodes":[{"role":"AXRow","identifier":"General","title":""}]}]}"#;
+        "title":"General","nodes":[{"role":"AXRow","identifier":"General","title":"",
+        "enabled":false}]}]}"#;
 
     let walked: Walk = serde_json::from_str(printed).unwrap();
 
     assert_eq!(walked.windows[0].nodes[0].role, "AXRow");
+    assert!(!walked.windows[0].nodes[0].enabled);
     assert_eq!(walked.front_pid, 12);
 }
 
