@@ -1,10 +1,11 @@
 //! The settings model and its file: defaults from the spec, and every setting surviving a restart.
 
 use std::fs;
+use std::sync::{Arc, Mutex};
 
 use wf_core::settings::{
-    CleanupStrength, HistoryRetention, KeepModels, MediaWhileDictating, PipelineTier, Replacement,
-    Settings, SettingsStore, Snippet, Style, Theme,
+    CleanupStrength, HistoryRetention, KeepModels, MediaWhileDictating, PipelineTier, ReplaceError,
+    Replacement, Settings, SettingsStore, Snippet, Style,
 };
 use wf_core::shortcut::{Combo, Key, Side};
 
@@ -26,8 +27,6 @@ fn every_setting_changed() -> Settings {
     let general = &mut settings.general;
     general.microphones = vec!["coreaudio:usb".into(), "coreaudio:built-in".into()];
     general.languages = vec!["it".into(), "en".into()];
-    general.app_language = "en".into();
-    general.theme = Theme::Dark;
     general.launch_at_login = true;
     general.show_pill = false;
     general.show_in_dock = true;
@@ -144,7 +143,6 @@ fn the_fixture_really_changes_every_setting() {
 fn defaults_follow_the_spec() {
     let settings = Settings::default();
 
-    assert_eq!(settings.general.theme, Theme::System);
     assert!(settings.general.microphones.is_empty(), "auto");
     assert!(settings.general.languages.is_empty(), "auto-detect");
     assert!(settings.general.show_pill);
@@ -198,13 +196,13 @@ fn a_setting_missing_from_the_file_keeps_its_default() {
     let path = dir.path().join("settings.toml");
     fs::write(
         &path,
-        "[general]\ntheme = \"dark\"\n[shortcuts]\npaste_last = [\"Ctrl\", \"J\"]\n",
+        "[general]\nshow_in_dock = true\n[shortcuts]\npaste_last = [\"Ctrl\", \"J\"]\n",
     )
     .unwrap();
 
     let settings = SettingsStore::open(&path).get();
 
-    assert_eq!(settings.general.theme, Theme::Dark);
+    assert!(settings.general.show_in_dock);
     assert!(settings.general.show_pill);
     assert_eq!(
         settings.shortcuts.paste_last,
@@ -246,12 +244,87 @@ fn a_damaged_file_is_set_aside_and_defaults_are_used() {
 fn a_value_of_the_wrong_kind_is_treated_as_damage_too() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.toml");
-    fs::write(&path, "[general]\ntheme = \"purple\"\n").unwrap();
+    fs::write(&path, "[general]\nshow_pill = \"purple\"\n").unwrap();
 
     let store = SettingsStore::open(&path);
 
     assert_eq!(store.get(), Settings::default());
     assert!(store.set_aside().is_some());
+}
+
+/// Theme and App language are gone. A file from before them must not read as damaged.
+#[test]
+fn an_old_theme_and_app_language_are_ignored_and_dropped_at_the_next_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    fs::write(
+        &path,
+        "[general]\ntheme = \"dark\"\napp_language = \"en\"\nshow_pill = false\n",
+    )
+    .unwrap();
+
+    let store = SettingsStore::open(&path);
+
+    assert!(store.set_aside().is_none());
+    assert!(!store.get().general.show_pill);
+    store
+        .update(|settings| settings.media.sounds = false)
+        .unwrap();
+    let written = fs::read_to_string(&path).unwrap();
+    assert!(!written.contains("theme") && !written.contains("app_language"));
+}
+
+#[test]
+fn every_change_moves_the_revision_on_and_a_watcher_hears_it_in_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = SettingsStore::open(dir.path().join("settings.toml"));
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let hearing = Arc::clone(&heard);
+    store.watch(Box::new(move |settings, revision| {
+        let mut heard = hearing.lock().unwrap();
+        heard.push((settings.media.sounds, revision));
+    }));
+
+    store
+        .update(|settings| settings.media.sounds = false)
+        .unwrap();
+    let (mut settings, revision) = store.revised();
+    settings.media.sounds = true;
+    store.replace(settings, revision).unwrap();
+
+    assert_eq!(*heard.lock().unwrap(), [(false, 1), (true, 2)]);
+}
+
+#[test]
+fn replacing_from_an_old_revision_changes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = SettingsStore::open(dir.path().join("settings.toml"));
+    let (old, revision) = store.revised();
+    store
+        .update(|settings| settings.media.sounds = false)
+        .unwrap();
+
+    let refused = store.replace(old, revision);
+
+    assert!(matches!(refused, Err(ReplaceError::Stale)));
+    assert!(!store.get().media.sounds);
+    assert_eq!(store.revised().1, revision + 1);
+}
+
+#[test]
+fn a_replace_the_disk_refuses_still_holds_for_this_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let not_a_dir = dir.path().join("file");
+    fs::write(&not_a_dir, "").unwrap();
+    let store = SettingsStore::open(not_a_dir.join("settings.toml"));
+    let (mut settings, revision) = store.revised();
+    settings.media.sounds = false;
+
+    let refused = store.replace(settings, revision);
+
+    assert!(matches!(refused, Err(ReplaceError::Disk(_))));
+    assert!(!store.get().media.sounds);
+    assert_eq!(store.revised().1, revision + 1);
 }
 
 #[test]

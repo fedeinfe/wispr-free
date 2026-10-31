@@ -2,7 +2,7 @@
 
 //! What the Settings pages show, as a window would hold it.
 
-use wf_core::settings::{Replacement, Snippet};
+use wf_core::settings::{PipelineTier, Replacement, Snippet};
 use wf_shell::lists::Rows;
 use wf_shell::settings::rows::{LanguageRow, MicrophoneLine, ModelRow, ShortcutRow};
 use wf_shell::settings::values::SettingsValues;
@@ -31,7 +31,7 @@ pub struct Seen {
     pub replacements: Vec<Replacement>,
     pub snippets: Vec<Snippet>,
     pub hardware_summary: String,
-    pub recommended_tier: String,
+    pub recommended_tier: Option<PipelineTier>,
     pub models: Vec<ModelRow>,
     pub models_in_use_summary: String,
     pub downloaded_summary: String,
@@ -43,6 +43,7 @@ pub struct Seen {
     pub models_folder: String,
     pub models_folder_custom: bool,
     pub models_folder_missing: bool,
+    pub models_read_only: bool,
     pub pending_folder: String,
     pub pending_summary: String,
     pub moving_models: bool,
@@ -82,7 +83,7 @@ impl Seen {
             Shown::Replacements(change) => change.apply(&mut self.replacements),
             Shown::Snippets(change) => change.apply(&mut self.snippets),
             Shown::HardwareSummary(summary) => self.hardware_summary = summary,
-            Shown::RecommendedTier(tier) => self.recommended_tier = tier,
+            Shown::RecommendedTier(tier) => self.recommended_tier = Some(tier),
             Shown::Models(change) => {
                 self.model_rebuilds += u32::from(matches!(change, Rows::All(_)));
                 change.apply(&mut self.models);
@@ -99,6 +100,7 @@ impl Seen {
             Shown::ModelsFolder(folder) => self.models_folder = folder,
             Shown::ModelsFolderCustom(custom) => self.models_folder_custom = custom,
             Shown::ModelsFolderMissing(missing) => self.models_folder_missing = missing,
+            Shown::ModelsReadOnly(read_only) => self.models_read_only = read_only,
             Shown::PendingFolder(folder) => self.pending_folder = folder,
             Shown::PendingSummary(summary) => self.pending_summary = summary,
             Shown::MovingModels(moving) => self.moving_models = moving,

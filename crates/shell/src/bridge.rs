@@ -3,7 +3,10 @@
 //!
 //! Every call returns a `Result`, because a panic in a call that can't throw is fatal in Swift.
 
-use std::path::PathBuf;
+use std::any::Any;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::thread;
@@ -13,9 +16,12 @@ use wf_audio::{AudioBackend as _, CpalBackend, InputDevice, sounds};
 use wf_core::dictation::PillInput;
 use wf_core::pill::dock::{Display, Point};
 use wf_core::pill::{PillCommand, PillState, Sound};
-use wf_core::settings::{Settings, SettingsStore};
+use wf_core::settings::{ReplaceError, Replacement, Settings, SettingsStore, Snippet};
+use wf_core::shortcut::Platform;
 use wf_dictation::{Dictation, Event};
 use wf_models::Catalog;
+use wf_platform::desktop;
+use wf_platform::keys::KeySignal;
 
 use crate::app_windows::{OpenWindows, WindowOrder};
 use crate::flow::{self, KeySlot, rank_first};
@@ -25,8 +31,12 @@ use crate::paths::{self, Paths};
 use crate::pill::{PillCore, PillFrame, Question, save_prefs};
 use crate::prefs::Prefs;
 use crate::rehearsal;
+use crate::settings::desk::{Desk, DeskParts};
 use crate::settings::page::SettingsPage;
-use crate::settings::values::choose_tier;
+use crate::settings::state::PagesState;
+use crate::settings::system::{self, SystemDesktop};
+use crate::settings::values::{RuledChange, choose_tier};
+use crate::settings::{self, Desktop, Mailbox, Pages};
 use crate::windows::WINDOW_TEARDOWN;
 
 pub use crate::app_windows::AppWindow;
@@ -97,6 +107,17 @@ pub enum ShellEvent {
     SettingsChanged {
         current: Versioned,
     },
+    /// What the Settings pages show now. Sent when it changes, and before Settings opens.
+    Pages {
+        state: PagesState,
+    },
+    /// Ask where the models should go, starting at `start`, and say [`Shell::folder_picked`].
+    PickFolder {
+        start: PathBuf,
+    },
+    ShowInDock {
+        visible: bool,
+    },
     /// Make this window and show it. Say [`Shell::window_closed`] when it's gone.
     Open {
         window: AppWindow,
@@ -136,6 +157,104 @@ pub trait EventSink: Send + Sync {
     fn on_event(&self, event: ShellEvent);
 }
 
+/// How the pages reach the machine, on a run that isn't the real app's. A run a person started gets
+/// the keys and the microphone: any other could race the real app for them.
+struct DevDesktop {
+    system: SystemDesktop,
+    sink: Arc<dyn EventSink>,
+    by_hand: Arc<AtomicBool>,
+    rehearsing: Arc<AtomicBool>,
+}
+
+impl DevDesktop {
+    fn by_hand(&self) -> bool {
+        self.by_hand.load(Ordering::SeqCst)
+    }
+}
+
+impl Desktop for DevDesktop {
+    /// Swift brings its windows forward.
+    fn bring_to_front(&self) {}
+
+    fn start_probes(&self, mailbox: &Mailbox) {
+        if self.rehearsing.load(Ordering::SeqCst) {
+            rehearsal::report_machine(mailbox);
+        } else {
+            system::start_probes(mailbox);
+        }
+    }
+
+    /// The login entry has one name, and it's the installed app's: writing it here would start this
+    /// bundle at login in that app's place, and removing it would stop that app. So nothing here
+    /// touches it. **Ticket 15 gives this to `SystemDesktop`.**
+    fn set_launch_at_login(&self, enabled: bool) -> io::Result<()> {
+        if enabled {
+            Err(io::Error::other("a dev run leaves it to the installed app"))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn set_dock_icon_visible(&self, visible: bool) {
+        self.sink.on_event(ShellEvent::ShowInDock { visible });
+    }
+
+    fn open(&self, target: &str) -> io::Result<()> {
+        if self.by_hand() {
+            desktop::open(target)
+        } else {
+            eprintln!("would open {target}");
+            Ok(())
+        }
+    }
+
+    fn capture_keys(
+        &self,
+        on_signal: Box<dyn FnMut(KeySignal) + Send>,
+    ) -> Result<Box<dyn Any>, String> {
+        if self.by_hand() {
+            self.system.capture_keys(on_signal)
+        } else {
+            Err("Only a run started by hand records keys.".to_owned())
+        }
+    }
+
+    fn test_microphone(
+        &self,
+        ranking: Vec<String>,
+        on_level: Box<dyn FnMut(f32) + Send>,
+    ) -> Result<Box<dyn Any>, String> {
+        if self.by_hand() {
+            self.system.test_microphone(ranking, on_level)
+        } else {
+            Err("Only a run started by hand opens the microphone.".to_owned())
+        }
+    }
+
+    fn pick_folder(&self, start: &Path, _done: Box<dyn FnOnce(PathBuf)>) {
+        self.sink.on_event(ShellEvent::PickFolder {
+            start: start.to_owned(),
+        });
+    }
+
+    fn before_delete_all(&self) {
+        self.system.before_delete_all();
+    }
+
+    fn look_for_microphones(&self, mailbox: &Mailbox) {
+        self.system.look_for_microphones(mailbox);
+    }
+}
+
+/// Makes the pages' way to the machine, on their own thread.
+pub type MakeDesktop = Box<dyn FnOnce() -> Rc<dyn Desktop> + Send>;
+
+/// What the pages are made of, kept until something first needs them.
+struct PagesRecipe {
+    paths: Paths,
+    make_desktop: MakeDesktop,
+}
+
 /// What the pill needs from the machine.
 pub struct PillParts {
     /// Where the pill was left.
@@ -164,11 +283,10 @@ impl PillParts {
     }
 }
 
-/// The settings with the revision that makes compare and swap work, and the pill. The revision's
-/// lock also keeps events in the order of the saves they report.
+/// The settings, the pill and the Settings pages. The store's watcher keeps events in the order of
+/// the saves they report.
 struct Board {
-    store: SettingsStore,
-    revision: Mutex<u64>,
+    store: Arc<SettingsStore>,
     sink: Arc<dyn EventSink>,
     dictation: OnceLock<Dictation>,
     /// Held for moments only, and never while calling out.
@@ -177,16 +295,19 @@ struct Board {
     windows: Mutex<OpenWindows>,
     prefs_path: PathBuf,
     play: Box<dyn Fn(Sound) + Send + Sync>,
-    catalog: Catalog,
+    catalog: Arc<Catalog>,
     started: Instant,
     in_meeting: AtomicBool,
+    /// A person started this run.
+    by_hand: Arc<AtomicBool>,
+    /// Nothing real is under this run, not even the machine the pages describe.
+    rehearsing: Arc<AtomicBool>,
+    /// Made when something first needs the pages, so an app that never opens Settings pays nothing.
+    pages: OnceLock<Option<Desk>>,
+    recipe: Mutex<Option<PagesRecipe>>,
 }
 
 impl Board {
-    fn lock_revision(&self) -> MutexGuard<'_, u64> {
-        self.revision.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
     fn lock_pill(&self) -> MutexGuard<'_, PillCore> {
         self.pill.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -195,57 +316,109 @@ impl Board {
         self.windows.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The thread with the Settings pages, started on first need.
+    fn desk(self: &Arc<Self>) -> Option<&Desk> {
+        self.pages.get_or_init(|| self.start_desk()).as_ref()
+    }
+
+    fn start_desk(self: &Arc<Self>) -> Option<Desk> {
+        let recipe = self
+            .recipe
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()?;
+        let sink = Arc::clone(&self.sink);
+        let levels = Arc::clone(&self.sink);
+        let parts = DeskParts {
+            store: Arc::clone(&self.store),
+            catalog: Arc::clone(&self.catalog),
+            paths: settings::Paths {
+                data_dir: recipe.paths.data.clone(),
+                export_dir: recipe.paths.exports.clone(),
+                model_fence: recipe.paths.model_fence(),
+            },
+            platform: Platform::current(),
+            page: self.lock_pill().prefs().settings_page,
+            make_desktop: recipe.make_desktop,
+            publish: Box::new(move |state| sink.on_event(ShellEvent::Pages { state })),
+            level: Box::new(move |value| levels.on_event(ShellEvent::Level { value })),
+        };
+        Desk::start(parts)
+            .inspect_err(|error| eprintln!("could not start the settings pages: {error}"))
+            .ok()
+    }
+
+    /// Runs `work` on the pages, after what was asked of them before.
+    fn pages_do(self: &Arc<Self>, work: impl FnOnce(&Pages) + Send + 'static) {
+        if let Some(desk) = self.desk() {
+            desk.work(work);
+        }
+    }
+
     /// Asks for `window`, so the rule decides what the app does about it.
-    fn ask_for(&self, window: AppWindow) {
+    fn ask_for(self: &Arc<Self>, window: AppWindow) {
         let order = self.lock_windows().ask(window);
+        if order == WindowOrder::Open(AppWindow::Settings) {
+            self.fill_pages();
+        }
         self.sink.on_event(match order {
             WindowOrder::Open(window) => ShellEvent::Open { window },
             WindowOrder::Raise(window) => ShellEvent::Raise { window },
         });
     }
 
-    fn current(&self, revision: u64) -> Versioned {
-        Versioned {
-            settings: self.store.get(),
-            revision,
+    /// Looks again at what's slow to learn. Swift has the pages by the time this returns, so the
+    /// window doesn't open empty.
+    fn fill_pages(self: &Arc<Self>) {
+        self.pages_do(|pages| {
+            pages.start_probes();
+            pages.recheck_models_folder();
+        });
+        if let Some(desk) = self.desk() {
+            desk.ask();
         }
     }
 
+    fn current(&self) -> Versioned {
+        let (settings, revision) = self.store.revised();
+        Versioned { settings, revision }
+    }
+
     fn save(&self, settings: Settings, based_on: u64) -> Result<SaveOutcome, ShellError> {
-        let mut revision = self.lock_revision();
-        if based_on != *revision {
-            return Ok(SaveOutcome::Stale {
-                current: self.current(*revision),
-            });
+        match self.store.replace(settings, based_on) {
+            Ok(()) => Ok(SaveOutcome::Saved {
+                current: self.current(),
+            }),
+            Err(ReplaceError::Stale) => Ok(SaveOutcome::Stale {
+                current: self.current(),
+            }),
+            Err(ReplaceError::Disk(error)) => Err(disk_error(error)),
         }
-        let written = self.store.update(|current| *current = settings);
-        let current = self.applied(&mut revision);
-        written.map_err(disk_error)?;
-        Ok(SaveOutcome::Saved { current })
     }
 
     /// A change from inside Rust, on the latest settings, so no save can undo it.
     fn change(&self, change: impl FnOnce(&mut Settings)) {
-        let mut revision = self.lock_revision();
-        let written = self.store.update(change);
-        self.applied(&mut revision);
-        if let Err(error) = written {
+        if let Err(error) = self.store.update(change) {
             self.toast(format!("Couldn't save settings: {error}"));
         }
     }
 
-    /// Every save holds for this run, even one the disk refused.
-    fn applied(&self, revision: &mut u64) -> Versioned {
-        *revision += 1;
-        let current = self.current(*revision);
-        self.follow_settings(&current.settings);
+    /// Every save lands here, from anywhere, under the store's lock. It holds for this run even if
+    /// the disk refused it.
+    fn applied(&self, settings: &Settings, revision: u64) {
+        self.follow_settings(settings);
         if let Some(dictation) = self.dictation.get() {
-            dictation.settings_changed(current.settings.clone());
+            dictation.settings_changed(settings.clone());
         }
         self.sink.on_event(ShellEvent::SettingsChanged {
-            current: current.clone(),
+            current: Versioned {
+                settings: settings.clone(),
+                revision,
+            },
         });
-        current
+        if let Some(Some(desk)) = self.pages.get() {
+            desk.follow();
+        }
     }
 
     /// The flow found a word for the dictionary. The toast is how the user finds out.
@@ -326,11 +499,25 @@ pub struct Shell {
 }
 
 impl Shell {
-    /// Starts on `store`, with `start_flow` making the flow. Events reach the sink from then on.
+    /// Starts on `store`, with `start_flow` making the flow and `paths` for the Settings pages,
+    /// which are made when first needed. Events reach the sink from then on.
     pub fn wired(
         store: SettingsStore,
         sink: Arc<dyn EventSink>,
         pill: PillParts,
+        paths: Paths,
+        start_flow: impl FnOnce(Settings, flow::OnEvent) -> Dictation,
+    ) -> Arc<Self> {
+        Self::wired_with(store, sink, pill, paths, None, start_flow)
+    }
+
+    /// [`Shell::wired`] with the pages on `make_desktop`, for a test.
+    pub fn wired_with(
+        store: SettingsStore,
+        sink: Arc<dyn EventSink>,
+        pill: PillParts,
+        paths: Paths,
+        make_desktop: Option<MakeDesktop>,
         start_flow: impl FnOnce(Settings, flow::OnEvent) -> Dictation,
     ) -> Arc<Self> {
         let PillParts {
@@ -343,16 +530,25 @@ impl Shell {
             windows: Mutex::default(),
             prefs_path: prefs,
             play,
-            catalog: Catalog::bundled(),
+            catalog: Arc::new(Catalog::bundled()),
             started: Instant::now(),
             in_meeting: AtomicBool::new(false),
-            store,
-            revision: Mutex::new(0),
+            by_hand: Arc::default(),
+            rehearsing: Arc::default(),
+            pages: OnceLock::new(),
+            recipe: Mutex::default(),
+            store: Arc::new(store),
             sink,
             dictation: OnceLock::new(),
         });
         board.follow_settings(&board.store.get());
-        // Weak, or the flow would keep the board alive and the board the flow.
+        // Weak, or the flow and the store would keep the board alive and the board them.
+        let watching = Arc::downgrade(&board);
+        board.store.watch(Box::new(move |settings, revision| {
+            if let Some(board) = Weak::upgrade(&watching) {
+                board.applied(settings, revision);
+            }
+        }));
         let events = Arc::downgrade(&board);
         let dictation = start_flow(
             board.store.get(),
@@ -363,6 +559,11 @@ impl Shell {
             }),
         );
         let _ = board.dictation.set(dictation.clone());
+        let make_desktop = make_desktop.unwrap_or_else(|| dev_desktop(&board, &dictation));
+        *board.recipe.lock().unwrap_or_else(PoisonError::into_inner) = Some(PagesRecipe {
+            paths,
+            make_desktop,
+        });
         list_microphones(Arc::downgrade(&board), microphones);
         Arc::new(Self {
             board,
@@ -370,6 +571,24 @@ impl Shell {
             keys: KeySlot::default(),
         })
     }
+}
+
+fn dev_desktop(board: &Board, dictation: &Dictation) -> MakeDesktop {
+    let (sink, by_hand) = (Arc::clone(&board.sink), Arc::clone(&board.by_hand));
+    let rehearsing = Arc::clone(&board.rehearsing);
+    let dictation = dictation.clone();
+    Box::new(move || {
+        Rc::new(DevDesktop {
+            system: SystemDesktop {
+                dictation,
+                // Swift's picker runs on its own and comes back through `folder_picked`.
+                pick_folder: Rc::new(|_, _| {}),
+            },
+            sink,
+            by_hand,
+            rehearsing,
+        })
+    })
 }
 
 /// Returns what a closed window freed once the OS window is gone too.
@@ -409,9 +628,14 @@ impl Shell {
         paths.check(&paths::real_folders())?;
         let store = SettingsStore::open(&paths.settings);
         let pill = PillParts::system(paths.pill.clone());
-        Ok(Self::wired(store, sink, pill, |settings, on_event| {
-            Dictation::start(flow::parts_at(&paths, settings, on_event))
-        }))
+        let for_pages = paths.clone();
+        Ok(Self::wired(
+            store,
+            sink,
+            pill,
+            for_pages,
+            |settings, on_event| Dictation::start(flow::parts_at(&paths, settings, on_event)),
+        ))
     }
 
     /// A shell whose flow has nothing real under it (see [`rehearsal`]): it takes no microphone,
@@ -423,13 +647,19 @@ impl Shell {
         let written = store.update(|settings| *settings = rehearsal::settings());
         written.map_err(disk_error)?;
         let pill = PillParts::silent(paths.pill.clone());
-        Ok(Self::wired(store, sink, pill, |settings, on_event| {
+        let for_pages = paths.clone();
+        let shell = Self::wired(store, sink, pill, for_pages, |settings, on_event| {
             Dictation::start(rehearsal::parts(&paths, settings, on_event))
-        }))
+        });
+        shell.board.rehearsing.store(true, Ordering::SeqCst);
+        Ok(shell)
     }
 
     /// Puts things back before the app goes away: the sound, then any recording.
     pub async fn quit(&self) -> Result<(), ShellError> {
+        if let Some(Some(desk)) = self.board.pages.get() {
+            desk.stop();
+        }
         self.dictation.close_media(MEDIA_CLOSE_LIMIT);
         self.dictation.close_meetings(MEETING_CLOSE_LIMIT);
         Ok(())
@@ -438,6 +668,7 @@ impl Shell {
     /// Starts listening to the keyboard, and keeps trying while the OS refuses, with the pill
     /// saying why. Only the app a person started may call this: it would race the real app.
     pub fn listen_to_keys(&self) -> Result<(), ShellError> {
+        self.board.by_hand.store(true, Ordering::SeqCst);
         flow::listen_until_allowed(&self.dictation, &self.keys);
         Ok(())
     }
@@ -536,6 +767,9 @@ impl Shell {
     /// `window` is closed and Swift has let go of it.
     pub fn window_closed(&self, window: AppWindow) -> Result<(), ShellError> {
         self.board.lock_windows().closed(window);
+        if window == AppWindow::Settings {
+            self.board.pages_do(Pages::window_closed);
+        }
         release_memory_after_teardown();
         Ok(())
     }
@@ -553,7 +787,207 @@ impl Shell {
             pill.prefs().clone()
         };
         save_prefs(&prefs, &self.board.prefs_path);
+        if let Some(desk) = self.board.desk() {
+            desk.set_page(page);
+        }
         Ok(())
+    }
+
+    /// One setting with a rule or a side effect. The rest go through [`Shell::save`].
+    pub fn change_setting(&self, change: RuledChange) -> Result<(), ShellError> {
+        self.board.pages_do(move |pages| pages.change(change));
+        Ok(())
+    }
+
+    /// Takes the next keys as this shortcut, in `Action::ALL` order.
+    pub fn record_shortcut(&self, index: i32) -> Result<(), ShellError> {
+        self.board
+            .pages_do(move |pages| pages.record_shortcut(index));
+        Ok(())
+    }
+
+    pub fn stop_recording_shortcut(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::stop_recording);
+        Ok(())
+    }
+
+    pub fn reset_shortcut(&self, index: i32) -> Result<(), ShellError> {
+        self.board
+            .pages_do(move |pages| pages.reset_shortcut(index));
+        Ok(())
+    }
+
+    pub fn set_microphone_auto(&self, on: bool) -> Result<(), ShellError> {
+        self.board
+            .pages_do(move |pages| pages.set_microphone_auto(on));
+        Ok(())
+    }
+
+    pub fn move_microphone(&self, index: i32, by: i32) -> Result<(), ShellError> {
+        self.board
+            .pages_do(move |pages| pages.move_microphone(index, by));
+        Ok(())
+    }
+
+    pub fn toggle_microphone_test(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::toggle_microphone_test);
+        Ok(())
+    }
+
+    pub fn set_languages_auto(&self, on: bool) -> Result<(), ShellError> {
+        self.board
+            .pages_do(move |pages| pages.set_languages_auto(on));
+        Ok(())
+    }
+
+    pub fn toggle_language(&self, index: i32) -> Result<(), ShellError> {
+        self.board
+            .pages_do(move |pages| pages.toggle_language(index));
+        Ok(())
+    }
+
+    pub fn add_word(&self, word: String) -> Result<(), ShellError> {
+        self.board.pages_do(move |pages| pages.add_word(&word));
+        Ok(())
+    }
+
+    pub fn remove_word(&self, index: i32) -> Result<(), ShellError> {
+        self.board.pages_do(move |pages| pages.remove_word(index));
+        Ok(())
+    }
+
+    pub fn add_replacement(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::add_replacement);
+        Ok(())
+    }
+
+    pub fn edit_replacement(&self, index: u32, row: Replacement) -> Result<(), ShellError> {
+        self.board
+            .pages_do(move |pages| pages.edit_replacement(index as usize, row));
+        Ok(())
+    }
+
+    pub fn remove_replacement(&self, index: u32) -> Result<(), ShellError> {
+        self.board
+            .pages_do(move |pages| pages.remove_replacement(index as usize));
+        Ok(())
+    }
+
+    pub fn add_snippet(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::add_snippet);
+        Ok(())
+    }
+
+    pub fn edit_snippet(&self, index: u32, row: Snippet) -> Result<(), ShellError> {
+        self.board
+            .pages_do(move |pages| pages.edit_snippet(index as usize, row));
+        Ok(())
+    }
+
+    pub fn remove_snippet(&self, index: u32) -> Result<(), ShellError> {
+        self.board
+            .pages_do(move |pages| pages.remove_snippet(index as usize));
+        Ok(())
+    }
+
+    /// `index` is the model's place in the catalog. It goes on after its window closes.
+    pub fn download(&self, index: i32) -> Result<(), ShellError> {
+        self.board
+            .pages_do(move |pages| pages.download_model(index));
+        Ok(())
+    }
+
+    pub fn cancel_download(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::cancel_download);
+        Ok(())
+    }
+
+    pub fn verify(&self, index: i32) -> Result<(), ShellError> {
+        self.board.pages_do(move |pages| pages.verify_model(index));
+        Ok(())
+    }
+
+    pub fn delete_model(&self, index: i32) -> Result<(), ShellError> {
+        self.board.pages_do(move |pages| pages.delete_model(index));
+        Ok(())
+    }
+
+    /// Asks for a folder, unless a job rules it out. It comes back as [`ShellEvent::PickFolder`].
+    pub fn choose_models_folder(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::choose_models_folder);
+        Ok(())
+    }
+
+    pub fn folder_picked(&self, folder: PathBuf) -> Result<(), ShellError> {
+        self.board
+            .pages_do(move |pages| pages.folder_picked(folder));
+        Ok(())
+    }
+
+    pub fn use_default_models_folder(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::use_default_models_folder);
+        Ok(())
+    }
+
+    pub fn open_models_folder(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::open_models_folder);
+        Ok(())
+    }
+
+    pub fn recheck_models_folder(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::recheck_models_folder);
+        Ok(())
+    }
+
+    /// Moves the models to the folder waiting for an answer. It goes on after its window closes.
+    pub fn move_folder(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::move_to_pending_folder);
+        Ok(())
+    }
+
+    pub fn switch_folder(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::switch_to_pending_folder);
+        Ok(())
+    }
+
+    pub fn cancel_pending_folder(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::cancel_pending_folder);
+        Ok(())
+    }
+
+    pub fn cancel_move(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::cancel_move);
+        Ok(())
+    }
+
+    pub fn open_data_folder(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::open_data_folder);
+        Ok(())
+    }
+
+    pub fn export_all(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::export_all);
+        Ok(())
+    }
+
+    pub fn delete_all(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::delete_all);
+        Ok(())
+    }
+
+    pub fn forget_history(&self) -> Result<(), ShellError> {
+        self.dictation.forget_history();
+        Ok(())
+    }
+
+    pub fn check_for_updates(&self) -> Result<(), ShellError> {
+        self.board.pages_do(Pages::check_for_updates);
+        Ok(())
+    }
+
+    /// What the pages show, once they've done all they were told, for a test.
+    pub async fn pages_state(&self) -> Result<Option<PagesState>, ShellError> {
+        Ok(self.board.desk().and_then(Desk::ask))
     }
 
     /// Puts the pill in `scene`, the way the flow would. For `--pill-state` and `cargo xtask shots`.
@@ -592,8 +1026,7 @@ impl Shell {
     }
 
     pub fn settings(&self) -> Result<Versioned, ShellError> {
-        let revision = self.board.lock_revision();
-        Ok(self.board.current(*revision))
+        Ok(self.board.current())
     }
 
     /// Stores `settings` unless something else saved since `revision`.

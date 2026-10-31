@@ -8,7 +8,6 @@ use slint::{CloseRequestResponse, ComponentHandle, Weak};
 use wf_core::settings::SettingsStore;
 use wf_dictation::{Dictation, MeetingNews};
 use wf_shell::meetings::{system_folders, system_parts};
-use wf_shell::settings::values::theme_index;
 use wf_shell::windows::{Window, WindowHost};
 
 use super::{MeetingsController, MeetingsParts};
@@ -70,16 +69,10 @@ impl MeetingsHost {
     }
 
     /// The host of the running app, on the real data folder.
-    pub fn system(
-        settings: Arc<SettingsStore>,
-        dictation: Dictation,
-        board: &MeetingsBoard,
-    ) -> Self {
+    pub fn system(dictation: Dictation, board: &MeetingsBoard) -> Self {
         let (data, export_dir) = system_folders();
-        let make_parts: MakeParts = Rc::new(move || {
-            let theme = theme_index(&settings.get());
-            system_parts(&data, &export_dir, theme, dictation.clone())
-        });
+        let make_parts: MakeParts =
+            Rc::new(move || system_parts(&data, &export_dir, 0, dictation.clone()));
         Self::new(make_parts, board)
     }
 

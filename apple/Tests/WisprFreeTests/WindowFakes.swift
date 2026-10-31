@@ -12,6 +12,8 @@ final class FakeCore: WindowsCore {
     var savedPages: [SettingsPage] = []
     var saves: [Settings] = []
     var refuseWrites = false
+    /// What the pages asked of Rust, in order.
+    var calls: [String] = []
     /// Runs inside the next save, before it compares revisions, as a rival writer would.
     var beforeSave: (() -> Void)?
     /// Runs once a save has written, before it replies, as the `SettingsChanged` event may.
@@ -54,6 +56,45 @@ final class FakeCore: WindowsCore {
     func windowClosed(window: AppWindow) throws {
         closed.append(window)
     }
+
+    func changeSetting(change: RuledChange) throws { calls.append("\(change)") }
+    func recordShortcut(index: Int32) throws { calls.append("record \(index)") }
+    func stopRecordingShortcut() throws { calls.append("stop recording") }
+    func resetShortcut(index: Int32) throws { calls.append("reset \(index)") }
+    func setMicrophoneAuto(on: Bool) throws { calls.append("microphone auto \(on)") }
+    func moveMicrophone(index: Int32, by: Int32) throws { calls.append("move \(index) \(by)") }
+    func toggleMicrophoneTest() throws { calls.append("test microphone") }
+    func setLanguagesAuto(on: Bool) throws { calls.append("languages auto \(on)") }
+    func toggleLanguage(index: Int32) throws { calls.append("language \(index)") }
+    func addWord(word: String) throws { calls.append("add \(word)") }
+    func removeWord(index: Int32) throws { calls.append("remove word \(index)") }
+    func addReplacement() throws { calls.append("add replacement") }
+    func editReplacement(index: UInt32, row: Replacement) throws {
+        calls.append("edit replacement \(index) \(row.wrong) \(row.right)")
+    }
+    func removeReplacement(index: UInt32) throws { calls.append("remove replacement \(index)") }
+    func addSnippet() throws { calls.append("add snippet") }
+    func editSnippet(index: UInt32, row: Snippet) throws {
+        calls.append("edit snippet \(index) \(row.trigger) \(row.text)")
+    }
+    func removeSnippet(index: UInt32) throws { calls.append("remove snippet \(index)") }
+    func download(index: Int32) throws { calls.append("download \(index)") }
+    func cancelDownload() throws { calls.append("cancel download") }
+    func verify(index: Int32) throws { calls.append("verify \(index)") }
+    func deleteModel(index: Int32) throws { calls.append("delete model \(index)") }
+    func chooseModelsFolder() throws { calls.append("choose folder") }
+    func folderPicked(folder: String) throws { calls.append("picked \(folder)") }
+    func useDefaultModelsFolder() throws { calls.append("default folder") }
+    func openModelsFolder() throws { calls.append("open models folder") }
+    func recheckModelsFolder() throws { calls.append("check again") }
+    func moveFolder() throws { calls.append("move folder") }
+    func switchFolder() throws { calls.append("switch folder") }
+    func cancelPendingFolder() throws { calls.append("cancel pending") }
+    func cancelMove() throws { calls.append("cancel move") }
+    func openDataFolder() throws { calls.append("open data folder") }
+    func exportAll() throws { calls.append("export all") }
+    func deleteAll() throws { calls.append("delete all") }
+    func checkForUpdates() throws { calls.append("check for updates") }
 }
 
 /// A stage that shows nothing and records the order of things.

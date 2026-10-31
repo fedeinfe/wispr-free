@@ -7,5 +7,5 @@ mod store;
 mod tier;
 
 pub use catalog::{Catalog, CatalogError, Engine, ModelEntry, ModelFile, ModelKind, TierPreset};
-pub use store::{DownloadError, ModelStatus, ModelStore, Progress};
+pub use store::{DownloadError, ModelStatus, ModelStore, Progress, resolved};
 pub use tier::Tier;

@@ -15,7 +15,7 @@ use wf_shell::lists::Rows;
 use wf_shell::settings::rows::{
     LanguageRow as Language, ModelRow as ModelLine, ShortcutRow as Shortcut,
 };
-use wf_shell::settings::values::SettingsValues as Values;
+use wf_shell::settings::values::{SettingsValues as Values, tier_title};
 use wf_shell::settings::{Pages, Shown};
 
 use crate::slint_clock::SlintClock;
@@ -53,8 +53,6 @@ macro_rules! both_ways {
 both_ways!(
     Values,
     SettingsValues {
-        app_language,
-        theme,
         launch_at_login,
         show_pill,
         show_in_dock,
@@ -327,7 +325,7 @@ fn show(prefs: &Prefs<'_>, lists: &Lists, shown: Shown) {
         Shown::Replacements(change) => apply_rows(&lists.replacements, change),
         Shown::Snippets(change) => apply_rows(&lists.snippets, change),
         Shown::HardwareSummary(summary) => prefs.set_hardware_summary(summary.into()),
-        Shown::RecommendedTier(tier) => prefs.set_recommended_tier(tier.into()),
+        Shown::RecommendedTier(tier) => prefs.set_recommended_tier(tier_title(tier).into()),
         Shown::Models(change) => apply_rows(&lists.models, change),
         Shown::ModelsInUseSummary(summary) => prefs.set_models_in_use_summary(summary.into()),
         Shown::DownloadedSummary(summary) => prefs.set_downloaded_summary(summary.into()),
@@ -341,6 +339,8 @@ fn show(prefs: &Prefs<'_>, lists: &Lists, shown: Shown) {
         Shown::ModelsFolder(folder) => prefs.set_models_folder(folder.into()),
         Shown::ModelsFolderCustom(custom) => prefs.set_models_folder_custom(custom),
         Shown::ModelsFolderMissing(missing) => prefs.set_models_folder_missing(missing),
+        // The Slint app has no fence.
+        Shown::ModelsReadOnly(_) => {}
         Shown::PendingFolder(folder) => prefs.set_pending_folder(folder.into()),
         Shown::PendingSummary(summary) => prefs.set_pending_summary(summary.into()),
         Shown::MovingModels(moving) => prefs.set_moving_models(moving),

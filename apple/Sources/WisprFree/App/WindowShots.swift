@@ -12,8 +12,10 @@ final class WindowShots {
     /// Backdrop around the window, so its corners and shadow show.
     private static let margin: CGFloat = 28
 
+    /// Settings is shot once per page. Tall, a long page shows whole.
+    private static let tallHeight: CGFloat = 1500
+
     private static let scenes: [(String, AppWindow, MenuAction)] = [
-        ("settings", .settings, .openSettings),
         ("meetings", .meetings, .openMeetings),
         ("onboarding", .onboarding, .openOnboarding),
     ]
@@ -22,7 +24,8 @@ final class WindowShots {
     private let windows: Windows
     private let folder: URL
 
-    init(shell: Shell, windows: Windows, folder: String) {
+    /// A tour takes no pictures, so it needs no `folder`.
+    init(shell: Shell, windows: Windows, folder: String = "") {
         self.shell = shell
         self.windows = windows
         self.folder = URL(filePath: folder, directoryHint: .isDirectory)
@@ -36,6 +39,20 @@ final class WindowShots {
                 return
             }
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try fillInThePages()
+            for row in settingsPages() {
+                try await shell.setSettingsPage(page: row.page)
+                try await shell.menuAction(action: .openSettings)
+                let name = "settings-\(row.page)"
+                guard let window = await open(.settings) else {
+                    throw Shots.ShotError.noPicture(name)
+                }
+                try await shoot(name, window)
+                window.setContentSize(NSSize(width: SettingsView.shape.size.width, height: Self.tallHeight))
+                try await shoot("\(name)-tall", window)
+                window.close()
+                await closed(.settings)
+            }
             for (name, kind, action) in Self.scenes {
                 try await shell.menuAction(action: action)
                 guard let window = await open(kind) else { throw Shots.ShotError.noPicture(name) }
@@ -45,6 +62,47 @@ final class WindowShots {
             log("shots taken")
         } catch {
             log("shots failed: \(error)")
+        }
+    }
+
+    /// So the pages show their lists open, with something in them.
+    private func fillInThePages() throws {
+        try shell.changeSetting(change: .tier(tier: .balanced))
+        try shell.setMicrophoneAuto(on: false)
+        try shell.setLanguagesAuto(on: false)
+        for language: Int32 in [0, 1] { try shell.toggleLanguage(index: language) }
+        try shell.addWord(word: "Whisper")
+        try shell.addReplacement()
+        try shell.editReplacement(index: 0, row: Replacement(wrong: "wisper", right: "Whisper"))
+        try shell.addSnippet()
+        try shell.editSnippet(
+            index: 0, row: Snippet(trigger: "my address", text: "Via Roma 1, Milano"))
+    }
+
+    /// `cargo xtask footprint --settings`: every page, drawn, `rounds` times over.
+    func tour(_ rounds: Int) async {
+        do {
+            for _ in 0..<rounds {
+                for row in settingsPages() {
+                    try await shell.setSettingsPage(page: row.page)
+                    try await shell.menuAction(action: .openSettings)
+                    guard let window = await open(.settings) else {
+                        throw Shots.ShotError.noPicture("settings")
+                    }
+                    try await Task.sleep(for: Self.settle)
+                    window.close()
+                    await closed(.settings)
+                }
+            }
+            log("toured")
+        } catch {
+            log("the tour failed: \(error)")
+        }
+    }
+
+    private func closed(_ kind: AppWindow) async {
+        for _ in 0..<Self.attempts where windows.window(kind) != nil {
+            try? await Task.sleep(for: Self.poll)
         }
     }
 

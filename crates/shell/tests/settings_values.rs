@@ -3,7 +3,7 @@
 
 use wf_core::settings::{
     CleanupStrength, HistoryRetention, KeepModels, MediaWhileDictating, PipelineTier, Settings,
-    Style, Theme,
+    Style,
 };
 use wf_models::{Catalog, Tier};
 use wf_shell::settings::values::{ModelChoices, SettingsValues, apply_values, values_of};
@@ -48,8 +48,6 @@ fn every_edited_setting_reaches_the_settings() {
     assert!(catalog.model(asr).is_some());
 
     let mut expected = Settings::default();
-    expected.general.app_language = "en".into();
-    expected.general.theme = Theme::Dark;
     expected.general.launch_at_login = true;
     expected.general.show_pill = false;
     expected.general.show_in_dock = true;
@@ -96,7 +94,6 @@ fn every_edited_setting_reaches_the_settings() {
 fn choices_are_shown_in_the_order_of_the_pages() {
     let (catalog, choices) = fixtures();
     let mut settings = Settings::default();
-    settings.general.theme = Theme::Dark;
     settings.pipeline.tier = PipelineTier::High;
     settings.pipeline.cleanup_strength = CleanupStrength::None;
     settings.pipeline.keep_models_loaded = KeepModels::UnloadAfterUse;
@@ -106,7 +103,6 @@ fn choices_are_shown_in_the_order_of_the_pages() {
 
     let values = values_of(&settings, &catalog, &choices);
 
-    assert_eq!(values.theme, 2);
     assert_eq!(values.tier, 2);
     assert_eq!(values.cleanup_strength, 0);
     assert_eq!(values.keep_models_loaded, 2);
@@ -213,14 +209,4 @@ fn a_custom_pick_the_catalog_no_longer_lists_survives_an_unrelated_edit() {
 
     assert_eq!(result.pipeline.asr_model.as_deref(), Some("removed-model"));
     assert!(!result.media.sounds);
-}
-
-#[test]
-fn an_app_language_this_build_does_not_offer_survives_an_unrelated_edit() {
-    let mut settings = Settings::default();
-    settings.general.app_language = "it".into();
-
-    let result = applied(&settings, |values| values.sounds = false);
-
-    assert_eq!(result.general.app_language, "it");
 }

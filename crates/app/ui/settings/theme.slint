@@ -4,7 +4,7 @@ import { Prefs } from "bridge.slint";
 
 export global Theme {
     // 0 system, 1 light, 2 dark.
-    property <int> mode: Prefs.values.theme;
+    property <int> mode: Prefs.theme;
     // What the OS said when the window opened. Palette stops reporting it once it is overridden.
     in-out property <bool> system-dark;
 

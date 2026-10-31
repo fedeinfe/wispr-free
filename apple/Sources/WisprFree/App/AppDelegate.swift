@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pill: PillController?
     private var statusItem: StatusItem?
     private var editor: SettingsEditor?
+    private var pages: SettingsPages?
     private var windows: Windows?
     /// Picks run in the order they were made.
     private var picking: Task<Void, Never>?
@@ -57,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.shell = shell
             log("shell started")
             Task { await follow() }
+            Task { await followLevels() }
             try show(on: shell)
             try applyOptions(to: shell)
         } catch {
@@ -68,7 +70,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func show(on shell: Shell) throws {
         let editor = try SettingsEditor(core: shell)
         self.editor = editor
-        windows = Windows(core: shell, editor: editor, stage: options.behind ? .behind : .front)
+        let pages = SettingsPages(core: shell)
+        self.pages = pages
+        windows = Windows(
+            core: shell, editor: editor, pages: pages, stage: options.behind ? .behind : .front)
+        if options.byHand, editor.settings.general.showInDock {
+            showInDock(true)
+        }
         let pick: (MenuAction) -> Void = { [weak self] action in self?.pick(action) }
         let pill = PillController(
             shell: shell, surroundings: pillSurroundings, catchesMouse: options.byHand,
@@ -107,6 +115,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
             }
         }
+        if let rounds = options.tour, let windows {
+            Task { await WindowShots(shell: shell, windows: windows).tour(rounds) }
+        }
     }
 
     private func follow() async {
@@ -120,10 +131,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 windows?.raise(window)
             case .settingsChanged(let current):
                 editor?.adopt(current)
+            case .pages(let state):
+                pages?.adopt(state)
+            case .pickFolder(let start):
+                pickFolder(from: start)
+            case .showInDock(let visible):
+                showInDock(visible)
             default:
                 break
             }
         }
+    }
+
+    private func followLevels() async {
+        for await level in events.levels {
+            pages?.hear(level: level)
+        }
+    }
+
+    /// A panel takes the focus, so it's only for a person. Anything else gets its answer ready.
+    private func pickFolder(from start: String) {
+        let answer: (String) -> Void = { [weak self] folder in
+            self?.pages?.ask { try $0.folderPicked(folder: folder) }
+        }
+        if options.byHand {
+            FolderPanel.ask(from: start, over: windows?.window(.settings), answer: answer)
+        } else if let folder = options.pickFolder {
+            answer(folder)
+        } else {
+            log("would ask for a folder from \(start)")
+        }
+    }
+
+    /// Only a run a person started may change how it sits on their Mac.
+    private func showInDock(_ visible: Bool) {
+        guard options.byHand else {
+            log("would show in Dock: \(visible)")
+            return
+        }
+        NSApp.setActivationPolicy(visible ? .regular : .accessory)
+        NSApp.activate()
     }
 
     private func pick(_ action: MenuAction) {

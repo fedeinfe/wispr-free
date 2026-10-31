@@ -2,8 +2,6 @@
 
 // Every setting edited in place. Choices are indexes into the option lists Rust provides.
 export struct SettingsValues {
-    app-language: int,
-    theme: int,
     launch-at-login: bool,
     show-pill: bool,
     show-in-dock: bool,
@@ -116,6 +114,9 @@ export global Prefs {
     callback set-microphone-auto(bool);
     callback move-microphone(int, int);
     callback toggle-microphone-test();
+
+    // 0 follows the system. Only the probes draw another, as the setting is gone.
+    in property <int> theme: 0;
 
     // General: languages
     in-out property <bool> languages-auto: true;

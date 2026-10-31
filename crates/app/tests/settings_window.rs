@@ -21,7 +21,7 @@ use slint::platform::WindowEvent;
 use slint::{ComponentHandle, LogicalSize, Model, SharedString};
 use wf_audio::InputDevice;
 use wf_core::settings::{
-    HistoryRetention, PipelineTier, Replacement, Settings, SettingsStore, Snippet, Theme,
+    HistoryRetention, PipelineTier, Replacement, Settings, SettingsStore, Snippet,
 };
 use wf_core::shortcut::Key::{self, Alt, Char, Ctrl, Esc, Meta, Shift};
 use wf_core::shortcut::Side::{Either, Left};
@@ -198,6 +198,7 @@ impl Harness {
             paths: Paths {
                 data_dir: self.data_dir(),
                 export_dir: self.export_dir(),
+                model_fence: None,
             },
             platform: Platform::MacOs,
         }
@@ -323,7 +324,6 @@ fn a_choice_made_in_a_list_persists_across_a_restart() {
     let mut harness = Harness::new();
 
     let mut values = harness.prefs().get_values();
-    values.theme = 2;
     values.history_retention = 2;
     values.meeting_max_length_minutes = 60;
     values.meeting_summary_template = "Decisions first.".into();
@@ -331,14 +331,12 @@ fn a_choice_made_in_a_list_persists_across_a_restart() {
     harness.prefs().invoke_commit();
 
     let saved = harness.saved();
-    assert_eq!(saved.general.theme, Theme::Dark);
     assert_eq!(saved.privacy.history_retention, HistoryRetention::Never);
     assert_eq!(saved.meetings.max_length_minutes, 60);
     assert_eq!(saved.meetings.summary_template, "Decisions first.");
 
     harness.restart();
     let values = harness.prefs().get_values();
-    assert_eq!(values.theme, 2);
     assert_eq!(values.history_retention, 2);
     assert_eq!(values.meeting_summary_template, "Decisions first.");
 }
@@ -346,18 +344,21 @@ fn a_choice_made_in_a_list_persists_across_a_restart() {
 #[test]
 fn a_choice_picked_from_a_dropdown_is_saved() {
     let harness = Harness::new();
-    harness.go_to(GENERAL);
+    harness.go_to(PRIVACY);
 
     harness
-        .element("Theme")
+        .element("History")
         .mock_single_click(PointerEventButton::Left);
-    let option = ElementHandle::find_by_accessible_label(harness.window(), "Dark")
+    let option = ElementHandle::find_by_accessible_label(harness.window(), "Never store")
         .next()
         .expect("the list is open");
     option.mock_single_click(PointerEventButton::Left);
 
-    assert_eq!(harness.saved().general.theme, Theme::Dark);
-    assert_eq!(harness.prefs().get_values().theme, 2);
+    assert_eq!(
+        harness.saved().privacy.history_retention,
+        HistoryRetention::Never
+    );
+    assert_eq!(harness.prefs().get_values().history_retention, 2);
 }
 
 #[test]
@@ -947,7 +948,7 @@ fn hardware_shows_up_once_detected() {
     let harness = Harness::new();
     harness.controller().handle(Event::Hardware {
         summary: "Apple M3 · 24 GB".to_owned(),
-        recommended: "Balanced".to_owned(),
+        recommended: PipelineTier::Balanced,
     });
 
     assert_eq!(harness.prefs().get_hardware_summary(), "Apple M3 · 24 GB");

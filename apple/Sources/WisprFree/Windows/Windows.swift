@@ -13,12 +13,16 @@ extension Shell: WindowsCore {}
 final class Windows {
     private let core: any WindowsCore
     private let editor: SettingsEditor
+    private let pages: SettingsPages
     private let stage: WindowStage
     private var controllers: [AppWindow: WindowController] = [:]
 
-    init(core: any WindowsCore, editor: SettingsEditor, stage: WindowStage) {
+    init(
+        core: any WindowsCore, editor: SettingsEditor, pages: SettingsPages, stage: WindowStage
+    ) {
         self.core = core
         self.editor = editor
+        self.pages = pages
         self.stage = stage
     }
 
@@ -44,8 +48,8 @@ final class Windows {
         case .settings:
             return WindowController(
                 shape: SettingsView.shape,
-                content: SettingsView(navigation: SettingsNavigation(core: core))
-                    .environment(editor),
+                content: SettingsView(
+                    navigation: SettingsNavigation(core: core), editor: editor, pages: pages),
                 onClose: onClose)
         case .meetings:
             return WindowController(

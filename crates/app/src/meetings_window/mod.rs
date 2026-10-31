@@ -82,10 +82,7 @@ macro_rules! wire {
 impl MeetingsController {
     pub fn new(parts: MeetingsParts) -> Result<Self, PlatformError> {
         let window = MeetingsWindow::new()?;
-        let prefs = window.global::<Prefs>();
-        let mut values = prefs.get_values();
-        values.theme = parts.theme;
-        prefs.set_values(values);
+        window.global::<Prefs>().set_theme(parts.theme);
 
         let lists = Rc::new(Lists::default());
         let ui = window.global::<MeetingsUi>();

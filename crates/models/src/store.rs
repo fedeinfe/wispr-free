@@ -8,7 +8,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -45,6 +45,8 @@ pub enum DownloadError {
     Cancelled,
     #[error("{} isn't available. Connect its drive or choose another folder.", .0.display())]
     FolderUnavailable(PathBuf),
+    #[error("{} can only be read in this run: it's outside the run's own folder.", .0.display())]
+    ReadOnly(PathBuf),
     #[error("that folder holds the models already")]
     SameFolder,
     /// The move itself worked: the app now uses the new folder.
@@ -74,6 +76,8 @@ pub enum DownloadError {
 pub struct ModelStore {
     root: PathBuf,
     chosen: bool,
+    /// Nothing here may change outside this folder. `None` is no limit.
+    fence: Option<PathBuf>,
     agent: ureq::Agent,
 }
 
@@ -105,7 +109,37 @@ impl ModelStore {
         ModelStore {
             root,
             chosen,
+            fence: None,
             agent,
+        }
+    }
+
+    /// Reads as before, but refuses to change anything outside `folder`, wherever links lead. A dev
+    /// run may name any models folder, so this is what keeps it out of the user's real one, which
+    /// only the real settings can name.
+    pub fn fenced(mut self, folder: Option<PathBuf>) -> ModelStore {
+        self.fence = folder;
+        self
+    }
+
+    /// Whether a change to `path` stays inside the fence.
+    fn may_change(&self, path: &Path) -> bool {
+        self.fence.as_ref().is_none_or(|fence| {
+            let unclear = path.components().any(|part| part == Component::ParentDir);
+            !unclear && resolved(path).starts_with(resolved(fence))
+        })
+    }
+
+    /// Whether models can be added here and taken away.
+    pub fn writable(&self) -> bool {
+        self.may_change(&self.root)
+    }
+
+    fn ensure_may_change(&self, path: &Path) -> Result<(), DownloadError> {
+        if self.may_change(path) {
+            Ok(())
+        } else {
+            Err(DownloadError::ReadOnly(path.to_owned()))
         }
     }
 
@@ -178,7 +212,12 @@ impl ModelStore {
 
     /// Removes the model's folder, including partial downloads.
     pub fn delete(&self, model: &ModelEntry) -> io::Result<()> {
-        match fs::remove_dir_all(self.model_dir(&model.id)) {
+        let dir = self.model_dir(&model.id);
+        if !self.may_change(&dir) {
+            let refused = DownloadError::ReadOnly(dir);
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, refused));
+        }
+        match fs::remove_dir_all(dir) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
             other => other,
         }
@@ -194,6 +233,7 @@ impl ModelStore {
     ) -> Result<(), DownloadError> {
         self.ensure_available()?;
         let dir = self.model_dir(&model.id);
+        self.ensure_may_change(&dir)?;
         fs::create_dir_all(&dir)?;
         let total = model.download_size();
         let mut done = 0;
@@ -259,6 +299,10 @@ impl ModelStore {
     ) -> Result<(), DownloadError> {
         self.ensure_available()?;
         target.ensure_available()?;
+        for model in models {
+            self.ensure_may_change(&self.model_dir(&model.id))?;
+            target.ensure_may_change(&target.model_dir(&model.id))?;
+        }
         if self.overlaps(target, models) {
             return Err(DownloadError::SameFolder);
         }
@@ -538,6 +582,27 @@ fn content_range_start(headers: &ureq::http::HeaderMap) -> Option<u64> {
     let value = headers.get("content-range")?.to_str().ok()?;
     let range = value.strip_prefix("bytes ")?;
     range.split('-').next()?.trim().parse().ok()
+}
+
+/// `path` with every link followed, as far as it exists. What doesn't exist yet can't be a link.
+pub fn resolved(path: &Path) -> PathBuf {
+    let mut missing = Vec::new();
+    let mut existing = path;
+    loop {
+        if let Ok(real) = fs::canonicalize(existing) {
+            return missing
+                .iter()
+                .rev()
+                .fold(real, |path, part| path.join(part));
+        }
+        match (existing.parent(), existing.file_name()) {
+            (Some(parent), Some(name)) => {
+                missing.push(name);
+                existing = parent;
+            }
+            _ => return path.to_owned(),
+        }
+    }
 }
 
 fn part_path(dir: &Path, file: &ModelFile) -> PathBuf {

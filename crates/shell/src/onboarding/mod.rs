@@ -91,14 +91,8 @@ fn tier_to_recommend(
     settings: &Settings,
     catalog: &Catalog,
     store: &ModelStore,
-    recommended: &str,
+    wanted: PipelineTier,
 ) -> Option<PipelineTier> {
-    let wanted = match recommended {
-        "Lite" => PipelineTier::Lite,
-        "Balanced" => PipelineTier::Balanced,
-        "High" => PipelineTier::High,
-        _ => return None,
-    };
     let current = settings.pipeline.tier;
     let current_models = preset_tier(current).map(|tier| catalog.models_for_tier(tier));
     let untouched = current == PipelineTier::default()
@@ -389,17 +383,16 @@ impl Onboarding {
         if self.recommended.get() || !self.first_run {
             return;
         }
-        let recommended = self.pages.recommended_tier();
-        if recommended.is_empty() {
+        let Some(recommended) = self.pages.recommended_tier() else {
             return;
-        }
+        };
         self.recommended.set(true);
         let parts = &self.parts.settings;
         let default_root = parts.paths.data_dir.join("models");
         let settings = parts.store.get();
         let store =
             ModelStore::configured(settings.pipeline.models_folder.as_deref(), &default_root);
-        if let Some(tier) = tier_to_recommend(&settings, &parts.catalog, &store, &recommended) {
+        if let Some(tier) = tier_to_recommend(&settings, &parts.catalog, &store, recommended) {
             let saved = parts
                 .store
                 .update(|settings| choose_tier(settings, tier, &parts.catalog));
@@ -525,10 +518,9 @@ mod tests {
         let settings = Settings::default();
 
         let pick = |name| tier_to_recommend(&settings, &catalog, &store, name);
-        assert_eq!(pick("Lite"), Some(PipelineTier::Lite));
-        assert_eq!(pick("High"), Some(PipelineTier::High));
-        assert_eq!(pick("Balanced"), None, "already the tier");
-        assert_eq!(pick("Unknown"), None);
+        assert_eq!(pick(PipelineTier::Lite), Some(PipelineTier::Lite));
+        assert_eq!(pick(PipelineTier::High), Some(PipelineTier::High));
+        assert_eq!(pick(PipelineTier::Balanced), None, "already the tier");
     }
 
     #[test]
@@ -539,12 +531,18 @@ mod tests {
         let mut chosen = Settings::default();
         chosen.pipeline.tier = PipelineTier::High;
         let empty = store_with(folder.path(), &catalog, &[]);
-        assert_eq!(tier_to_recommend(&chosen, &catalog, &empty, "Lite"), None);
+        assert_eq!(
+            tier_to_recommend(&chosen, &catalog, &empty, PipelineTier::Lite),
+            None
+        );
 
         let balanced = catalog.preset(Tier::Balanced);
         let store = store_with(folder.path(), &catalog, &[balanced.asr_model.as_str()]);
         let settings = Settings::default();
-        assert_eq!(tier_to_recommend(&settings, &catalog, &store, "Lite"), None);
+        assert_eq!(
+            tier_to_recommend(&settings, &catalog, &store, PipelineTier::Lite),
+            None
+        );
     }
 
     /// Ticket 14 moved Balanced from Parakeet to Whisper. Someone set up before that keeps their
@@ -564,7 +562,10 @@ mod tests {
             ],
         );
 
-        assert_eq!(tier_to_recommend(&settings, &catalog, &store, "High"), None);
+        assert_eq!(
+            tier_to_recommend(&settings, &catalog, &store, PipelineTier::High),
+            None
+        );
         assert_eq!(models_state(&settings, &catalog, &store), Models::Missing);
     }
 

@@ -746,10 +746,10 @@ component ChatPanel inherits VerticalLayout {
 }
 
 export component MeetingsWindow inherits Window {
-    property <int> theme: Prefs.values.theme;
+    property <int> theme: Prefs.theme;
 
     function apply-theme() {
-        Palette.color-scheme = Prefs.values.theme == 1 ? ColorScheme.light : Prefs.values.theme == 2 ? ColorScheme.dark : ColorScheme.unknown;
+        Palette.color-scheme = Prefs.theme == 1 ? ColorScheme.light : Prefs.theme == 2 ? ColorScheme.dark : ColorScheme.unknown;
     }
 
     title: "wispr-free meetings";
@@ -762,7 +762,7 @@ export component MeetingsWindow inherits Window {
 
     init => {
         Theme.system-dark = Palette.color-scheme == ColorScheme.dark;
-        if Prefs.values.theme != 0 {
+        if Prefs.theme != 0 {
             root.apply-theme();
         }
     }

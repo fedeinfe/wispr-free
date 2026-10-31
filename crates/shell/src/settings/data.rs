@@ -19,7 +19,8 @@ pub fn export_all(data_dir: &Path, settings: &Path, export_dir: &Path) -> io::Re
     if data_dir.exists() {
         for entry in fs::read_dir(data_dir)? {
             let entry = entry?;
-            if entry.file_name() != MODELS {
+            // A dev run keeps its exports in its own folder, and they'd pile up in each other.
+            if entry.file_name() != MODELS && entry.path() != export_dir {
                 copy_tree(&entry.path(), &target.join(entry.file_name()))?;
             }
         }

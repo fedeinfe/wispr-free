@@ -313,6 +313,7 @@ impl Harness {
                 paths: Paths {
                     data_dir: dir.path().join("data"),
                     export_dir: dir.path().join("downloads"),
+                    model_fence: None,
                 },
                 platform: Platform::MacOs,
             },
@@ -731,7 +732,7 @@ fn the_recommended_tier_is_picked_for_someone_who_has_not_chosen() {
 
     harness.pages().handle(Event::Hardware {
         summary: "8 GB".to_owned(),
-        recommended: "Lite".to_owned(),
+        recommended: PipelineTier::Lite,
     });
     harness.host.look();
 

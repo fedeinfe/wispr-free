@@ -5,6 +5,7 @@ use std::path::{Component, Path, PathBuf};
 
 use wf_core::settings::{SettingsStore, data_dir};
 use wf_dictation::remote::engine_host_beside;
+use wf_models::resolved;
 
 use crate::bridge::ShellError;
 
@@ -16,6 +17,9 @@ uniffi::use_remote_type!(wf_core::PathBuf);
 /// Every path a run touches.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Paths {
+    /// The run's own folder. Delete all removes it, and no model changes outside it (see
+    /// [`Paths::model_fence`]).
+    pub data: PathBuf,
     pub settings: PathBuf,
     /// Where the pill was left.
     pub pill: PathBuf,
@@ -25,30 +29,36 @@ pub struct Paths {
     /// The media note goes beside it.
     pub history: PathBuf,
     pub meetings: PathBuf,
+    /// Where Export all puts its folder.
+    pub exports: PathBuf,
     pub engine_host: PathBuf,
 }
 
 impl Paths {
     pub fn under(root: &Path, engine_host: PathBuf) -> Self {
         Self {
+            data: root.to_owned(),
             settings: root.join("settings.toml"),
             pill: root.join("pill.toml"),
             models: root.join("models"),
             history: root.join("history.sqlite3"),
             meetings: root.join("meetings"),
+            exports: root.join("exports"),
             engine_host,
         }
     }
 
-    /// Refuses a path that isn't plain, and one inside any of `real_folders`.
+    /// Refuses a path that isn't plain, and one inside any of `real_folders`, also by way of a link.
     pub fn check(&self, real_folders: &[PathBuf]) -> Result<(), ShellError> {
+        let real_folders: Vec<_> = real_folders.iter().map(|real| resolved(real)).collect();
         for path in self.all() {
             if !is_plain(path) {
                 return Err(ShellError::UnclearPath {
                     path: path.display().to_string(),
                 });
             }
-            if real_folders.iter().any(|real| path.starts_with(real)) {
+            let real = resolved(path);
+            if real_folders.iter().any(|folder| real.starts_with(folder)) {
                 return Err(ShellError::RealData {
                     path: path.display().to_string(),
                 });
@@ -57,13 +67,23 @@ impl Paths {
         Ok(())
     }
 
-    fn all(&self) -> [&PathBuf; 6] {
+    /// The one folder a run may change models in. A run may read models anywhere its settings say,
+    /// but until the cutover every `Shell` is the dev app's, and the user's real models folder is
+    /// named only in their real settings, which a dev run can't read. So this says what's allowed
+    /// rather than what isn't. **Ticket 15 must lift it on purpose**, with `check`.
+    pub fn model_fence(&self) -> Option<PathBuf> {
+        Some(self.data.clone())
+    }
+
+    fn all(&self) -> [&PathBuf; 8] {
         [
+            &self.data,
             &self.settings,
             &self.pill,
             &self.models,
             &self.history,
             &self.meetings,
+            &self.exports,
             &self.engine_host,
         ]
     }

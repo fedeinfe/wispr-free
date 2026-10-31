@@ -11,6 +11,10 @@ pub trait Timer {
     /// Keeps firing what [`Timer::every`] started, at this rate from now on.
     fn set_interval(&self, interval: Duration);
     fn stop(&self);
+    /// Whether something is still to fire.
+    fn running(&self) -> bool {
+        true
+    }
 }
 
 pub trait Clock {

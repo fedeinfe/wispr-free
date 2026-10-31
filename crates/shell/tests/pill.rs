@@ -105,7 +105,7 @@ impl Rig {
         };
         let sink = Arc::new(Recorder(Mutex::new(sender)));
         let mut flow = None;
-        let shell = Shell::wired(store, sink, pill, |settings, on_event| {
+        let shell = Shell::wired(store, sink, pill, paths.clone(), |settings, on_event| {
             flow = Some(Arc::clone(&on_event));
             Dictation::start(parts_at(&paths, settings, on_event))
         });
@@ -152,6 +152,14 @@ impl Rig {
 
     fn drain(&self) -> Vec<ShellEvent> {
         self.events.try_iter().collect()
+    }
+
+    /// What the app was told, without what Settings shows on the way.
+    fn orders(&self) -> Vec<ShellEvent> {
+        let events = self.drain().into_iter();
+        events
+            .filter(|event| !matches!(event, ShellEvent::Pages { .. }))
+            .collect()
     }
 
     fn cues(&self) -> Vec<Sound> {
@@ -582,7 +590,7 @@ fn what_needs_a_window_or_the_app_comes_back_as_an_event() {
     rig.pick(MenuAction::Quit);
 
     assert_eq!(
-        rig.drain(),
+        rig.orders(),
         [
             ShellEvent::Open {
                 window: AppWindow::Settings
@@ -609,7 +617,7 @@ fn settings_asked_for_during_onboarding_raises_onboarding_until_it_closes() {
     rig.pick(MenuAction::OpenSettings);
 
     assert_eq!(
-        rig.drain(),
+        rig.orders(),
         [
             ShellEvent::Open {
                 window: AppWindow::Onboarding

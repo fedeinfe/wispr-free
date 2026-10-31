@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread;
 use std::time::Duration;
 
-use wf_audio::CaptureEvent;
+use wf_audio::{CaptureEvent, InputDevice};
 use wf_core::audio::{AudioClip, FRAME_MS, FRAME_SAMPLES};
 use wf_core::settings::{KeepModels, PipelineTier, Settings};
 use wf_core::shortcut::{Bindings, Platform};
@@ -26,6 +26,7 @@ use wf_platform::media::{MediaControl, MediaError, Output};
 
 use crate::flow::OnEvent;
 use crate::paths::Paths;
+use crate::settings::{Event as PageEvent, Mailbox};
 
 /// What every rehearsal hears.
 pub const HEARD: &str = "This came through the whole flow";
@@ -52,6 +53,26 @@ pub fn settings() -> Settings {
     pipeline.llm_cleanup = false;
     pipeline.keep_models_loaded = KeepModels::Always;
     settings
+}
+
+/// Makes up what the Settings pages learn from the machine, so a picture or a check sees rows on a
+/// Mac with no microphone, and no real device name.
+pub fn report_machine(mailbox: &Mailbox) {
+    mailbox.post(PageEvent::Hardware {
+        summary: "10 CPU cores · 16.0 GB RAM · Sample GPU (Metal)".to_owned(),
+        recommended: PipelineTier::Balanced,
+    });
+    let device = |id: &str, name: &str| InputDevice {
+        id: id.to_owned(),
+        name: name.to_owned(),
+    };
+    mailbox.post(PageEvent::Microphones {
+        devices: vec![
+            device("built-in", "Built-in Microphone"),
+            device("usb", "USB Headset"),
+        ],
+        default: Some("built-in".to_owned()),
+    });
 }
 
 /// Every seam of the flow on a fake, with its files at `paths`.

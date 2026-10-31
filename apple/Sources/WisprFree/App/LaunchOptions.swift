@@ -19,6 +19,10 @@ struct LaunchOptions: Equatable {
     var shots: String?
     /// Takes the windows' pictures into this folder, then quits.
     var windowShots: String?
+    /// Stands in for the folder picker's answer, for a run with nobody to pick.
+    var pickFolder: String?
+    /// Opens Settings, walks its pages and closes it this many times, then says so.
+    var tour: Int?
 
     init(arguments: [String]) {
         #if DEBUG
@@ -35,6 +39,8 @@ struct LaunchOptions: Equatable {
                 picks += Self.value(of: "--pick=", in: argument).map { [$0] } ?? []
                 shots = Self.value(of: "--shots=", in: argument) ?? shots
                 windowShots = Self.value(of: "--window-shots=", in: argument) ?? windowShots
+                pickFolder = Self.value(of: "--pick-folder=", in: argument) ?? pickFolder
+                tour = Self.value(of: "--tour=", in: argument).flatMap(Int.init) ?? tour
             }
         }
     }

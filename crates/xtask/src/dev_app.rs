@@ -5,7 +5,7 @@
 //! `cargo xtask shots --out dir` takes every pill state over its own backdrop, once per edge the
 //! pill docks to, and every window in light and dark. Read `sheet.png` in each edge's folder and
 //! the pictures in `windows`. `cargo xtask footprint` reports what the idle app costs, against the
-//! spec's goal.
+//! spec's goal, and what it holds once Settings has been used and closed.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,6 +25,13 @@ pub(crate) const QUIT_LIMIT: Duration = Duration::from_secs(10);
 const IDLE: Duration = Duration::from_secs(30);
 /// The spec's goal for an idle app before any window opens.
 const IDLE_GOAL_MB: f64 = 25.0;
+/// The spec's goal for an idle app after every window has been used and closed.
+const USED_GOAL_MB: f64 = 55.0;
+/// The spec's wait after closing a window, before it measured.
+const SETTLE: Duration = Duration::from_secs(20);
+/// Rounds of every Settings page: one, and then the spec's reopening five times more.
+const TOURS: [u32; 2] = [1, 6];
+const TOUR_LIMIT: Duration = Duration::from_secs(120);
 pub(crate) const POLL: Duration = Duration::from_millis(100);
 /// What the app logs if anything ever activates it.
 const TOOK_THE_FOCUS: &str = "took the focus";
@@ -66,16 +73,17 @@ fn megabytes(text: &str) -> Option<f64> {
 
 /// How the footprint stands against the goal.
 pub fn verdict(footprint: Footprint) -> String {
+    verdict_against("idle footprint", footprint, IDLE_GOAL_MB)
+}
+
+fn verdict_against(what: &str, footprint: Footprint, goal: f64) -> String {
     let Footprint { now_mb, peak_mb } = footprint;
-    let gap = if now_mb < IDLE_GOAL_MB {
-        format!("under the {IDLE_GOAL_MB} MB goal")
+    let gap = if now_mb < goal {
+        format!("under the {goal} MB goal")
     } else {
-        format!(
-            "{:.1} MB over the {IDLE_GOAL_MB} MB goal",
-            now_mb - IDLE_GOAL_MB
-        )
+        format!("{:.1} MB over the {goal} MB goal", now_mb - goal)
     };
-    format!("idle footprint {now_mb:.1} MB, peak {peak_mb:.1} MB: {gap}")
+    format!("{what} {now_mb:.1} MB, peak {peak_mb:.1} MB: {gap}")
 }
 
 /// The pill file that docks the app to `edge`, as `Prefs` reads it.
@@ -222,5 +230,34 @@ pub fn footprint() -> anyhow::Result<()> {
     );
     let footprint = footprint_in(&summary).context("vmmap gave no footprint")?;
     println!("{}", verdict(footprint));
+    for rounds in TOURS {
+        settings_footprint(rounds)?;
+    }
+    Ok(())
+}
+
+/// Walks every Settings page `rounds` times, closes it and lets it settle, as the spec measured.
+fn settings_footprint(rounds: u32) -> anyhow::Result<()> {
+    let home = Home::new("footprint")?;
+    let log = home.0.join("app.log");
+    let args = ["--behind".to_owned(), format!("--tour={rounds}")];
+    let mut app = start_logging(&home.0, &args, &log)?;
+    let deadline = Instant::now() + TOUR_LIMIT;
+    while !fs::read_to_string(&log)?.contains("toured") {
+        ensure!(Instant::now() < deadline, "the tour didn't finish");
+        thread::sleep(POLL);
+    }
+    thread::sleep(SETTLE);
+    let summary = tool("vmmap")
+        .args(["--summary", &app.id().to_string()])
+        .text();
+    tool("kill").arg(app.id().to_string()).succeed()?;
+    wait_for_exit(&mut app, QUIT_LIMIT)?;
+    let said = fs::read_to_string(&log)?;
+    ensure!(said.contains("shell closed"), "it didn't quit: {said}");
+    no_focus_taken(&said)?;
+    let footprint = footprint_in(&summary?).context("vmmap gave no footprint")?;
+    let what = format!("after {rounds} round(s) of Settings, closed for {SETTLE:?}:");
+    println!("{}", verdict_against(&what, footprint, USED_GOAL_MB));
     Ok(())
 }

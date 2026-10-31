@@ -6,11 +6,9 @@ use wf_core::pill::{PillState, Sound};
 use wf_core::settings::PipelineTier;
 
 use crate::settings::rows::LANGUAGES;
-use crate::settings::values::TIERS;
+use crate::settings::values::{TIERS, tier_title};
 
 const MENU_LABEL_CHARS: usize = 48;
-/// The names of [`TIERS`], in its order.
-const PIPELINE_QUALITIES: [&str; 4] = ["Lite", "Balanced", "High", "Custom"];
 
 /// What an item does. Anything that needs a window comes back as a [`crate::bridge::ShellEvent`].
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
@@ -97,8 +95,7 @@ pub fn pill_menu(recent: &[String], microphones: &[InputDevice]) -> Vec<MenuEntr
     });
     let qualities = TIERS
         .into_iter()
-        .zip(PIPELINE_QUALITIES)
-        .map(|(tier, name)| item(name, MenuAction::PipelineQuality { tier }));
+        .map(|tier| item(tier_title(tier), MenuAction::PipelineQuality { tier }));
     vec![
         item("Paste last transcript", MenuAction::PasteLast),
         submenu("Recent transcripts", recent.collect()),

@@ -3,7 +3,7 @@
 
 use wf_core::settings::{
     CleanupStrength, HistoryRetention, KeepModels, MediaWhileDictating, PipelineTier, Settings,
-    Style, Theme,
+    Style,
 };
 use wf_dictation::plan::{effective_models, preset_tier, speaker_model_ids, vad_on};
 use wf_models::{Catalog, ModelKind};
@@ -11,8 +11,6 @@ use wf_models::{Catalog, ModelKind};
 /// Every setting edited in place. Choices are indexes into the option lists below.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SettingsValues {
-    pub app_language: i32,
-    pub theme: i32,
     pub launch_at_login: bool,
     pub show_pill: bool,
     pub show_in_dock: bool,
@@ -47,8 +45,6 @@ pub struct SettingsValues {
 }
 
 // The order of each list is the order of the options on the pages.
-const APP_LANGUAGES: [&str; 2] = ["system", "en"];
-const THEMES: [Theme; 3] = [Theme::System, Theme::Light, Theme::Dark];
 /// Also the pill's Pipeline quality menu, in the same order.
 pub const TIERS: [PipelineTier; 4] = [
     PipelineTier::Lite,
@@ -56,6 +52,35 @@ pub const TIERS: [PipelineTier; 4] = [
     PipelineTier::High,
     PipelineTier::Custom,
 ];
+
+/// One entry of the one list of tiers.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TierRow {
+    pub tier: PipelineTier,
+    pub title: String,
+}
+
+/// What the app calls a tier.
+pub fn tier_title(tier: PipelineTier) -> &'static str {
+    match tier {
+        PipelineTier::Lite => "Lite",
+        PipelineTier::Balanced => "Balanced",
+        PipelineTier::High => "High",
+        PipelineTier::Custom => "Custom",
+    }
+}
+
+/// The tiers, in the order every menu of them shows.
+#[uniffi::export]
+pub fn tier_rows() -> Vec<TierRow> {
+    TIERS
+        .into_iter()
+        .map(|tier| TierRow {
+            tier,
+            title: tier_title(tier).to_owned(),
+        })
+        .collect()
+}
 const STRENGTHS: [CleanupStrength; 4] = [
     CleanupStrength::None,
     CleanupStrength::Light,
@@ -84,6 +109,37 @@ const RETENTIONS: [HistoryRetention; 3] = [
     HistoryRetention::Never,
 ];
 
+/// A setting with a rule or a side effect, so a front end can't simply save it. `option` is a
+/// place in the menu of that stage's models.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum RuledChange {
+    LaunchAtLogin { on: bool },
+    ShowInDock { on: bool },
+    Tier { tier: PipelineTier },
+    Denoise { on: bool },
+    Vad { on: bool },
+    LlmCleanup { on: bool },
+    AsrModel { option: i32 },
+    VadModel { option: i32 },
+    LlmModel { option: i32 },
+}
+
+impl RuledChange {
+    pub fn apply(self, values: &mut SettingsValues) {
+        match self {
+            Self::LaunchAtLogin { on } => values.launch_at_login = on,
+            Self::ShowInDock { on } => values.show_in_dock = on,
+            Self::Tier { tier } => values.tier = index_of(&TIERS, &tier),
+            Self::Denoise { on } => values.denoise = on,
+            Self::Vad { on } => values.vad = on,
+            Self::LlmCleanup { on } => values.llm_cleanup = on,
+            Self::AsrModel { option } => values.asr_model = option,
+            Self::VadModel { option } => values.vad_model = option,
+            Self::LlmModel { option } => values.llm_model = option,
+        }
+    }
+}
+
 fn index_of<T: PartialEq>(options: &[T], value: &T) -> i32 {
     options
         .iter()
@@ -98,11 +154,6 @@ fn pick<T: Clone>(options: &[T], index: i32, current: &T) -> T {
         .and_then(|index| options.get(index))
         .unwrap_or(current)
         .clone()
-}
-
-/// A language this build doesn't offer shows as System and stays stored until the user picks one.
-fn app_language_index(language: &str) -> i32 {
-    index_of(&APP_LANGUAGES, &language).max(0)
 }
 
 /// The models the Pipeline page offers for each stage.
@@ -189,16 +240,9 @@ fn model_index(ids: &[String], model: Option<&String>) -> i32 {
     model.map_or(-1, |model| index_of(ids, model))
 }
 
-/// The theme as [`SettingsValues`] holds it.
-pub fn theme_index(settings: &Settings) -> i32 {
-    index_of(&THEMES, &settings.general.theme)
-}
-
 pub fn values_of(settings: &Settings, catalog: &Catalog, choices: &ModelChoices) -> SettingsValues {
     let [asr, vad, llm] = effective_models(settings, catalog);
     SettingsValues {
-        app_language: app_language_index(&settings.general.app_language),
-        theme: index_of(&THEMES, &settings.general.theme),
         launch_at_login: settings.general.launch_at_login,
         show_pill: settings.general.show_pill,
         show_in_dock: settings.general.show_in_dock,
@@ -242,11 +286,6 @@ pub fn apply_values(
     choices: &ModelChoices,
 ) {
     let general = &mut settings.general;
-    if values.app_language != app_language_index(&general.app_language) {
-        let languages = APP_LANGUAGES.map(str::to_owned);
-        general.app_language = pick(&languages, values.app_language, &general.app_language);
-    }
-    general.theme = pick(&THEMES, values.theme, &general.theme);
     general.launch_at_login = values.launch_at_login;
     general.show_pill = values.show_pill;
     general.show_in_dock = values.show_in_dock;

@@ -6,6 +6,7 @@ import AppKit
 //   ax-walk walk <pid>
 //   ax-walk close <pid> <window identifier>
 //   ax-walk select <pid> <window identifier> <row identifier>
+//   ax-walk press <pid> <window identifier> <control identifier>
 
 struct Node: Encodable {
     let role: String
@@ -112,6 +113,14 @@ func select(row identifier: String, in windowIdentifier: String, of pid: pid_t) 
     guard result == .success else { fail("selecting failed: \(result.rawValue)") }
 }
 
+func press(control identifier: String, in windowIdentifier: String, of pid: pid_t) {
+    let nodes = descendants(of: window(windowIdentifier, of: pid))
+    guard let control = nodes.first(where: { text($0, kAXIdentifierAttribute) == identifier }) else {
+        fail("no control \(identifier)")
+    }
+    press(control)
+}
+
 func ancestors(of element: AXUIElement) -> [AXUIElement] {
     var found: [AXUIElement] = []
     var next = attribute(element, kAXParentAttribute)
@@ -130,7 +139,7 @@ func fail(_ reason: String) -> Never {
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 guard arguments.count >= 2, let pid = pid_t(arguments[1]) else {
-    fail("usage: ax-walk walk|close|select <pid> [window] [row]")
+    fail("usage: ax-walk walk|close|select|press <pid> [window] [row or control]")
 }
 switch (arguments[0], arguments.count) {
 case ("walk", 2):
@@ -141,6 +150,8 @@ case ("close", 3):
     close(arguments[2], of: pid)
 case ("select", 4):
     select(row: arguments[3], in: arguments[2], of: pid)
+case ("press", 4):
+    press(control: arguments[3], in: arguments[2], of: pid)
 default:
-    fail("usage: ax-walk walk|close|select <pid> [window] [row]")
+    fail("usage: ax-walk walk|close|select|press <pid> [window] [row or control]")
 }

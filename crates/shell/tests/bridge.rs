@@ -52,7 +52,7 @@ impl Rig {
             play: Box::new(|_| {}),
             microphones: Box::new(Vec::new),
         };
-        let shell = Shell::wired(store, sink, pill, |settings, on_event| {
+        let shell = Shell::wired(store, sink, pill, paths.clone(), |settings, on_event| {
             flow = Some(Arc::clone(&on_event));
             Dictation::start(parts_at(&paths, settings, on_event))
         });

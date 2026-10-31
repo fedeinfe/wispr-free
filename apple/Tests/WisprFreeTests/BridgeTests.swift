@@ -22,11 +22,13 @@ struct Rig {
 
     static func paths(in folder: URL) -> Paths {
         Paths(
+            data: folder.path,
             settings: folder.appending(path: "settings.toml").path,
             pill: folder.appending(path: "pill.toml").path,
             models: folder.appending(path: "models").path,
             history: folder.appending(path: "history.sqlite3").path,
             meetings: folder.appending(path: "meetings").path,
+            exports: folder.appending(path: "exports").path,
             engineHost: "/nowhere/wf-engine-host"
         )
     }
@@ -55,7 +57,6 @@ private func changed(_ event: ShellEvent) -> Versioned? {
         var edited = start.settings
         edited.general.showPill.toggle()
         edited.general.languages = ["it", "en"]
-        edited.general.theme = .dark
         edited.pipeline.tier = .high
         edited.pipeline.cleanupStrength = .high
         edited.pipeline.modelsFolder = "/Volumes/Extreme SSD/caffè è qui"

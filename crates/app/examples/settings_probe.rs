@@ -36,7 +36,7 @@ use slint::{ComponentHandle, LogicalSize, Timer, TimerMode};
 use wf_core::pill::PillState;
 use wf_core::settings::{
     CleanupStrength, HistoryRetention, KeepModels, MediaWhileDictating, PipelineTier, Replacement,
-    Settings, SettingsStore, Snippet, Style, Theme,
+    Settings, SettingsStore, Snippet, Style,
 };
 use wf_core::shortcut::{Action, Combo, Key, KeyEvent, Platform, Side};
 use wf_dictation::{Event as FlowEvent, TrialPart};
@@ -103,6 +103,7 @@ fn parts(folder: &Path) -> SettingsParts {
         paths: Paths {
             data_dir: folder.join("data"),
             export_dir: folder.join("exports"),
+            model_fence: None,
         },
         platform: Platform::current(),
     }
@@ -228,17 +229,14 @@ fn render(target: &Path) {
         })
         .expect("sample settings");
 
-    for (theme, name) in [(Theme::Light, "light"), (Theme::Dark, "dark")] {
-        parts
-            .store
-            .update(|settings| settings.general.theme = theme)
-            .expect("theme");
+    for (theme, name) in [(1, "light"), (2, "dark")] {
         let controller = SettingsController::new(parts.clone()).expect("window builds");
         controller.handle(Event::Hardware {
             summary: "10 CPU cores · 16.0 GB RAM · Sample GPU (Metal)".to_owned(),
-            recommended: "Balanced".to_owned(),
+            recommended: PipelineTier::Balanced,
         });
         let window = controller.window();
+        window.global::<Prefs>().set_theme(theme);
         window.window().set_size(LogicalSize::new(880.0, 640.0));
         window.global::<Prefs>().set_languages_auto(false);
         window.global::<Prefs>().set_microphone_auto(false);
@@ -315,13 +313,9 @@ fn render_onboarding(target: &Path) {
     let snap = |host: &OnboardingHost, path: PathBuf| {
         host.with_window(|open| save_png(open.window(), &path));
     };
-    for (theme, name) in [(Theme::Light, "light"), (Theme::Dark, "dark")] {
+    for (theme, name) in [(1, "light"), (2, "dark")] {
         let folder = tempfile::tempdir().expect("temporary folder");
         let settings = parts(folder.path());
-        settings
-            .store
-            .update(|all| all.general.theme = theme)
-            .expect("theme");
         let machine = Rc::new(PretendMachine(
             Cell::new(permissions(Unknown, Denied, Unknown)),
             Cell::new(true),
@@ -349,6 +343,7 @@ fn render_onboarding(target: &Path) {
         };
 
         host.start().expect("window opens");
+        host.with_window(|open| open.window().global::<Prefs>().set_theme(theme));
         shot("1-microphone-not-asked");
         pages(microphones(&[]));
         shot("1-microphone-looked-none");
@@ -374,7 +369,7 @@ fn render_onboarding(target: &Path) {
         machine.1.set(true);
         pages(Event::Hardware {
             summary: "12 CPU cores · 32.0 GB RAM · Apple M5 Max (Metal)".to_owned(),
-            recommended: "High".to_owned(),
+            recommended: PipelineTier::High,
         });
         next();
         shot("3-models");
@@ -467,8 +462,6 @@ fn every_setting_changed() -> Settings {
     let general = &mut settings.general;
     general.microphones = MICROPHONES.map(str::to_owned).to_vec();
     general.languages = vec!["en".into(), "it".into()];
-    general.app_language = "en".into();
-    general.theme = Theme::Dark;
     general.launch_at_login = true;
     general.show_pill = false;
     general.show_in_dock = true;

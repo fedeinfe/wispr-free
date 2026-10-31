@@ -8,6 +8,8 @@ struct SettingsView: View {
         minimum: NSSize(width: 760, height: 480), zooms: false)
 
     @Bindable var navigation: SettingsNavigation
+    let editor: SettingsEditor
+    let pages: SettingsPages
 
     var body: some View {
         NavigationSplitView {
@@ -18,7 +20,7 @@ struct SettingsView: View {
             .toolbar(removing: .sidebarToggle)
             .navigationSplitViewColumnWidth(210)
         } detail: {
-            SettingsPageView(page: navigation.page)
+            SettingsPageView(page: navigation.page, editor: editor, pages: pages)
                 .navigationTitle(navigation.title)
         }
     }
@@ -27,10 +29,20 @@ struct SettingsView: View {
 /// The page on the right.
 struct SettingsPageView: View {
     let page: SettingsPage
+    let editor: SettingsEditor
+    let pages: SettingsPages
 
     var body: some View {
-        Form {}
-            .formStyle(.grouped)
+        switch page {
+        case .general: GeneralPage(editor: editor, pages: pages)
+        case .models: ModelsPage(editor: editor, pages: pages)
+        case .pipeline: PipelinePage(editor: editor, pages: pages)
+        case .style: StylePage(editor: editor, pages: pages)
+        case .meetings: MeetingsPage(editor: editor, pages: pages)
+        case .sounds: SoundsPage(editor: editor, pages: pages)
+        case .privacy: PrivacyPage(editor: editor, pages: pages)
+        case .about: AboutPage(editor: editor, pages: pages)
+        }
     }
 }
 

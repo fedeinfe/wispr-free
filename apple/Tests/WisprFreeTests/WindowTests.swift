@@ -14,7 +14,8 @@ private struct WindowsRig {
     init() async throws {
         core = FakeCore(settings: try await defaultSettings())
         windows = Windows(
-            core: core, editor: try SettingsEditor(core: core), stage: record.stage)
+            core: core, editor: try SettingsEditor(core: core), pages: SettingsPages(core: core),
+            stage: record.stage)
     }
 }
 

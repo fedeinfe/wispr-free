@@ -20,10 +20,16 @@ private func navigation(on page: SettingsPage = .general) async throws -> (
 }
 
 @MainActor
+private func view(on model: SettingsNavigation, core: FakeCore) throws -> SettingsView {
+    SettingsView(
+        navigation: model, editor: try SettingsEditor(core: core), pages: SettingsPages(core: core))
+}
+
+@MainActor
 @Suite struct SettingsSkeleton {
     @Test func theSidebarListsTheEightPagesWithTodaysLabels() async throws {
-        let (model, _) = try await navigation()
-        let view = try SettingsView(navigation: model).inspect()
+        let (model, core) = try await navigation()
+        let view = try view(on: model, core: core).inspect()
 
         let labels = view.findAll(ViewType.Label.self)
 
@@ -58,8 +64,8 @@ private func navigation(on page: SettingsPage = .general) async throws -> (
     }
 
     @Test func thePageOnTheRightIsTheOneSelected() async throws {
-        let (model, _) = try await navigation(on: .sounds)
-        let view = try SettingsView(navigation: model).inspect()
+        let (model, core) = try await navigation(on: .sounds)
+        let view = try view(on: model, core: core).inspect()
 
         let page = try view.find(SettingsPageView.self).actualView().page
 

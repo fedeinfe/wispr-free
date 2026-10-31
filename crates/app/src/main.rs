@@ -104,7 +104,7 @@ fn run(args: &[String]) -> Result<(), slint::PlatformError> {
         let settings = settings.clone();
         move || open_settings(&settings)
     });
-    let meetings = MeetingsHost::system(Arc::clone(&store), flow.clone(), &board);
+    let meetings = MeetingsHost::system(flow.clone(), &board);
     tray.on_open_meetings({
         let meetings = meetings.clone();
         move || {

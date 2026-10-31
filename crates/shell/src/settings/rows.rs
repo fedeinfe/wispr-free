@@ -25,19 +25,19 @@ pub const LANGUAGES: [(&str, &str); 15] = [
     ("zh", "Chinese"),
 ];
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
 pub struct ShortcutRow {
     pub action: String,
     pub combo: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
 pub struct LanguageRow {
     pub name: String,
     pub selected: bool,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]
 pub struct ModelRow {
     /// Its place in the catalog, and so in the list of models.
     pub index: i32,
@@ -55,6 +55,8 @@ pub struct ModelRow {
     pub downloading: bool,
     /// 0..1 while downloading.
     pub progress: f32,
+    /// What the button that gets it says.
+    pub download_title: String,
 }
 
 pub fn shortcut_rows(settings: &Settings, platform: Platform) -> Vec<ShortcutRow> {
@@ -78,7 +80,7 @@ pub fn language_rows(selected: &[String]) -> Vec<LanguageRow> {
 }
 
 /// One line of the microphone list.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MicrophoneLine {
     pub id: String,
     pub name: String,
@@ -151,6 +153,7 @@ pub fn model_row(index: usize, model: &ModelEntry, status: ModelStatus) -> Model
         busy: false,
         downloading: false,
         progress: 0.0,
+        download_title: if partial { "Resume" } else { "Download" }.into(),
     }
 }
 
@@ -170,6 +173,44 @@ pub fn downloaded_summary(models: &[&ModelEntry]) -> String {
         0 => String::new(),
         1 => format!("1 model · {size}"),
         count => format!("{count} models · {size}"),
+    }
+}
+
+/// Under a stage's model menu: whether that model is on disk, and the way to get it if not.
+#[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]
+pub struct StageModel {
+    pub row: ModelRow,
+    /// A stage that's off needs no model, so nothing is missing.
+    pub needed: bool,
+    pub ready: bool,
+    pub missing: bool,
+    pub downloading: bool,
+    pub text: String,
+}
+
+pub fn stage_model(row: ModelRow, needed: bool, folder_missing: bool) -> StageModel {
+    let missing = needed && !folder_missing && !row.installed;
+    let downloading = missing && row.downloading;
+    let text = if !needed {
+        "Not used: this stage is off".to_owned()
+    } else if folder_missing {
+        "Folder not connected".to_owned()
+    } else if row.installed {
+        "Downloaded".to_owned()
+    } else if downloading {
+        "Downloading…".to_owned()
+    } else if row.partial {
+        format!("{} of {}", row.status, row.size)
+    } else {
+        format!("Not downloaded · {}", row.size)
+    };
+    StageModel {
+        ready: !folder_missing && row.installed,
+        needed,
+        missing,
+        downloading,
+        text,
+        row,
     }
 }
 

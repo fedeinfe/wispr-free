@@ -3,8 +3,10 @@
 //! from here without a second copy.
 
 pub mod data;
+pub mod desk;
 pub mod page;
 pub mod rows;
+pub mod state;
 pub mod system;
 pub mod values;
 
@@ -21,7 +23,7 @@ use std::thread;
 use std::time::Duration;
 
 use wf_audio::InputDevice;
-use wf_core::settings::{Replacement, Settings, SettingsStore, Snippet};
+use wf_core::settings::{PipelineTier, Replacement, Settings, SettingsStore, Snippet};
 use wf_core::shortcut::recorder::{RecorderStep, ShortcutRecorder, reset_to_default};
 use wf_core::shortcut::{Action, Platform};
 use wf_dictation::plan::vad_forced;
@@ -34,7 +36,7 @@ use rows::{
     LANGUAGES, LanguageRow, MicrophoneLine, ModelRow, ShortcutRow, downloaded_summary,
     format_bytes, language_rows, microphone_lines, model_row, model_row_unavailable, shortcut_rows,
 };
-use values::{ModelChoices, SettingsValues, apply_values, models_in_use, values_of};
+use values::{ModelChoices, RuledChange, SettingsValues, apply_values, models_in_use, values_of};
 
 const RELEASES_URL: &str = "https://github.com/fedeinfe/wispr-free/releases";
 
@@ -79,6 +81,8 @@ pub struct Paths {
     pub data_dir: PathBuf,
     /// Where Export all puts its folder.
     pub export_dir: PathBuf,
+    /// The one folder models may change in, wherever they're read from. `None` is no limit.
+    pub model_fence: Option<PathBuf>,
 }
 
 /// Everything a window is built from.
@@ -106,7 +110,7 @@ pub enum Event {
     },
     Hardware {
         summary: String,
-        recommended: String,
+        recommended: PipelineTier,
     },
     ModelProgress {
         index: usize,
@@ -171,7 +175,7 @@ pub enum Shown {
     Replacements(Rows<Replacement>),
     Snippets(Rows<Snippet>),
     HardwareSummary(String),
-    RecommendedTier(String),
+    RecommendedTier(PipelineTier),
     Models(Rows<ModelRow>),
     ModelsInUseSummary(String),
     DownloadedSummary(String),
@@ -186,6 +190,8 @@ pub enum Shown {
     ModelsFolder(String),
     ModelsFolderCustom(bool),
     ModelsFolderMissing(bool),
+    /// Models here can be read but not added, moved or deleted.
+    ModelsReadOnly(bool),
     PendingFolder(String),
     PendingSummary(String),
     MovingModels(bool),
@@ -227,7 +233,7 @@ pub struct Pages {
     /// the app's default folder.
     pending_folder: RefCell<Option<Option<PathBuf>>>,
     moving_models: Cell<bool>,
-    recommended_tier: RefCell<String>,
+    recommended_tier: Cell<Option<PipelineTier>>,
     replacements: RefCell<Vec<Replacement>>,
     snippets: RefCell<Vec<Snippet>>,
 }
@@ -270,7 +276,7 @@ impl Pages {
             models_folder_missing: Cell::default(),
             pending_folder: RefCell::default(),
             moving_models: Cell::default(),
-            recommended_tier: RefCell::default(),
+            recommended_tier: Cell::default(),
             replacements: RefCell::default(),
             snippets: RefCell::default(),
         });
@@ -316,6 +322,30 @@ impl Pages {
         self.show_everything();
     }
 
+    /// Something else changed the settings. Shows what they decide, and leaves alone what's being
+    /// typed, recorded or run on the pages.
+    pub fn follow(&self) {
+        let settings = self.settings();
+        self.show_values(&settings);
+        self.show_shortcuts(&settings);
+        self.show_microphones();
+        self.show(Shown::LanguagesAuto(settings.general.languages.is_empty()));
+        self.show_languages(&settings);
+        self.show_dictionary(&settings);
+        self.show_models_in_use();
+    }
+
+    /// The window that showed the pages is gone, so nothing may keep the keys or the microphone.
+    /// Downloads and moves carry on: they belong to the run.
+    pub fn window_closed(&self) {
+        if self.recording.borrow().is_some() {
+            self.stop_recording();
+        }
+        if self.microphone_test.borrow().is_some() {
+            self.toggle_microphone_test();
+        }
+    }
+
     /// The connected microphones, once a look has found out.
     pub fn microphones(&self) -> Option<Vec<InputDevice>> {
         let devices = self.devices.borrow();
@@ -338,9 +368,9 @@ impl Pages {
         self.models_folder_missing.get()
     }
 
-    /// The tier the hardware suggests, once the probe has reported. Empty until then.
-    pub fn recommended_tier(&self) -> String {
-        self.recommended_tier.borrow().clone()
+    /// The tier the hardware suggests, once the probe has reported.
+    pub fn recommended_tier(&self) -> Option<PipelineTier> {
+        self.recommended_tier.get()
     }
 
     /// Puts `text` at the top of the pages.
@@ -426,6 +456,13 @@ impl Pages {
         (self.parts.on_change)(&settings);
     }
 
+    /// One setting with a rule or a side effect, on the latest values.
+    pub fn change(&self, change: RuledChange) {
+        let mut values = values_of(&self.settings(), &self.parts.catalog, &self.choices);
+        change.apply(&mut values);
+        self.commit(&values);
+    }
+
     /// Runs what other threads have reported so far.
     pub fn drain_events(&self) {
         while let Ok(event) = self.events.try_recv() {
@@ -454,7 +491,7 @@ impl Pages {
                 recommended,
             } => {
                 self.show(Shown::HardwareSummary(summary));
-                self.recommended_tier.replace(recommended.clone());
+                self.recommended_tier.set(Some(recommended));
                 self.show(Shown::RecommendedTier(recommended));
             }
             Event::ModelProgress { index, fraction } => {
@@ -689,6 +726,9 @@ impl Pages {
 
     pub fn remove_replacement(&self, index: usize) {
         let mut rows = self.replacements.borrow().clone();
+        if index >= rows.len() {
+            return;
+        }
         rows.remove(index);
         self.change_replacements(Rows::All(rows));
         self.save_replacements();
@@ -708,6 +748,9 @@ impl Pages {
 
     pub fn remove_snippet(&self, index: usize) {
         let mut rows = self.snippets.borrow().clone();
+        if index >= rows.len() {
+            return;
+        }
         rows.remove(index);
         self.change_snippets(Rows::All(rows));
         self.save_snippets();
@@ -784,6 +827,7 @@ impl Pages {
             store.root().to_string_lossy().into_owned(),
         ));
         self.show_folder_missing(!store.available());
+        self.show(Shown::ModelsReadOnly(!store.writable()));
         let custom = self.settings().pipeline.models_folder.is_some();
         self.show(Shown::ModelsFolderCustom(custom));
         let rows: Vec<_> = (0..self.parts.catalog.models.len())
@@ -910,6 +954,11 @@ impl Pages {
                 }
             }),
         );
+    }
+
+    /// What the picker came back with, for a front end whose picker runs on its own.
+    pub fn folder_picked(&self, folder: PathBuf) {
+        self.offer_folder(Some(folder));
     }
 
     pub fn use_default_models_folder(&self) {
@@ -1267,6 +1316,7 @@ impl Drop for Pages {
 
 fn store_for(parts: &SettingsParts, chosen: Option<&Path>) -> ModelStore {
     ModelStore::configured(chosen, &parts.paths.data_dir.join("models"))
+        .fenced(parts.paths.model_fence.clone())
 }
 
 fn configured_store(parts: &SettingsParts) -> ModelStore {

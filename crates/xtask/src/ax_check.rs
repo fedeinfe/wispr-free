@@ -4,6 +4,9 @@
 //! The app runs as `dev_app` says a tool may run it, and with `--behind`, so every window comes up
 //! behind the others and nothing activates. The window opens through the status menu's own item.
 //! `ax-walk` only reads and presses. What the result means is decided here.
+//!
+//! Settings is walked page by page. On each, a control is pressed the way an assistive tool would,
+//! and this process then reads what reached the disk.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,6 +31,8 @@ const NEXT_PAGE: &str = "General";
 const NEXT_PAGE_NAME: &str = "general";
 const SETTINGS: &str = "Settings";
 const SETUP: &str = "Set up Wispr Free";
+/// Where a run's folder picker lands, under its dev root.
+const ELSEWHERE: &str = "elsewhere";
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Node {
@@ -69,9 +74,11 @@ pub struct Contract {
     pub labels: &'static [&'static str],
 }
 
+const SETTINGS_ITEM: &str = "Settings…";
+
 pub const CONTRACTS: [Contract; 3] = [
     Contract {
-        item: "Settings…",
+        item: SETTINGS_ITEM,
         window: SETTINGS,
         title: LAST_PAGE,
         labels: &[
@@ -98,6 +105,168 @@ pub const CONTRACTS: [Contract; 3] = [
         labels: &["Back", "Continue"],
     },
 ];
+
+/// What happens when a control is pressed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// `settings.toml` comes to hold this line.
+    Saved(&'static str),
+    /// The app logs this.
+    Said(&'static str),
+    /// A control with this identifier shows up.
+    Shows(&'static str),
+    /// A file in the dev root comes to hold this.
+    Landed(&'static str),
+}
+
+/// One page of Settings, with its labels and what pressing some of them does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageContract {
+    pub title: &'static str,
+    pub labels: &'static [&'static str],
+    pub presses: &'static [(&'static str, Outcome)],
+}
+
+pub const PAGES: [PageContract; 8] = [
+    PageContract {
+        title: "General",
+        labels: &[
+            "Change Push-to-talk",
+            "Change Hands-free",
+            "Change Cancel",
+            "Change Paste last transcript",
+            "Change Copy last transcript",
+            "Change Start/stop meeting notes",
+            "Choose automatically",
+            "Test microphone",
+            "Auto-detect",
+            "Launch at login",
+            "Show pill",
+            "Show in Dock",
+        ],
+        presses: &[
+            (
+                "Choose automatically",
+                Outcome::Shows("Move Built-in Microphone down"),
+            ),
+            ("Show pill", Outcome::Saved("show_pill = false")),
+            ("Launch at login", Outcome::Shows("Notice")),
+            ("Show in Dock", Outcome::Said("would show in Dock: true")),
+        ],
+    },
+    PageContract {
+        title: "Models",
+        labels: &[
+            "Open folder",
+            "Change models folder",
+            "Verify Parakeet TDT 0.6B v3 (25 European languages, int8)",
+            "Delete Parakeet TDT 0.6B v3 (25 European languages, int8)",
+            "Download Silero VAD v5",
+        ],
+        presses: &[
+            // Moving would copy the rehearsal's 639 MB, so `tests/pages.rs` proves that on less.
+            (
+                "Change models folder",
+                Outcome::Shows("Switch without moving"),
+            ),
+            ("Switch without moving", Outcome::Saved("models_folder = ")),
+        ],
+    },
+    PageContract {
+        title: "Pipeline",
+        labels: &[
+            "Quality tier",
+            "Noise suppression",
+            "Silence trimming (VAD)",
+            "LLM cleanup",
+            "Cleanup strength",
+            "Stop hands-free after silence",
+            "Silence before stopping",
+            "Speech recognition",
+            "Voice detection",
+            "Cleanup model",
+            "Keep models loaded",
+        ],
+        presses: &[("Noise suppression", Outcome::Saved("denoise = true"))],
+    },
+    PageContract {
+        title: "Style & dictionary",
+        labels: &[
+            "Personal messages",
+            "Work messages",
+            "Email",
+            "Other",
+            "New word",
+            "Add word",
+            "Add corrected words automatically",
+            "Say \"press enter\" to press Enter",
+            "Add replacement",
+            "Add snippet",
+        ],
+        presses: &[
+            (
+                "Add corrected words automatically",
+                Outcome::Saved("auto_add_corrections = false"),
+            ),
+            ("Add replacement", Outcome::Shows("Wrong")),
+            ("Add snippet", Outcome::Shows("Trigger phrase")),
+        ],
+    },
+    PageContract {
+        title: "Meetings",
+        labels: &[
+            "Suggest notes when a meeting starts",
+            "Live transcript",
+            "Keep the audio after the transcript is final",
+            "Maximum length",
+            "Refine pass",
+            "Tell speakers apart",
+            "Summary template",
+        ],
+        presses: &[("Live transcript", Outcome::Saved("live_transcript = false"))],
+    },
+    PageContract {
+        title: "Sounds & media",
+        labels: &["Sounds", "While dictating"],
+        presses: &[("Sounds", Outcome::Saved("sounds = false"))],
+    },
+    PageContract {
+        title: "Privacy & data",
+        labels: &[
+            "Context awareness",
+            "History",
+            "Open folder",
+            "Export all",
+            "Delete all data",
+        ],
+        presses: &[
+            (
+                "Context awareness",
+                Outcome::Saved("context_awareness = false"),
+            ),
+            ("Export all", Outcome::Landed("exports")),
+        ],
+    },
+    PageContract {
+        title: "About",
+        labels: &["Check for updates"],
+        presses: &[(
+            "Check for updates",
+            Outcome::Said("would open https://github.com"),
+        )],
+    },
+];
+
+impl PageContract {
+    fn contract(&self) -> Contract {
+        Contract {
+            item: SETTINGS_ITEM,
+            window: SETTINGS,
+            title: self.title,
+            labels: self.labels,
+        }
+    }
+}
 
 /// What `walk` got wrong about `contract`, in words. Empty when it holds.
 pub fn broken(contract: &Contract, walk: &Walk, app: i32) -> Vec<String> {
@@ -142,7 +311,13 @@ impl Run {
             fs::write(home.0.join(DEV_ROOT).join("pill.toml"), prefs)?;
         }
         let log = home.0.join("app.log");
-        let mut args = vec!["--rehearse".to_owned(), "--behind".to_owned()];
+        let elsewhere = home.0.join(DEV_ROOT).join(ELSEWHERE);
+        fs::create_dir_all(&elsewhere)?;
+        let mut args = vec![
+            "--rehearse".to_owned(),
+            "--behind".to_owned(),
+            format!("--pick-folder={}", elsewhere.display()),
+        ];
         args.extend(items.iter().map(|item| format!("--pick={item}")));
         let app = start_logging(&home.0, &args, &log)?;
         Ok(Self {
@@ -204,6 +379,54 @@ impl Run {
             .succeed()
     }
 
+    fn root(&self) -> PathBuf {
+        self.home.0.join(DEV_ROOT)
+    }
+
+    fn wait_for_settings(&self, line: &str) -> anyhow::Result<()> {
+        let settings = self.root().join("settings.toml");
+        let deadline = Instant::now() + WAIT;
+        while !fs::read_to_string(&settings)?.contains(line) {
+            ensure!(Instant::now() < deadline, "{line:?} never reached the disk");
+            thread::sleep(POLL);
+        }
+        Ok(())
+    }
+
+    fn wait_for_file(&self, folder: &str) -> anyhow::Result<()> {
+        let folder = self.root().join(folder);
+        let deadline = Instant::now() + WAIT;
+        while fs::read_dir(&folder).map_or(true, |mut files| files.next().is_none()) {
+            ensure!(Instant::now() < deadline, "nothing landed in {folder:?}");
+            thread::sleep(POLL);
+        }
+        Ok(())
+    }
+
+    fn wait_for_control(&self, control: &str) -> anyhow::Result<()> {
+        self.walk_until(|walk| {
+            let settings = walk.opened().find(|window| window.identifier == SETTINGS);
+            let found = settings
+                .is_some_and(|window| window.nodes.iter().any(|node| node.identifier == control));
+            if found {
+                Vec::new()
+            } else {
+                vec![format!("no {control}")]
+            }
+        })?;
+        Ok(())
+    }
+
+    fn press(&self, control: &str, outcome: Outcome) -> anyhow::Result<()> {
+        self.walker_does("press", &[SETTINGS, control])?;
+        match outcome {
+            Outcome::Saved(line) => self.wait_for_settings(line),
+            Outcome::Said(line) => self.wait_to_say(line),
+            Outcome::Shows(control) => self.wait_for_control(control),
+            Outcome::Landed(folder) => self.wait_for_file(folder),
+        }
+    }
+
     /// Asks it to quit, then holds it to no window having taken the focus.
     fn finish(mut self) -> anyhow::Result<()> {
         tool("kill").arg(self.app.id().to_string()).succeed()?;
@@ -249,6 +472,33 @@ fn check_a_window(walker: &Path, contract: &Contract) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Every page by its row: its title, its labels, and what its controls do to the disk.
+fn check_the_pages(walker: &Path) -> anyhow::Result<()> {
+    let prefs = "edge = \"bottom\"\nsounds = false\n";
+    let run = Run::start(walker, &[SETTINGS_ITEM], Some(prefs))?;
+    let app = run.pid();
+    run.walk_until(|walk| broken(&PAGES[0].contract(), walk, app))?;
+    for page in &PAGES {
+        run.walker_does("select", &[SETTINGS, page.title])?;
+        let contract = page.contract();
+        let walk = run
+            .walk_until(|walk| broken(&contract, walk, app))
+            .with_context(|| page.title)?;
+        for (control, outcome) in page.presses {
+            run.press(control, *outcome)
+                .with_context(|| format!("{} {control}", page.title))?;
+        }
+        let nodes: usize = walk.opened().map(|window| window.nodes.len()).sum();
+        println!(
+            "{}: {} labels among {nodes} nodes, {} presses",
+            page.title,
+            page.labels.len(),
+            page.presses.len()
+        );
+    }
+    run.finish()
+}
+
 /// The title follows the page, and the page is remembered.
 fn follow_a_page(run: &Run) -> anyhow::Result<()> {
     run.walker_does("select", &[SETTINGS, NEXT_PAGE])?;
@@ -289,6 +539,7 @@ pub fn run() -> anyhow::Result<()> {
     for contract in &CONTRACTS {
         check_a_window(&walker, contract).with_context(|| contract.window)?;
     }
+    check_the_pages(&walker)?;
     check_the_rule(&walker)
 }
 

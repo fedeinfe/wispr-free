@@ -11,10 +11,10 @@ use std::time::Duration;
 
 use directories::UserDirs;
 use wf_audio::{AudioBackend, Capture, CaptureConfig, CaptureEvent, CpalBackend, LevelMeter};
-use wf_core::settings::{SettingsStore, data_dir};
+use wf_core::settings::{PipelineTier, SettingsStore, data_dir};
 use wf_core::shortcut::Platform;
 use wf_dictation::Dictation;
-use wf_models::{Catalog, hardware};
+use wf_models::{Catalog, Tier, hardware};
 use wf_platform::autostart::LaunchAtLogin;
 use wf_platform::desktop;
 use wf_platform::keys::{self, KeyListener, KeySignal};
@@ -152,7 +152,11 @@ pub fn start_probes(mailbox: &Mailbox) {
         let hardware = hardware::detect();
         hardware_mailbox.post(Event::Hardware {
             summary: hardware_summary(&hardware),
-            recommended: format!("{:?}", hardware.recommended_tier()),
+            recommended: match hardware.recommended_tier() {
+                Tier::Lite => PipelineTier::Lite,
+                Tier::Balanced => PipelineTier::Balanced,
+                Tier::High => PipelineTier::High,
+            },
         });
     });
     look_for_microphones(mailbox);
@@ -203,6 +207,7 @@ pub fn system_parts(
         paths: Paths {
             data_dir,
             export_dir,
+            model_fence: None,
         },
         platform: Platform::current(),
     }

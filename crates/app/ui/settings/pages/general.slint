@@ -1,6 +1,6 @@
 import { Prefs, ShortcutRow } from "../bridge.slint";
 import { Theme } from "../theme.slint";
-import { Btn, Card, ErrorText, Hint, Label, Page, Row, SelectRow, ToggleRow, Toggle } from "../controls.slint";
+import { Btn, Card, ErrorText, Hint, Label, Page, Row, ToggleRow, Toggle } from "../controls.slint";
 
 export component ShortcutLine inherits HorizontalLayout {
     in property <int> index;
@@ -231,19 +231,7 @@ export component GeneralPage inherits Page {
     }
 
     Card {
-        title: "Appearance and startup";
-
-        SelectRow {
-            label: "App language";
-            options: ["System", "English"];
-            current <=> Prefs.values.app-language;
-        }
-
-        SelectRow {
-            label: "Theme";
-            options: ["System", "Light", "Dark"];
-            current <=> Prefs.values.theme;
-        }
+        title: "Startup";
 
         ToggleRow {
             label: "Launch at login";

@@ -4,7 +4,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
@@ -43,9 +43,6 @@ pub struct General {
     pub microphones: Vec<String>,
     /// ISO 639-1 codes of "My languages". Empty means auto-detect.
     pub languages: Vec<String>,
-    /// `"system"` or a UI language code.
-    pub app_language: String,
-    pub theme: Theme,
     pub launch_at_login: bool,
     pub show_pill: bool,
     /// macOS only.
@@ -57,23 +54,11 @@ impl Default for General {
         Self {
             microphones: Vec::new(),
             languages: Vec::new(),
-            app_language: "system".to_owned(),
-            theme: Theme::default(),
             launch_at_login: false,
             show_pill: true,
             show_in_dock: false,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
-#[serde(rename_all = "snake_case")]
-pub enum Theme {
-    #[default]
-    System,
-    Light,
-    Dark,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -315,13 +300,31 @@ uniffi::custom_type!(PathBuf, String, {
     try_lift: |text| Ok(PathBuf::from(text)),
 });
 
+/// Hears every change, with its revision, under the store's lock, so in the order they happened.
+/// It must not call the store.
+pub type Watcher = Box<dyn Fn(&Settings, u64) + Send + Sync>;
+
 /// The settings of this run, backed by a TOML file. Every update is written through at once, so
-/// a crash loses nothing.
-#[derive(Debug)]
+/// a crash loses nothing. Each one moves the revision on, which is what makes compare and swap work.
 pub struct SettingsStore {
     path: PathBuf,
-    current: Mutex<Settings>,
+    current: Mutex<Revised>,
     set_aside: Option<PathBuf>,
+    watcher: OnceLock<Watcher>,
+}
+
+struct Revised {
+    settings: Settings,
+    revision: u64,
+}
+
+/// Why [`SettingsStore::replace`] didn't take.
+#[derive(Debug)]
+pub enum ReplaceError {
+    /// Something else saved first, and nothing changed.
+    Stale,
+    /// The change holds for this run, but the disk refused it.
+    Disk(io::Error),
 }
 
 impl SettingsStore {
@@ -344,8 +347,12 @@ impl SettingsStore {
         };
         Self {
             path,
-            current: Mutex::new(current),
+            current: Mutex::new(Revised {
+                settings: current,
+                revision: 0,
+            }),
             set_aside,
+            watcher: OnceLock::new(),
         }
     }
 
@@ -359,17 +366,47 @@ impl SettingsStore {
     }
 
     pub fn get(&self) -> Settings {
-        self.lock().clone()
+        self.lock().settings.clone()
+    }
+
+    /// The settings as of one moment, and which moment.
+    pub fn revised(&self) -> (Settings, u64) {
+        let current = self.lock();
+        (current.settings.clone(), current.revision)
     }
 
     /// Changes the settings and saves them. If saving fails the change still holds for this run.
     pub fn update(&self, change: impl FnOnce(&mut Settings)) -> io::Result<()> {
         let mut current = self.lock();
-        change(&mut current);
-        save(&self.path, &current)
+        change(&mut current.settings);
+        self.saved(&mut current)
     }
 
-    fn lock(&self) -> MutexGuard<'_, Settings> {
+    /// Stores `settings` unless something else saved since `based_on`.
+    pub fn replace(&self, settings: Settings, based_on: u64) -> Result<(), ReplaceError> {
+        let mut current = self.lock();
+        if current.revision != based_on {
+            return Err(ReplaceError::Stale);
+        }
+        current.settings = settings;
+        self.saved(&mut current).map_err(ReplaceError::Disk)
+    }
+
+    /// Only the first watcher counts: a run has one.
+    pub fn watch(&self, watcher: Watcher) {
+        let _ = self.watcher.set(watcher);
+    }
+
+    fn saved(&self, current: &mut Revised) -> io::Result<()> {
+        current.revision += 1;
+        let written = save(&self.path, &current.settings);
+        if let Some(watcher) = self.watcher.get() {
+            watcher(&current.settings, current.revision);
+        }
+        written
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Revised> {
         self.current.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
