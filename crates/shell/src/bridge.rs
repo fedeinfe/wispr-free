@@ -68,16 +68,34 @@ pub enum SaveOutcome {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum ShellEvent {
-    Pill { state: PillState },
-    Level { value: f32 },
-    Toast { text: String },
-    Recent { transcripts: Vec<String> },
-    Meeting { active: bool },
-    SuggestMeeting { app: String },
-    NoTextField { text: String },
-    SettingsChanged { current: Versioned },
+    Pill {
+        state: PillState,
+    },
+    Level {
+        value: f32,
+    },
+    Toast {
+        text: String,
+    },
+    Recent {
+        transcripts: Vec<String>,
+    },
+    Meeting {
+        active: bool,
+    },
+    SuggestMeeting {
+        app: String,
+    },
+    NoTextField {
+        text: String,
+    },
+    SettingsChanged {
+        current: Versioned,
+    },
     /// A menu asked for a window.
-    Open { window: AppWindow },
+    Open {
+        window: AppWindow,
+    },
     /// A menu asked the app to quit. The app calls [`Shell::quit`] on its way out.
     QuitAsked,
 }
@@ -330,10 +348,7 @@ impl Shell {
 }
 
 /// Fills the Microphone menu without holding anyone up on device enumeration.
-fn list_microphones(
-    board: Weak<Board>,
-    microphones: Box<dyn FnOnce() -> Vec<InputDevice> + Send>,
-) {
+fn list_microphones(board: Weak<Board>, microphones: Box<dyn FnOnce() -> Vec<InputDevice> + Send>) {
     let spawned = thread::Builder::new()
         .name("pill-microphones".into())
         .spawn(move || {
@@ -364,10 +379,7 @@ impl Shell {
     /// A shell whose flow has nothing real under it (see [`rehearsal`]): it takes no microphone,
     /// loads no model, pastes nothing and makes no sound.
     #[uniffi::constructor]
-    pub async fn rehearse(
-        paths: Paths,
-        sink: Arc<dyn EventSink>,
-    ) -> Result<Arc<Self>, ShellError> {
+    pub async fn rehearse(paths: Paths, sink: Arc<dyn EventSink>) -> Result<Arc<Self>, ShellError> {
         paths.check(&paths::real_folders())?;
         let store = SettingsStore::open(&paths.settings);
         let written = store.update(|settings| *settings = rehearsal::settings());

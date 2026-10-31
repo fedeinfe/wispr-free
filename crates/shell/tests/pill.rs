@@ -647,7 +647,11 @@ mod a_rehearsal {
 
     fn wait_pill(run: &Run, wanted: PillState) {
         wait_for(&run.events, |event| {
-            (*event == ShellEvent::Pill { state: wanted.clone() }).then_some(())
+            (*event
+                == ShellEvent::Pill {
+                    state: wanted.clone(),
+                })
+            .then_some(())
         });
     }
 

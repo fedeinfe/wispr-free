@@ -8,9 +8,10 @@ import WfCore
 final class Shots {
     /// Long enough for a morph to end.
     private static let settle: Duration = .milliseconds(450)
-    /// The panel's size in the sheet, relative to points.
+    /// The panel's size in the sheet, relative to points, so the sheet reads the same on any Mac.
     private static let sheetScale: CGFloat = 2
     private static let labelWidth: CGFloat = 200
+    private static let iconSide: CGFloat = 72
 
     /// The cursor far from the pill, so that it can't change what's shown.
     struct Surroundings: PillSurroundings {
@@ -43,9 +44,10 @@ final class Shots {
         ("processing", .state(state: .processing)),
         ("error", .state(state: .error(reason: "No microphone found"))),
         ("meeting", .state(state: .meeting)),
-        ("toast", .toast(text: "Copied — paste with Ctrl+Cmd+V")),
         ("card-copy", .noTextField(text: "words")),
         ("card-meeting", .suggestMeeting(app: "Zoom")),
+        // Last, as it outlasts the shots of the next scene.
+        ("toast", .toast(text: "Copied — paste with Ctrl+Cmd+V")),
     ]
 
     private let shell: Shell
@@ -66,7 +68,7 @@ final class Shots {
                 return
             }
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let (windows, frame) = try await placeWindows()
+            let (windows, frame) = placeWindows()
             var rows: [(String, [CGImage])] = []
             for (name, scene) in Self.scenes {
                 rows.append((name, try await shots(of: name, scene, in: windows, frame: frame)))
@@ -80,7 +82,7 @@ final class Shots {
     }
 
     /// A backdrop behind the panel, the two of them behind every other window.
-    private func placeWindows() async throws -> ([NSWindow], NSRect) {
+    private func placeWindows() -> ([NSWindow], NSRect) {
         let panel = pill.panel
         let backdrop = NSWindow(
             contentRect: panel.frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -126,8 +128,9 @@ final class Shots {
         configuration.sourceRect = CGRect(
             x: rect.x - display.frame.minX, y: rect.y - display.frame.minY,
             width: rect.width, height: rect.height)
-        configuration.width = Int(frame.width * Self.sheetScale)
-        configuration.height = Int(frame.height * Self.sheetScale)
+        let scale = pill.panel.backingScaleFactor
+        configuration.width = Int(frame.width * scale)
+        configuration.height = Int(frame.height * scale)
         configuration.showsCursor = false
         return try await SCScreenshotManager.captureImage(
             contentFilter: filter, configuration: configuration)
@@ -135,27 +138,27 @@ final class Shots {
 
     /// One row a scene, one column a backdrop.
     private func sheet(of rows: [(String, [CGImage])]) -> CGImage? {
-        guard let cell = rows.first?.1.first else { return nil }
-        let (cellWidth, cellHeight) = (CGFloat(cell.width), CGFloat(cell.height))
+        let panel = pill.panel.frame.size
+        let (cellWidth, cellHeight) = (panel.width * Self.sheetScale, panel.height * Self.sheetScale)
         let columns = CGFloat(Self.backdrops.count)
         let size = NSSize(
             width: Self.labelWidth + cellWidth * columns, height: cellHeight * CGFloat(rows.count))
         let image = NSImage(size: size, flipped: true) { _ in
-            NSColor.windowBackgroundColor.setFill()
+            NSColor.black.setFill()
             NSRect(origin: .zero, size: size).fill()
             for (row, (name, cells)) in rows.enumerated() {
                 let y = CGFloat(row) * cellHeight
                 NSString(string: name).draw(
-                    at: NSPoint(x: 8, y: y + cellHeight / 2),
-                    withAttributes: [.font: NSFont.systemFont(ofSize: 24)])
+                    at: NSPoint(x: 8, y: y + cellHeight / 2 - 14),
+                    withAttributes: [
+                        .font: NSFont.systemFont(ofSize: 24), .foregroundColor: NSColor.white,
+                    ])
                 for (column, picture) in cells.enumerated() {
                     let x = Self.labelWidth + CGFloat(column) * cellWidth
-                    NSGraphicsContext.current?.cgContext.saveGState()
-                    NSGraphicsContext.current?.cgContext.translateBy(x: x, y: y + cellHeight)
-                    NSGraphicsContext.current?.cgContext.scaleBy(x: 1, y: -1)
-                    NSGraphicsContext.current?.cgContext.draw(
-                        picture, in: CGRect(x: 0, y: 0, width: cellWidth, height: cellHeight))
-                    NSGraphicsContext.current?.cgContext.restoreGState()
+                    NSImage(cgImage: picture, size: panel).draw(
+                        in: NSRect(x: x, y: y, width: cellWidth, height: cellHeight),
+                        from: .zero, operation: .copy, fraction: 1, respectFlipped: true,
+                        hints: [.interpolation: NSImageInterpolation.none.rawValue])
                 }
             }
             return true
@@ -163,10 +166,16 @@ final class Shots {
         return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
     }
 
+    /// The icon large, in black on white, as a template gives no colour of its own.
     private func iconImage() -> CGImage? {
-        let icon = StatusItem.icon()
-        icon.isTemplate = false
-        return icon.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        let side = Self.iconSide
+        let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            StatusItem.icon().draw(in: rect)
+            return true
+        }
+        return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
     }
 
     private func write(_ image: CGImage?, to name: String) throws {

@@ -1,8 +1,9 @@
 //! `cargo xtask eval --model model.gguf` scores LLM cleanup against `eval/cleanup.toml`.
 //! Flags: `--rules-only` scores rule cleanup alone, `--dev` skips the holdout cases, `--cpu` keeps
 //! every layer off the GPU, and `--no-language` withholds each case's language, which is what
-//! cleanup gets from Parakeet on auto-detect. `cargo xtask bundle` is in [`xtask::bundle`], and
-//! `cargo xtask bridge` in [`xtask::bridge`].
+//! cleanup gets from Parakeet on auto-detect. `cargo xtask bundle` is in [`xtask::bundle`],
+//! `cargo xtask bridge` in [`xtask::bridge`], and `cargo xtask shots` and `cargo xtask footprint`
+//! in [`xtask::dev_app`].
 //!
 //! `cargo xtask-meeting meeting-fixture --out dir` builds the 30-minute meeting with macOS `say`.
 //! `cargo xtask-meeting meeting-run --fixture dir --models dir --out dir` runs it through every
@@ -24,7 +25,7 @@ use std::process::ExitCode;
 
 use anyhow::{Context as _, bail};
 use xtask::eval::{self, Report, RulesOnly, TARGET};
-use xtask::{bridge, bundle};
+use xtask::{bridge, bundle, dev_app};
 
 fn main() -> anyhow::Result<ExitCode> {
     let mut args = std::env::args().skip(1);
@@ -38,6 +39,8 @@ fn main() -> anyhow::Result<ExitCode> {
         "eval" => {}
         "bundle" => return bundle::run(args).map(|()| ExitCode::SUCCESS),
         "bridge" => return bridge::run().map(|()| ExitCode::SUCCESS),
+        "shots" => return dev_app::shots(args).map(|()| ExitCode::SUCCESS),
+        "footprint" => return dev_app::footprint().map(|()| ExitCode::SUCCESS),
         "signing-identity" => return bundle::create_identity().map(|()| ExitCode::SUCCESS),
         "meeting-fixture" | "meeting-run" | "meeting-summary" | "meeting-diarize"
         | "meeting-holdout" | "meeting-chat" | "meeting-chat-score" | "speech-fixture"

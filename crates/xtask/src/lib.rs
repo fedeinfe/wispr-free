@@ -5,6 +5,7 @@ pub mod asr_bench;
 pub mod asr_score;
 pub mod bridge;
 pub mod bundle;
+pub mod dev_app;
 pub mod eval;
 pub mod meeting_eval;
 pub mod meeting_fixture;

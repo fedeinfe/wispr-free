@@ -16,26 +16,44 @@ const PIPELINE_QUALITIES: [&str; 4] = ["Lite", "Balanced", "High", "Custom"];
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum MenuAction {
     PasteLast,
-    PasteRecent { index: u32 },
-    Microphone { id: String },
+    PasteRecent {
+        index: u32,
+    },
+    Microphone {
+        id: String,
+    },
     /// `None` is Auto-detect. It replaces My languages, as it always has.
-    Language { code: Option<String> },
-    PipelineQuality { tier: PipelineTier },
+    Language {
+        code: Option<String>,
+    },
+    PipelineQuality {
+        tier: PipelineTier,
+    },
     ToggleMeeting,
     OpenMeetings,
     OpenSettings,
     HideForAnHour,
     Quit,
-    DebugState { state: PillState },
-    DebugSound { sound: Sound },
+    DebugState {
+        state: PillState,
+    },
+    DebugSound {
+        sound: Sound,
+    },
     DebugMicLevel,
 }
 
 /// One row of a menu. A submenu holds rows of the same kind.
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum MenuEntry {
-    Item { title: String, action: MenuAction },
-    Submenu { title: String, entries: Vec<MenuEntry> },
+    Item {
+        title: String,
+        action: MenuAction,
+    },
+    Submenu {
+        title: String,
+        entries: Vec<MenuEntry>,
+    },
     Separator,
 }
 
@@ -55,9 +73,10 @@ fn submenu(title: &str, entries: Vec<MenuEntry>) -> MenuEntry {
 
 /// The menu of the pill.
 pub fn pill_menu(recent: &[String], microphones: &[InputDevice]) -> Vec<MenuEntry> {
-    let recent = recent.iter().zip(0..).map(|(text, index)| {
-        item(menu_label(text), MenuAction::PasteRecent { index })
-    });
+    let recent = recent
+        .iter()
+        .zip(0..)
+        .map(|(text, index)| item(menu_label(text), MenuAction::PasteRecent { index }));
     let microphones = microphones.iter().map(|device| {
         item(
             device.name.as_str(),
@@ -300,10 +319,7 @@ mod tests {
                 "Quit wispr-free"
             ]
         );
-        assert_eq!(
-            titles(&status_menu(true, false))[0],
-            "Stop meeting notes"
-        );
+        assert_eq!(titles(&status_menu(true, false))[0], "Stop meeting notes");
     }
 
     #[test]

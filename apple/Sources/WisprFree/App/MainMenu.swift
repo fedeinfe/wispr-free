@@ -6,7 +6,7 @@ enum MainMenu {
     static func make(openSettings: @escaping () -> Void) -> NSMenu {
         let menu = NSMenu()
         menu.addItem(submenu(appMenu(openSettings: openSettings)))
-        menu.addItem(submenu(windowMenu()))
+        menu.addItem(submenu(fileMenu()))
         menu.addItem(submenu(editMenu()))
         return menu
     }
@@ -23,8 +23,8 @@ enum MainMenu {
         return menu
     }
 
-    private static func windowMenu() -> NSMenu {
-        let menu = NSMenu(title: "Window")
+    private static func fileMenu() -> NSMenu {
+        let menu = NSMenu(title: "File")
         menu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         return menu
     }

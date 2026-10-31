@@ -195,6 +195,12 @@ struct PillRig {
         #expect(failed.shapeKey != listening)
     }
 
+    @Test func theHairlineIsHalfAPointAndNeverLessThanAPixel() {
+        #expect(PillSkin.hairlineWidth(scale: 2) == 0.5)
+        #expect(PillSkin.hairlineWidth(scale: 3) == 0.5)
+        #expect(PillSkin.hairlineWidth(scale: 1) == 1)
+    }
+
     @Test func reduceMotionCrossfadesInsteadOfMorphing() {
         #expect(PillMotion.animation(reduceMotion: false) == .snappy)
         #expect(PillMotion.animation(reduceMotion: true) == .smooth)

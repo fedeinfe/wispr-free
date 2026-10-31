@@ -28,6 +28,10 @@ final class PillController {
         self.onMenuAction = onMenuAction
     }
 
+    isolated deinit {
+        timer?.invalidate()
+    }
+
     private func makePanel() -> PillPanel {
         let window = pillWindowSize()
         let size = CGSize(width: window.width, height: window.height)

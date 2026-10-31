@@ -27,7 +27,9 @@ const CARD_SHOWN: Duration = Duration::from_secs(30);
 /// What the card is asking, kept to answer it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Question {
-    TakeNotes { app: String },
+    TakeNotes {
+        app: String,
+    },
     /// A finished dictation with nowhere to go.
     CopyText(String),
 }
@@ -287,15 +289,18 @@ impl PillCore {
         self.shown = frame.shown.clone();
         let toast = self.toast.as_ref().map(|(text, _)| text.as_str());
         let tooltip = toast.or(frame.shown.tooltip()).map(str::to_owned);
-        let card = frame.card.zip(self.question.as_ref()).map(|(place, question)| {
-            let asked = question.asked();
-            PillCard {
-                place,
-                text: asked.text,
-                accept: asked.accept.to_owned(),
-                decline: asked.decline.to_owned(),
-            }
-        });
+        let card = frame
+            .card
+            .zip(self.question.as_ref())
+            .map(|(place, question)| {
+                let asked = question.asked();
+                PillCard {
+                    place,
+                    text: asked.text,
+                    accept: asked.accept.to_owned(),
+                    decline: asked.decline.to_owned(),
+                }
+            });
         let bar_scale = frame.shown.bar_scale();
         let next_tick_ms = match frame.shown {
             PillState::Hidden if card.is_none() => HIDDEN_POLL_MS,

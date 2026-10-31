@@ -6,7 +6,12 @@ enum PillSkin {
     /// `#17161c`.
     static let ink = Color(red: 0x17 / 255, green: 0x16 / 255, blue: 0x1c / 255)
     static let hairline = Color.white.opacity(0.2)
-    static let shadow = Color.black.opacity(0.35)
+    static let shadow = Color.black.opacity(0.25)
+
+    /// 0.5 pt, or a whole pixel on a 1x screen, where half a pixel drops out of straight edges.
+    static func hairlineWidth(scale: CGFloat) -> CGFloat {
+        max(0.5, 1 / scale)
+    }
 }
 
 /// What the pill draws from one frame. Kept apart from the rest of the frame, so a tick that
@@ -52,7 +57,7 @@ struct PillView: View {
         let look = model.look
         ZStack(alignment: .topLeading) {
             if look.shown != .hidden {
-                Capsule_(look: look, actions: actions, reduceMotion: reduceMotion)
+                PillCapsule(look: look, actions: actions, reduceMotion: reduceMotion)
             }
             if let tooltip = look.tooltip {
                 TooltipLayout(capsule: look.capsule) {
@@ -70,10 +75,11 @@ struct PillView: View {
 }
 
 /// The capsule, which morphs between shapes. With Reduce Motion it crossfades.
-private struct Capsule_: View {
+private struct PillCapsule: View {
     let look: PillLook
     let actions: PillActions
     let reduceMotion: Bool
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         Group {
@@ -89,7 +95,8 @@ private struct Capsule_: View {
     private var face: some View {
         ZStack {
             Capsule().fill(fill)
-            Capsule().strokeBorder(PillSkin.hairline, lineWidth: 0.5)
+            Capsule().strokeBorder(
+                PillSkin.hairline, lineWidth: PillSkin.hairlineWidth(scale: displayScale))
             PressArea(press: actions.press, release: actions.release, menu: actions.menu)
             if look.shown == .processing {
                 ProcessingRing(reduceMotion: reduceMotion)
@@ -105,7 +112,7 @@ private struct Capsule_: View {
         }
         .frame(width: look.capsule.width, height: look.capsule.height)
         .compositingGroup()
-        .shadow(color: PillSkin.shadow, radius: 6, y: 2)
+        .shadow(color: PillSkin.shadow, radius: 8, y: 3)
         .offset(x: look.capsule.x, y: look.capsule.y)
     }
 
@@ -228,8 +235,10 @@ private struct TooltipLayout: Layout {
 
 private struct Tooltip: View {
     let text: String
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
         Text(text)
             .font(.callout)
             .foregroundStyle(.white)
@@ -237,8 +246,13 @@ private struct Tooltip: View {
             .truncationMode(.tail)
             .padding(.horizontal, 8)
             .frame(height: 24)
-            .background(PillSkin.ink, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .shadow(color: PillSkin.shadow, radius: 6, y: 2)
+            .background(PillSkin.ink, in: shape)
+            .overlay(
+                shape.strokeBorder(
+                    PillSkin.hairline, lineWidth: PillSkin.hairlineWidth(scale: displayScale))
+            )
+            .compositingGroup()
+            .shadow(color: PillSkin.shadow, radius: 8, y: 3)
             .allowsHitTesting(false)
     }
 }
@@ -246,6 +260,7 @@ private struct Tooltip: View {
 private struct Card: View {
     let card: PillCard
     let answer: (Bool) -> Void
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -266,9 +281,12 @@ private struct Card: View {
         .padding(.vertical, 8)
         .frame(width: card.place.width, height: card.place.height)
         .background(PillSkin.ink, in: shape)
-        .overlay(shape.strokeBorder(PillSkin.hairline, lineWidth: 0.5))
+        .overlay(
+            shape.strokeBorder(
+                PillSkin.hairline, lineWidth: PillSkin.hairlineWidth(scale: displayScale))
+        )
         .compositingGroup()
-        .shadow(color: PillSkin.shadow, radius: 6, y: 2)
+        .shadow(color: PillSkin.shadow, radius: 8, y: 3)
         .offset(x: card.place.x, y: card.place.y)
     }
 

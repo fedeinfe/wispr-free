@@ -18,8 +18,9 @@ fn binary() -> PathBuf {
     target_dir().join(DEV.app).join("Contents/MacOS/wispr-free")
 }
 
-fn start(home: &Path) -> Child {
+fn start(home: &Path, args: &[&str]) -> Child {
     Command::new(binary())
+        .args(args)
         .env("HOME", home)
         .current_dir("/")
         .stderr(Stdio::piped())
@@ -63,7 +64,7 @@ fn it_starts_on_its_own_root_and_quits_through_the_shell() {
     let home = TempDir::new().unwrap();
     let support = home.path().join("Library/Application Support");
     let dev = support.join("wispr-free-dev");
-    let mut app = start(home.path());
+    let mut app = start(home.path(), &[]);
 
     // The flow opens its history once it's up.
     wait_until("the shell starts", || dev.join("history.sqlite3").exists());
@@ -80,4 +81,15 @@ fn it_starts_on_its_own_root_and_quits_through_the_shell() {
         .map(|entry| entry.unwrap().file_name())
         .collect();
     assert_eq!(roots, ["wispr-free-dev"]);
+}
+
+#[test]
+#[ignore = "needs the built dev bundle"]
+fn the_status_menus_quit_goes_through_appkit_and_the_shell() {
+    let home = TempDir::new().unwrap();
+
+    let mut app = start(home.path(), &["--rehearse", "--pick=Quit wispr-free"]);
+
+    assert_eq!(wait_for_exit(&mut app), Some(0));
+    assert!(stderr_of(&mut app).contains("shell closed"));
 }

@@ -173,7 +173,10 @@ fn child_starts_saves_and_quits() {
     };
     let frame = shell.pill_tick(None, Some(vec![display]), false).unwrap();
     let docked = frame.move_to.unwrap();
-    assert!(docked.x > 0.0, "read where the real pill was left: {docked:?}");
+    assert!(
+        docked.x > 0.0,
+        "read where the real pill was left: {docked:?}"
+    );
     let mut changed = current.settings.clone();
     changed.style.dictionary.push("dev-only-word".to_owned());
     let saved = now(Arc::clone(&shell).save(changed, current.revision)).unwrap();
