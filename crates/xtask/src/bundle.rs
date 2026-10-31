@@ -1,5 +1,6 @@
 //! `cargo xtask bundle` builds `target/Wispr Free.app` for this Mac; `--install` also copies it to
-//! `~/Applications`. `cargo xtask signing-identity` makes a local certificate, once, so macOS keeps
+//! `~/Applications`. `--dev` builds the Swift app instead, `target/Wispr Free Dev.app`, which is
+//! never installed. `cargo xtask signing-identity` makes a local certificate, once, so macOS keeps
 //! the app's permissions across rebuilds. Releases (signed for other people) are ticket 18's.
 //!
 //! macOS ties a permission to the code's designated requirement. For an ad-hoc signature that is
@@ -12,18 +13,52 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context as _, bail, ensure};
 
-pub const APP: &str = "Wispr Free.app";
+use crate::bridge;
+
+/// One of the apps this builds. Its binary is called `wispr-free` either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Flavor {
+    pub app: &'static str,
+    name: &'static str,
+    id: &'static str,
+    minimum_macos: &'static str,
+    /// `actool` made the icon, so the plist can name it.
+    icon_name: bool,
+}
+
+pub const SLINT: Flavor = Flavor {
+    app: "Wispr Free.app",
+    name: "Wispr Free",
+    id: BUNDLE_ID,
+    minimum_macos: MINIMUM_MACOS,
+    icon_name: false,
+};
+
+/// The Swift app until the cutover. Its id keeps it apart from the app the user dictates with.
+pub const DEV: Flavor = Flavor {
+    app: "Wispr Free Dev.app",
+    name: "Wispr Free Dev",
+    id: "com.wispr-free.app.dev",
+    minimum_macos: "26.0",
+    icon_name: true,
+};
+
 const BUNDLE_ID: &str = "com.wispr-free.app";
 const EXECUTABLE: &str = "wispr-free";
 const ENGINE_HOST: &str = "wf-engine-host";
 const ENGINE_HOST_ID: &str = "com.wispr-free.wf-engine-host";
+/// What SwiftPM calls the app's binary.
+const SWIFT_EXECUTABLE: &str = "WisprFree";
 const SHELL: &str = "wf-shell";
+/// This is a shared Mac.
+const SWIFT_JOBS: &str = "6";
 /// The crates ADR-0005 keeps out of everything but the engine host.
 const ENGINES: [&str; 3] = ["llama-cpp-2", "whisper-rs", "sherpa-onnx"];
 const HELPERS: &str = "Contents/Helpers";
 const FRAMEWORKS: &str = "Contents/Frameworks";
 const ICON: &str = "AppIcon";
 const ICON_SOURCE: &str = "crates/app/ui/icons/app-icon.svg";
+const SWIFT_ICON: &str = "AppIcon.icon";
 /// The oldest macOS the spec supports. Ticket 15's weak CoreAudio link is what makes it true.
 const MINIMUM_MACOS: &str = "13.0";
 const IDENTITY: &str = "Wispr Free Local";
@@ -56,7 +91,18 @@ pub fn codesign_args(signer: &Signer) -> Vec<String> {
     }
 }
 
-pub fn info_plist(version: &str) -> String {
+pub fn info_plist(flavor: &Flavor, version: &str) -> String {
+    let Flavor {
+        name,
+        id,
+        minimum_macos,
+        ..
+    } = flavor;
+    let icon_name = if flavor.icon_name {
+        format!("\n    <key>CFBundleIconName</key>\n    <string>{ICON}</string>")
+    } else {
+        String::new()
+    };
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -65,17 +111,17 @@ pub fn info_plist(version: &str) -> String {
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>Wispr Free</string>
+    <string>{name}</string>
     <key>CFBundleExecutable</key>
     <string>{EXECUTABLE}</string>
     <key>CFBundleIconFile</key>
-    <string>{ICON}</string>
+    <string>{ICON}</string>{icon_name}
     <key>CFBundleIdentifier</key>
-    <string>{BUNDLE_ID}</string>
+    <string>{id}</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>Wispr Free</string>
+    <string>{name}</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -83,7 +129,7 @@ pub fn info_plist(version: &str) -> String {
     <key>CFBundleVersion</key>
     <string>{version}</string>
     <key>LSMinimumSystemVersion</key>
-    <string>{MINIMUM_MACOS}</string>
+    <string>{minimum_macos}</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSAppleEventsUsageDescription</key>
@@ -184,26 +230,48 @@ pub fn helper_path(app: &Path) -> PathBuf {
 
 /// What to sign and under which identifier, in order. Inside out: signing a bundle seals what it
 /// holds, so `--deep` is never needed.
-pub fn signing_order(app: &Path, libraries: &[PathBuf]) -> Vec<(PathBuf, Option<&'static str>)> {
+pub fn signing_order(
+    flavor: &Flavor,
+    app: &Path,
+    libraries: &[PathBuf],
+) -> Vec<(PathBuf, Option<&'static str>)> {
     let mut order: Vec<_> = libraries.iter().map(|path| (path.clone(), None)).collect();
     order.push((helper_path(app), Some(ENGINE_HOST_ID)));
-    order.push((app.to_path_buf(), Some(BUNDLE_ID)));
+    order.push((app.to_path_buf(), Some(flavor.id)));
     order
 }
 
-pub fn run(args: impl Iterator<Item = String>) -> anyhow::Result<()> {
-    let mut install = false;
+/// What `cargo xtask bundle` was asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Options {
+    pub dev: bool,
+    pub install: bool,
+}
+
+pub fn options(args: impl Iterator<Item = String>) -> anyhow::Result<Options> {
+    let (mut dev, mut install) = (false, false);
     for arg in args {
         match arg.as_str() {
+            "--dev" => dev = true,
             "--install" => install = true,
             other => bail!("unknown flag {other:?}"),
         }
     }
+    ensure!(!(dev && install), "the dev bundle isn't installed");
+    Ok(Options { dev, install })
+}
+
+pub fn run(args: impl Iterator<Item = String>) -> anyhow::Result<()> {
+    let Options { dev, install } = options(args)?;
     ensure!(cfg!(target_os = "macos"), "app bundles are macOS only");
 
     let target = target_dir();
     let signer = local_signer()?.unwrap_or(Signer::AdHoc);
-    let app = assemble(&target, &signer)?;
+    let app = if dev {
+        assemble_dev(&target, &signer)?
+    } else {
+        assemble(&target, &signer)?
+    };
     println!("built {}", app.display());
     match signer {
         Signer::AdHoc => println!(
@@ -339,39 +407,26 @@ fn home() -> anyhow::Result<PathBuf> {
         .context("HOME is not set")
 }
 
-fn workspace_root() -> PathBuf {
+pub(crate) fn workspace_root() -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     fs::canonicalize(&root).unwrap_or(root)
 }
 
-fn target_dir() -> PathBuf {
+pub(crate) fn target_dir() -> PathBuf {
     std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| workspace_root().join("target"), Into::into)
 }
 
 /// Lays out the bundle and signs it, replacing any earlier one.
 fn assemble(target: &Path, signer: &Signer) -> anyhow::Result<PathBuf> {
-    let built = build_with_portable_libraries()?;
-    let app = target.join(APP);
-    let contents = app.join("Contents");
-    let macos = contents.join("MacOS");
-    let frameworks = app.join(FRAMEWORKS);
-    if app.exists() {
-        fs::remove_dir_all(&app)?;
-    }
-    let resources = contents.join("Resources");
-    fs::create_dir_all(&macos)?;
-    fs::create_dir_all(app.join(HELPERS))?;
-    fs::create_dir_all(&frameworks)?;
-    fs::create_dir_all(&resources)?;
-    fs::write(
-        contents.join("Info.plist"),
-        info_plist(env!("CARGO_PKG_VERSION")),
-    )?;
-    render_icon(target, &resources.join(format!("{ICON}.icns")))?;
+    let binary = built_binary(&cargo_build(EXECUTABLE)?, EXECUTABLE)
+        .context("cargo didn't report the app's binary")?;
+    let host = build_host_with_portable_libraries()?;
+    let app = target.join(SLINT.app);
+    let layout = Layout::new(&app, &SLINT)?;
+    render_icon(target, &layout.resources.join(format!("{ICON}.icns")))?;
 
-    let binary = macos.join(EXECUTABLE);
-    fs::copy(&built.app, &binary)?;
-    let linked = otool(&binary)?;
+    fs::copy(&binary, &layout.binary)?;
+    let linked = otool(&layout.binary)?;
     ensure!(
         rpath_libraries(&linked).is_empty() && foreign_libraries(&linked).is_empty(),
         "the app should link macOS alone: {linked}"
@@ -381,19 +436,115 @@ fn assemble(target: &Path, signer: &Signer) -> anyhow::Result<PathBuf> {
         let engines = engines_in(&tree);
         ensure!(engines.is_empty(), "{package} links {engines:?}");
     }
-    let helper = helper_path(&app);
-    fs::copy(&built.engine_host, &helper)?;
-    let carried = carry_libraries(&helper, &built.libraries, &frameworks)?;
-    for (path, identifier) in signing_order(&app, &carried) {
+    finish(&app, &SLINT, &host, signer)?;
+    Ok(app)
+}
+
+/// The Swift app. Its Rust is `wf-shell`, linked in by `swift build`, and the rest is the same.
+fn assemble_dev(target: &Path, signer: &Signer) -> anyhow::Result<PathBuf> {
+    bridge::build()?;
+    let host = build_host_with_portable_libraries()?;
+    let products = swift_build()?;
+    let app = target.join(DEV.app);
+    let layout = Layout::new(&app, &DEV)?;
+    compile_icon(&layout.resources, target)?;
+
+    fs::copy(products.join(SWIFT_EXECUTABLE), &layout.binary)?;
+    let linked = otool(&layout.binary)?;
+    ensure!(
+        rpath_libraries(&linked).is_empty() && foreign_libraries(&linked).is_empty(),
+        "the app should link macOS alone: {linked}"
+    );
+    for entry in fs::read_dir(&products)? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|extension| extension == "bundle") {
+            let name = path.file_name().context("a resource bundle")?;
+            tool("ditto")
+                .arg(&path)
+                .arg(layout.resources.join(name))
+                .succeed()?;
+        }
+    }
+    finish(&app, &DEV, &host, signer)?;
+    Ok(app)
+}
+
+/// The folders of a bundle, made fresh, with its plist in place.
+struct Layout {
+    binary: PathBuf,
+    resources: PathBuf,
+}
+
+impl Layout {
+    fn new(app: &Path, flavor: &Flavor) -> anyhow::Result<Self> {
+        let contents = app.join("Contents");
+        let macos = contents.join("MacOS");
+        if app.exists() {
+            fs::remove_dir_all(app)?;
+        }
+        let resources = contents.join("Resources");
+        fs::create_dir_all(&macos)?;
+        fs::create_dir_all(app.join(HELPERS))?;
+        fs::create_dir_all(app.join(FRAMEWORKS))?;
+        fs::create_dir_all(&resources)?;
+        fs::write(
+            contents.join("Info.plist"),
+            info_plist(flavor, env!("CARGO_PKG_VERSION")),
+        )?;
+        Ok(Self {
+            binary: macos.join(EXECUTABLE),
+            resources,
+        })
+    }
+}
+
+/// Brings in the engine host and its libraries, signs the bundle and checks the result.
+fn finish(app: &Path, flavor: &Flavor, host: &Host, signer: &Signer) -> anyhow::Result<()> {
+    let helper = helper_path(app);
+    fs::copy(&host.binary, &helper)?;
+    let carried = carry_libraries(&helper, &host.libraries, &app.join(FRAMEWORKS))?;
+    for (path, identifier) in signing_order(flavor, app, &carried) {
         codesign(signer, &path, identifier)?;
     }
     tool("codesign")
         .args(["--verify", "--deep", "--strict"])
-        .arg(&app)
+        .arg(app)
         .succeed()?;
     // Fails if dyld can't find a library from inside the bundle.
-    tool(&helper).arg("--version").current_dir("/").succeed()?;
-    Ok(app)
+    tool(&helper).arg("--version").current_dir("/").succeed()
+}
+
+/// Returns where the build left its products.
+fn swift_build() -> anyhow::Result<PathBuf> {
+    let package = bridge::apple_dir();
+    let release = ["--configuration", "release", "--package-path"];
+    tool("swift")
+        .arg("build")
+        .args(release)
+        .arg(&package)
+        .args(["--jobs", SWIFT_JOBS])
+        .succeed()?;
+    let products = tool("swift")
+        .arg("build")
+        .args(release)
+        .arg(&package)
+        .arg("--show-bin-path")
+        .text()?;
+    Ok(PathBuf::from(products.trim()))
+}
+
+/// Makes `Assets.car` and the `.icns` for older parts of the system.
+fn compile_icon(resources: &Path, target: &Path) -> anyhow::Result<()> {
+    tool("xcrun")
+        .arg("actool")
+        .arg(bridge::apple_dir().join(SWIFT_ICON))
+        .arg("--compile")
+        .arg(resources)
+        .args(["--platform", "macosx", "--target-device", "mac"])
+        .args(["--minimum-deployment-target", DEV.minimum_macos])
+        .args(["--app-icon", ICON, "--output-partial-info-plist"])
+        .arg(target.join("wf-bridge/icon.plist"))
+        .succeed()
 }
 
 /// Draws the icon from its SVG, each size from the source so small ones stay sharp.
@@ -422,38 +573,35 @@ fn render_icon(target: &Path, icns: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-struct Built {
-    app: PathBuf,
-    engine_host: PathBuf,
+/// The engine host and where the build left the libraries it needs.
+struct Host {
+    binary: PathBuf,
     libraries: PathBuf,
 }
 
-/// Builds the binaries. `.cargo/config.toml` keeps OpenSSL out of llama.cpp, but nothing tells
-/// cargo that a build from before that line is stale, so such a build is cleaned once.
-fn build_with_portable_libraries() -> anyhow::Result<Built> {
-    let built = build()?;
-    if !foreign_in(&built.libraries)?.is_empty() {
+/// `.cargo/config.toml` keeps OpenSSL out of llama.cpp, but nothing tells cargo that a build from
+/// before that line is stale, so such a build is cleaned once.
+fn build_host_with_portable_libraries() -> anyhow::Result<Host> {
+    let host = build_host()?;
+    if !foreign_in(&host.libraries)?.is_empty() {
         println!("rebuilding llama.cpp: this build links libraries outside the app");
         tool("cargo")
             .args(["clean", "--release", "--package", "llama-cpp-sys-2"])
             .current_dir(workspace_root())
             .succeed()?;
-        return build();
+        return build_host();
     }
-    Ok(built)
+    Ok(host)
 }
 
 /// One binary at a time: built together, cargo would give the app the host's features, and with
 /// them every engine.
-fn build() -> anyhow::Result<Built> {
-    let app = cargo_build(EXECUTABLE)?;
-    let engine_host = cargo_build(ENGINE_HOST)?;
-    Ok(Built {
-        app: built_binary(&app, EXECUTABLE).context("cargo didn't report the app's binary")?,
-        engine_host: built_binary(&engine_host, ENGINE_HOST)
+fn build_host() -> anyhow::Result<Host> {
+    let messages = cargo_build(ENGINE_HOST)?;
+    Ok(Host {
+        binary: built_binary(&messages, ENGINE_HOST)
             .context("cargo didn't report the engine host's binary")?,
-        libraries: llama_libraries(&engine_host)
-            .context("cargo didn't report llama.cpp's build")?,
+        libraries: llama_libraries(&messages).context("cargo didn't report llama.cpp's build")?,
     })
 }
 
@@ -468,7 +616,7 @@ fn cargo_build(binary: &str) -> anyhow::Result<String> {
 }
 
 /// What cargo resolves for `package` alone, so with no other package's features.
-fn cargo_tree(package: &str) -> anyhow::Result<String> {
+pub(crate) fn cargo_tree(package: &str) -> anyhow::Result<String> {
     tool("cargo")
         .args(["tree", "--locked", "--package", package])
         .args(["--edges", "normal", "--prefix", "none"])
@@ -533,7 +681,7 @@ fn codesign(signer: &Signer, path: &Path, identifier: Option<&str>) -> anyhow::R
 fn install_app(app: &Path) -> anyhow::Result<PathBuf> {
     let folder = home()?.join("Applications");
     fs::create_dir_all(&folder)?;
-    let installed = folder.join(APP);
+    let installed = folder.join(SLINT.app);
     if installed.exists() {
         let plist = fs::read_to_string(installed.join("Contents/Info.plist")).unwrap_or_default();
         ensure!(
@@ -547,25 +695,25 @@ fn install_app(app: &Path) -> anyhow::Result<PathBuf> {
     Ok(installed)
 }
 
-fn tool(program: impl AsRef<std::ffi::OsStr>) -> Tool {
+pub(crate) fn tool(program: impl AsRef<std::ffi::OsStr>) -> Tool {
     Tool(Command::new(program))
 }
 
 /// A command that fails loudly.
-struct Tool(Command);
+pub(crate) struct Tool(Command);
 
 impl Tool {
-    fn arg(&mut self, arg: impl AsRef<std::ffi::OsStr>) -> &mut Self {
+    pub(crate) fn arg(&mut self, arg: impl AsRef<std::ffi::OsStr>) -> &mut Self {
         self.0.arg(arg);
         self
     }
 
-    fn args(&mut self, args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>) -> &mut Self {
+    pub(crate) fn args(&mut self, args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>) -> &mut Self {
         self.0.args(args);
         self
     }
 
-    fn current_dir(&mut self, folder: impl AsRef<Path>) -> &mut Self {
+    pub(crate) fn current_dir(&mut self, folder: impl AsRef<Path>) -> &mut Self {
         self.0.current_dir(folder);
         self
     }
@@ -575,11 +723,16 @@ impl Tool {
         self
     }
 
-    fn succeed(&mut self) -> anyhow::Result<()> {
+    pub(crate) fn succeed(&mut self) -> anyhow::Result<()> {
         self.text().map(drop)
     }
 
-    fn text(&mut self) -> anyhow::Result<String> {
+    pub(crate) fn text(&mut self) -> anyhow::Result<String> {
+        self.outputs().map(|(out, _)| out)
+    }
+
+    /// What it printed to stdout and to stderr.
+    pub(crate) fn outputs(&mut self) -> anyhow::Result<(String, String)> {
         let output = self
             .0
             .output()
@@ -590,6 +743,9 @@ impl Tool {
             self.0,
             String::from_utf8_lossy(&output.stderr)
         );
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        Ok((
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ))
     }
 }

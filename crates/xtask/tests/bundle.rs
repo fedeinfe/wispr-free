@@ -6,8 +6,9 @@ use std::process::Command;
 
 use wf_dictation::remote::engine_host_beside;
 use xtask::bundle::{
-    Signer, built_binary, codesign_args, engines_in, foreign_libraries, helper_path, iconset_files,
-    info_plist, llama_libraries, rpath_libraries, signing_order,
+    DEV, Options, SLINT, Signer, built_binary, codesign_args, engines_in, foreign_libraries,
+    helper_path, iconset_files, info_plist, llama_libraries, options, rpath_libraries,
+    signing_order,
 };
 
 const OTOOL: &str = "\
@@ -89,7 +90,7 @@ fn signing_goes_inside_out_and_the_helper_is_named() {
         app.join("Contents/Frameworks/libggml.0.dylib"),
     ];
 
-    let order = signing_order(app, &libraries);
+    let order = signing_order(&SLINT, app, &libraries);
 
     assert_eq!(
         order,
@@ -101,6 +102,24 @@ fn signing_goes_inside_out_and_the_helper_is_named() {
                 Some("com.wispr-free.wf-engine-host")
             ),
             (app.to_path_buf(), Some("com.wispr-free.app")),
+        ]
+    );
+}
+
+#[test]
+fn the_dev_bundle_signs_under_its_own_id_and_keeps_the_helper_named() {
+    let app = Path::new("/t/Wispr Free Dev.app");
+
+    let order = signing_order(&DEV, app, &[]);
+
+    assert_eq!(
+        order,
+        [
+            (
+                app.join("Contents/Helpers/wf-engine-host"),
+                Some("com.wispr-free.wf-engine-host")
+            ),
+            (app.to_path_buf(), Some("com.wispr-free.app.dev")),
         ]
     );
 }
@@ -143,7 +162,7 @@ fn a_tree_with_an_engine_in_it_is_caught() {
 
 #[test]
 fn the_plist_says_what_macos_asks_for() {
-    let plist = info_plist("1.2.3");
+    let plist = info_plist(&SLINT, "1.2.3");
 
     for key in [
         "NSMicrophoneUsageDescription",
@@ -161,6 +180,61 @@ fn the_plist_says_what_macos_asks_for() {
 }
 
 #[test]
+fn the_dev_plist_names_its_own_app_on_the_swift_floor() {
+    let plist = info_plist(&DEV, "1.2.3");
+
+    assert!(plist.contains("<string>com.wispr-free.app.dev</string>"));
+    assert!(plist.contains("<string>Wispr Free Dev</string>"));
+    assert!(!plist.contains("<string>Wispr Free</string>"));
+    assert!(!plist.contains("<string>com.wispr-free.app</string>"));
+    let executable = plist.split("<key>CFBundleExecutable</key>").nth(1).unwrap();
+    assert!(executable.trim_start().starts_with("<string>wispr-free</string>"));
+    let minimum = plist.split("<key>LSMinimumSystemVersion</key>").nth(1).unwrap();
+    assert!(minimum.trim_start().starts_with("<string>26.0</string>"));
+    let icon = plist.split("<key>CFBundleIconName</key>").nth(1).unwrap();
+    assert!(icon.trim_start().starts_with("<string>AppIcon</string>"));
+    let no_dock = plist.split("<key>LSUIElement</key>").nth(1).unwrap();
+    assert!(no_dock.trim_start().starts_with("<true/>"));
+}
+
+#[test]
+fn the_default_bundle_stays_the_slint_app() {
+    let plist = info_plist(&SLINT, "1.2.3");
+
+    assert_eq!(SLINT.app, "Wispr Free.app");
+    assert_eq!(DEV.app, "Wispr Free Dev.app");
+    assert!(plist.contains("<string>Wispr Free</string>"));
+    assert!(!plist.contains("CFBundleIconName"));
+    let minimum = plist.split("<key>LSMinimumSystemVersion</key>").nth(1).unwrap();
+    assert!(minimum.trim_start().starts_with("<string>13.0</string>"));
+}
+
+fn parsed(args: &[&str]) -> anyhow::Result<Options> {
+    options(args.iter().map(|arg| (*arg).to_owned()))
+}
+
+#[test]
+fn with_no_flags_the_bundle_is_the_slint_app_and_stays_in_target() {
+    assert_eq!(
+        parsed(&[]).unwrap(),
+        Options {
+            dev: false,
+            install: false
+        }
+    );
+    assert!(parsed(&["--install"]).unwrap().install);
+    assert!(parsed(&["--dev"]).unwrap().dev);
+    assert!(parsed(&["--nonsense"]).is_err());
+}
+
+/// `~/Applications` holds the app the user dictates with.
+#[test]
+fn the_dev_bundle_is_never_installed() {
+    assert!(parsed(&["--dev", "--install"]).is_err());
+    assert!(parsed(&["--install", "--dev"]).is_err());
+}
+
+#[test]
 fn the_icon_set_has_every_size_macos_looks_for() {
     let files = iconset_files();
 
@@ -172,7 +246,7 @@ fn the_icon_set_has_every_size_macos_looks_for() {
 
 #[test]
 fn the_app_has_no_dock_icon_until_the_setting_asks_for_one() {
-    let plist = info_plist("1.0.0");
+    let plist = info_plist(&SLINT, "1.0.0");
     let after_key = plist.split("<key>LSUIElement</key>").nth(1).unwrap();
     assert!(after_key.trim_start().starts_with("<true/>"));
 }
