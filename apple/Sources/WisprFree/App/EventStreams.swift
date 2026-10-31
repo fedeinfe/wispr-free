@@ -2,7 +2,7 @@ import WfCore
 
 /// Where `Shell`'s events come out. Two streams, so a flood of levels can't push out a state
 /// change: states are all kept, and levels only ever the newest.
-struct EventStreams: Sendable {
+nonisolated struct EventStreams: Sendable {
     let states: AsyncStream<ShellEvent>
     let levels: AsyncStream<Float>
     let sink: any EventSink

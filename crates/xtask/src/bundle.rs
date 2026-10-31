@@ -21,7 +21,7 @@ pub struct Flavor {
     pub app: &'static str,
     name: &'static str,
     id: &'static str,
-    minimum_macos: &'static str,
+    pub minimum_macos: &'static str,
     /// `actool` made the icon, so the plist can name it.
     icon_name: bool,
 }
@@ -710,6 +710,11 @@ impl Tool {
 
     pub(crate) fn args(&mut self, args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>) -> &mut Self {
         self.0.args(args);
+        self
+    }
+
+    pub(crate) fn env(&mut self, key: &str, value: &str) -> &mut Self {
+        self.0.env(key, value);
         self
     }
 

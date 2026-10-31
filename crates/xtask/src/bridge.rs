@@ -8,9 +8,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use uniffi::SwiftBindingsOptions;
 
-use crate::bundle::{cargo_tree, engines_in, target_dir, tool, workspace_root};
+use crate::bundle::{DEV, cargo_tree, engines_in, target_dir, tool, workspace_root};
 
 const SHELL: &str = "wf-shell";
+/// What rustc and the C compilers aim at unless told, which would be this Mac's own version.
+const DEPLOYMENT_TARGET: &str = "MACOSX_DEPLOYMENT_TARGET";
 const LIBRARY: &str = "libwf_shell.a";
 /// Each UniFFI namespace, with the crate that sets it up.
 const NAMESPACES: [&str; 2] = ["wfshell", "wfsettings"];
@@ -106,6 +108,7 @@ fn build_library() -> anyhow::Result<PathBuf> {
     let (_, messages) = tool("cargo")
         .args(["rustc", "--release", "--locked", "--package", SHELL, "--lib"])
         .args(["--", "--print", "native-static-libs"])
+        .env(DEPLOYMENT_TARGET, DEV.minimum_macos)
         .current_dir(workspace_root())
         .outputs()?;
     let tree = cargo_tree(SHELL)?;
