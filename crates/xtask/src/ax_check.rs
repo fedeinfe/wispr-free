@@ -16,7 +16,7 @@ use std::process::Child;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, ensure};
+use anyhow::{Context as _, bail, ensure};
 use serde::Deserialize;
 
 use crate::bridge::apple_dir;
@@ -459,7 +459,10 @@ impl Run {
             if found.is_empty() {
                 return Ok(walk);
             }
-            ensure!(Instant::now() < deadline, "after {WAIT:?}: {found:?}");
+            if Instant::now() >= deadline {
+                // "took the focus" in here tells a real activation from a report of one.
+                bail!("after {WAIT:?}: {found:?}\nthe app said:\n{}", self.said()?);
+            }
             thread::sleep(POLL);
         }
     }
