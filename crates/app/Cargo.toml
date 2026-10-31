@@ -11,12 +11,9 @@ publish.workspace = true
 [dependencies]
 wf-core.workspace = true
 wf-audio.workspace = true
-wf-pipeline.workspace = true
 wf-platform.workspace = true
 wf-models.workspace = true
-wf-meetings.workspace = true
 wf-dictation.workspace = true
-wf-history.workspace = true
 wf-shell.workspace = true
 slint = { workspace = true, features = ["unstable-winit-030"] }
 rfd.workspace = true
@@ -26,7 +23,7 @@ i-slint-backend-testing = { workspace = true, features = ["renderer-software"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 tempfile.workspace = true
 toml.workspace = true
-wf-pipeline.workspace = true
+wf-meetings.workspace = true
 
 [build-dependencies]
 slint-build.workspace = true
