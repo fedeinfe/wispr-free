@@ -8,6 +8,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var shell: Shell?
     private var pill: PillController?
     private var statusItem: StatusItem?
+    private var editor: SettingsEditor?
+    private var windows: Windows?
+    /// Picks run in the order they were made.
+    private var picking: Task<Void, Never>?
     private var terminateSignal: DispatchSourceSignal?
     private let events = EventStreams()
 
@@ -15,6 +19,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         quitOnTerminateSignal()
         NSApp.mainMenu = MainMenu.make { [weak self] in self?.pick(.openSettings) }
         Task { await start() }
+    }
+
+    /// Only a person can want this. A check that sees this line has taken the focus.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        log("took the focus")
     }
 
     /// Replies through the run loop, not the main actor: when `terminate` is called from a block on
@@ -48,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.shell = shell
             log("shell started")
             Task { await follow() }
-            show(on: shell)
+            try show(on: shell)
             try applyOptions(to: shell)
         } catch {
             log("could not start: \(error)")
@@ -56,7 +65,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func show(on shell: Shell) {
+    private func show(on shell: Shell) throws {
+        let editor = try SettingsEditor(core: shell)
+        self.editor = editor
+        windows = Windows(core: shell, editor: editor, stage: options.behind ? .behind : .front)
         let pick: (MenuAction) -> Void = { [weak self] action in self?.pick(action) }
         let pill = PillController(
             shell: shell, surroundings: pillSurroundings, catchesMouse: options.byHand,
@@ -80,12 +92,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let name = options.pillState, let state = pillStateNamed(name: name) {
             try shell.stage(scene: .state(state: state))
         }
-        if let title = options.pick, statusItem?.press(title) != true {
+        for title in options.picks where statusItem?.press(title) != true {
             log("no item \(title)")
         }
         if let folder = options.shots, let pill {
             Task {
                 await Shots(shell: shell, pill: pill, folder: folder).take()
+                NSApp.terminate(nil)
+            }
+        }
+        if let folder = options.windowShots, let windows {
+            Task {
+                await WindowShots(shell: shell, windows: windows, folder: folder).take()
                 NSApp.terminate(nil)
             }
         }
@@ -97,8 +115,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .quitAsked:
                 NSApp.terminate(nil)
             case .open(let window):
-                // Their windows arrive with tickets 11 to 14.
-                log("no \(window) window yet")
+                windows?.open(window)
+            case .raise(let window):
+                windows?.raise(window)
+            case .settingsChanged(let current):
+                editor?.adopt(current)
             default:
                 break
             }
@@ -107,7 +128,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func pick(_ action: MenuAction) {
         guard let shell else { return }
-        Task {
+        let previous = picking
+        picking = Task {
+            await previous?.value
             do {
                 try await shell.menuAction(action: action)
             } catch {

@@ -317,9 +317,10 @@ struct PillRig {
 
         #expect(
             menu.items.map(\.title) == [
-                "Start meeting notes", "Debug pill", "Meetings…", "Settings…", "Quit wispr-free",
+                "Finish setup…", "Start meeting notes", "Debug pill", "Meetings…", "Settings…",
+                "Quit wispr-free",
             ])
-        #expect(menu.items[1].submenu?.items.count == 15)
+        #expect(menu.items[2].submenu?.items.count == 15)
     }
 
     @Test func theMenuBarIconIsATemplate() {
@@ -351,7 +352,7 @@ struct PillRig {
         #expect(!options.byHand)
         #expect(!options.rehearse)
         #expect(options.pillState == nil)
-        #expect(options.pick == nil)
+        #expect(options.picks.isEmpty)
         #expect(options.shots == nil)
     }
 
@@ -365,7 +366,7 @@ struct PillRig {
         #expect(options.debugPill)
         #expect(options.rehearse)
         #expect(options.pillState == "locked")
-        #expect(options.pick == "Quit wispr-free")
+        #expect(options.picks == ["Quit wispr-free"])
         #expect(options.shots == "/tmp/shots")
     }
 }

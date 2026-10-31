@@ -21,13 +21,13 @@ final class Shots {
         var escapeIsDown: Bool { false }
     }
 
-    private struct Backdrop {
+    struct Backdrop {
         let name: String
         let appearance: NSAppearance.Name
         let color: NSColor
     }
 
-    private static let backdrops = [
+    static let backdrops = [
         Backdrop(name: "light", appearance: .aqua, color: .white),
         Backdrop(name: "dark", appearance: .darkAqua, color: NSColor(white: 0.09, alpha: 1)),
         Backdrop(
@@ -106,14 +106,17 @@ final class Shots {
             pill.tick()
             try await Task.sleep(for: Self.settle)
             pill.tick()
-            let image = try await capture(windows, frame: frame)
+            let image = try await Self.capture(
+                windows, frame: frame, scale: pill.panel.backingScaleFactor)
             try write(image, to: "\(name)-\(backdrop.name).png")
             images.append(image)
         }
         return images
     }
 
-    private func capture(_ windows: [NSWindow], frame: NSRect) async throws -> CGImage {
+    static func capture(
+        _ windows: [NSWindow], frame: NSRect, scale: CGFloat
+    ) async throws -> CGImage {
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: false)
         let numbers = Set(windows.map { CGWindowID($0.windowNumber) })
@@ -128,7 +131,6 @@ final class Shots {
         configuration.sourceRect = CGRect(
             x: rect.x - display.frame.minX, y: rect.y - display.frame.minY,
             width: rect.width, height: rect.height)
-        let scale = pill.panel.backingScaleFactor
         configuration.width = Int(frame.width * scale)
         configuration.height = Int(frame.height * scale)
         configuration.showsCursor = false
@@ -179,13 +181,17 @@ final class Shots {
     }
 
     private func write(_ image: CGImage?, to name: String) throws {
-        guard let image, let data = NSBitmapImageRep(cgImage: image)
-            .representation(using: .png, properties: [:])
-        else { throw ShotError.noPicture(name) }
-        try data.write(to: folder.appending(path: name))
+        try Self.write(image, to: folder.appending(path: name))
     }
 
-    private enum ShotError: Error {
+    static func write(_ image: CGImage?, to file: URL) throws {
+        guard let image, let data = NSBitmapImageRep(cgImage: image)
+            .representation(using: .png, properties: [:])
+        else { throw ShotError.noPicture(file.lastPathComponent) }
+        try data.write(to: file)
+    }
+
+    enum ShotError: Error {
         case noDisplay
         case noPicture(String)
     }

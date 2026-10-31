@@ -11,10 +11,14 @@ struct LaunchOptions: Equatable {
     var pillState: String?
     /// Runs the flow on nothing real.
     var rehearse = false
-    /// Presses the status menu item with this title after starting.
-    var pick: String?
+    /// Presses the status menu items with these titles after starting, in order.
+    var picks: [String] = []
+    /// Windows come up behind everything else and nothing activates, so a run takes no focus.
+    var behind = false
     /// Takes the pill's pictures into this folder, then quits.
     var shots: String?
+    /// Takes the windows' pictures into this folder, then quits.
+    var windowShots: String?
 
     init(arguments: [String]) {
         #if DEBUG
@@ -22,13 +26,15 @@ struct LaunchOptions: Equatable {
         #endif
         for argument in arguments.dropFirst() {
             switch argument {
+            case "--behind": behind = true
             case "--by-hand": byHand = true
             case "--debug-pill": debugPill = true
             case "--rehearse": rehearse = true
             default:
                 pillState = Self.value(of: "--pill-state=", in: argument) ?? pillState
-                pick = Self.value(of: "--pick=", in: argument) ?? pick
+                picks += Self.value(of: "--pick=", in: argument).map { [$0] } ?? []
                 shots = Self.value(of: "--shots=", in: argument) ?? shots
+                windowShots = Self.value(of: "--window-shots=", in: argument) ?? windowShots
             }
         }
     }
