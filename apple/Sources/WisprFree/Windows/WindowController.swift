@@ -24,9 +24,14 @@ struct WindowStage {
         order(window)
     }
 
-    /// An accessory app doesn't get the foreground unless it asks.
+    /// Over every other app's windows. An accessory app doesn't get the foreground unless it
+    /// insists, and plain `activate()` only asks, so the app in front could keep it.
     static let front = WindowStage(
-        activate: { NSApp.activate() }, order: { $0.makeKeyAndOrderFront(nil) },
+        activate: { NSApp.activate(ignoringOtherApps: true) },
+        order: { window in
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+        },
         orderQuietly: { $0.orderFrontRegardless() })
     /// Behind every other window, with nothing activated, for a run with no person at the Mac.
     static let behind = WindowStage(
