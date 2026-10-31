@@ -12,6 +12,7 @@ use wf_core::pill::{Pill, PillCommand, PillState, Sound, Tick, WINDOW_SIZE};
 
 use crate::mic_levels::MicLevels;
 use crate::prefs::Prefs;
+use crate::settings::page::SettingsPage;
 
 /// Poll rates: animating, watching the cursor, and hidden.
 pub const FRAME_POLL_MS: u32 = 16;
@@ -140,6 +141,10 @@ impl PillCore {
 
     pub fn prefs(&self) -> &Prefs {
         &self.prefs
+    }
+
+    pub fn set_settings_page(&mut self, page: SettingsPage) {
+        self.prefs.settings_page = page;
     }
 
     /// The menu is only for a pill showing Ready.
@@ -334,7 +339,8 @@ impl PillCore {
     }
 }
 
-/// Saves `prefs`, which only a drag changes, so a failure costs no more than the place.
+/// Saves `prefs`, which only a drag or a page of Settings changes, so a failure costs no more than
+/// the place.
 pub fn save_prefs(prefs: &Prefs, path: &Path) {
     if let Err(err) = prefs.save(path) {
         eprintln!("could not save pill preferences: {err}");

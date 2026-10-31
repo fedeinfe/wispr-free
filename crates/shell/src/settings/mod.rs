@@ -3,6 +3,7 @@
 //! from here without a second copy.
 
 pub mod data;
+pub mod page;
 pub mod rows;
 pub mod system;
 pub mod values;

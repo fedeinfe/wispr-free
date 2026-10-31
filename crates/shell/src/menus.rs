@@ -31,6 +31,7 @@ pub enum MenuAction {
     },
     ToggleMeeting,
     OpenMeetings,
+    OpenOnboarding,
     OpenSettings,
     HideForAnHour,
     Quit,
@@ -115,14 +116,19 @@ pub fn pill_menu(recent: &[String], microphones: &[InputDevice]) -> Vec<MenuEntr
     ]
 }
 
-/// The menu of the status item. `debug` adds what reaches every pill state by hand.
-pub fn status_menu(in_meeting: bool, debug: bool) -> Vec<MenuEntry> {
+/// The menu of the status item. `setup_needed` keeps a way back to onboarding, and `debug` adds what
+/// reaches every pill state by hand.
+pub fn status_menu(in_meeting: bool, setup_needed: bool, debug: bool) -> Vec<MenuEntry> {
     let meeting = if in_meeting {
         "Stop meeting notes"
     } else {
         "Start meeting notes"
     };
-    let mut entries = vec![item(meeting, MenuAction::ToggleMeeting)];
+    let mut entries = Vec::new();
+    if setup_needed {
+        entries.push(item("Finish setup…", MenuAction::OpenOnboarding));
+    }
+    entries.push(item(meeting, MenuAction::ToggleMeeting));
     if debug {
         entries.push(submenu("Debug pill", debug_entries()));
     }
@@ -311,7 +317,7 @@ mod tests {
     #[test]
     fn the_status_menu_says_what_the_meeting_button_will_do() {
         assert_eq!(
-            titles(&status_menu(false, false)),
+            titles(&status_menu(false, false, false)),
             [
                 "Start meeting notes",
                 "Meetings…",
@@ -319,12 +325,23 @@ mod tests {
                 "Quit wispr-free"
             ]
         );
-        assert_eq!(titles(&status_menu(true, false))[0], "Stop meeting notes");
+        assert_eq!(
+            titles(&status_menu(true, false, false))[0],
+            "Stop meeting notes"
+        );
+    }
+
+    #[test]
+    fn finish_setup_comes_first_and_only_when_setup_is_needed() {
+        assert_eq!(
+            status_menu(false, true, false)[0],
+            item("Finish setup…", MenuAction::OpenOnboarding)
+        );
     }
 
     #[test]
     fn the_debug_menu_reaches_every_state_and_sound() {
-        let menu = status_menu(false, true);
+        let menu = status_menu(false, false, true);
 
         assert_eq!(titles(&menu)[1], "Debug pill");
         assert_eq!(

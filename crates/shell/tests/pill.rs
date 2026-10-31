@@ -23,6 +23,7 @@ use wf_shell::pill::{
 };
 use wf_shell::prefs::Prefs;
 use wf_shell::rehearsal::HEARD;
+use wf_shell::settings::page::SettingsPage;
 
 const WAIT: Duration = Duration::from_secs(10);
 const SCREEN: Rect = Rect {
@@ -408,13 +409,10 @@ fn a_recorded_meeting_takes_the_question_down_and_flips_the_status_menu() {
 
     assert_eq!(rig.tick(AWAY).card, None);
     let menu = rig.shell.status_menu(false).unwrap();
-    assert_eq!(
-        menu[0],
-        MenuEntry::Item {
-            title: "Stop meeting notes".to_owned(),
-            action: MenuAction::ToggleMeeting,
-        }
-    );
+    assert!(menu.contains(&MenuEntry::Item {
+        title: "Stop meeting notes".to_owned(),
+        action: MenuAction::ToggleMeeting,
+    }));
 }
 
 #[test]
@@ -580,6 +578,7 @@ fn what_needs_a_window_or_the_app_comes_back_as_an_event() {
 
     rig.pick(MenuAction::OpenSettings);
     rig.pick(MenuAction::OpenMeetings);
+    rig.pick(MenuAction::OpenSettings);
     rig.pick(MenuAction::Quit);
 
     assert_eq!(
@@ -591,8 +590,69 @@ fn what_needs_a_window_or_the_app_comes_back_as_an_event() {
             ShellEvent::Open {
                 window: AppWindow::Meetings
             },
+            ShellEvent::Raise {
+                window: AppWindow::Settings
+            },
             ShellEvent::QuitAsked,
         ]
+    );
+}
+
+#[test]
+fn settings_asked_for_during_onboarding_raises_onboarding_until_it_closes() {
+    let rig = Rig::new();
+    rig.drain();
+
+    rig.pick(MenuAction::OpenOnboarding);
+    rig.pick(MenuAction::OpenSettings);
+    rig.shell.window_closed(AppWindow::Onboarding).unwrap();
+    rig.pick(MenuAction::OpenSettings);
+
+    assert_eq!(
+        rig.drain(),
+        [
+            ShellEvent::Open {
+                window: AppWindow::Onboarding
+            },
+            ShellEvent::Raise {
+                window: AppWindow::Onboarding
+            },
+            ShellEvent::Open {
+                window: AppWindow::Settings
+            },
+        ]
+    );
+}
+
+#[test]
+fn finish_setup_is_offered_until_onboarding_finished() {
+    let rig = Rig::new();
+    let setup = MenuEntry::Item {
+        title: "Finish setup…".to_owned(),
+        action: MenuAction::OpenOnboarding,
+    };
+    assert_eq!(rig.shell.status_menu(false).unwrap()[0], setup);
+
+    let current = rig.shell.settings().unwrap();
+    let mut settings = current.settings;
+    settings.onboarding.finished = true;
+    now(Arc::clone(&rig.shell).save(settings, current.revision)).unwrap();
+
+    assert!(!rig.shell.status_menu(false).unwrap().contains(&setup));
+}
+
+#[test]
+fn the_page_settings_was_on_survives_a_restart() {
+    let rig = Rig::new();
+    assert_eq!(rig.shell.settings_page().unwrap(), SettingsPage::General);
+
+    now(rig.shell.set_settings_page(SettingsPage::Privacy)).unwrap();
+
+    assert_eq!(rig.shell.settings_page().unwrap(), SettingsPage::Privacy);
+    let restarted = Rig::on(rig.folder);
+    assert_eq!(
+        restarted.shell.settings_page().unwrap(),
+        SettingsPage::Privacy
     );
 }
 

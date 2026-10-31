@@ -17,6 +17,7 @@ use wf_core::settings::{Settings, SettingsStore};
 use wf_dictation::{Dictation, Event};
 use wf_models::Catalog;
 
+use crate::app_windows::{OpenWindows, WindowOrder};
 use crate::flow::{self, KeySlot, rank_first};
 use crate::memory;
 use crate::menus::{self, MenuAction, MenuEntry};
@@ -24,7 +25,11 @@ use crate::paths::{self, Paths};
 use crate::pill::{PillCore, PillFrame, Question, save_prefs};
 use crate::prefs::Prefs;
 use crate::rehearsal;
+use crate::settings::page::SettingsPage;
 use crate::settings::values::choose_tier;
+use crate::windows::WINDOW_TEARDOWN;
+
+pub use crate::app_windows::AppWindow;
 
 /// How long quitting waits for a running recording to be closed. If it isn't done by then, the
 /// next launch repairs the meeting.
@@ -92,18 +97,16 @@ pub enum ShellEvent {
     SettingsChanged {
         current: Versioned,
     },
-    /// A menu asked for a window.
+    /// Make this window and show it. Say [`Shell::window_closed`] when it's gone.
     Open {
+        window: AppWindow,
+    },
+    /// This window is open: bring it forward.
+    Raise {
         window: AppWindow,
     },
     /// A menu asked the app to quit. The app calls [`Shell::quit`] on its way out.
     QuitAsked,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum AppWindow {
-    Settings,
-    Meetings,
 }
 
 /// Something for the pill to show, the way the flow would have asked.
@@ -119,6 +122,12 @@ fn disk_error(error: impl std::fmt::Display) -> ShellError {
     ShellError::Disk {
         reason: error.to_string(),
     }
+}
+
+/// The error as the user reads it.
+#[uniffi::export]
+pub fn error_text(error: ShellError) -> String {
+    error.to_string()
 }
 
 /// Runs on a thread of the flow's, so it must not wait: only hand the event on.
@@ -164,6 +173,8 @@ struct Board {
     dictation: OnceLock<Dictation>,
     /// Held for moments only, and never while calling out.
     pill: Mutex<PillCore>,
+    /// Held for moments only, and never while calling out.
+    windows: Mutex<OpenWindows>,
     prefs_path: PathBuf,
     play: Box<dyn Fn(Sound) + Send + Sync>,
     catalog: Catalog,
@@ -178,6 +189,19 @@ impl Board {
 
     fn lock_pill(&self) -> MutexGuard<'_, PillCore> {
         self.pill.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn lock_windows(&self) -> MutexGuard<'_, OpenWindows> {
+        self.windows.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Asks for `window`, so the rule decides what the app does about it.
+    fn ask_for(&self, window: AppWindow) {
+        let order = self.lock_windows().ask(window);
+        self.sink.on_event(match order {
+            WindowOrder::Open(window) => ShellEvent::Open { window },
+            WindowOrder::Raise(window) => ShellEvent::Raise { window },
+        });
     }
 
     fn current(&self, revision: u64) -> Versioned {
@@ -316,6 +340,7 @@ impl Shell {
         } = pill;
         let board = Arc::new(Board {
             pill: Mutex::new(PillCore::new(Prefs::load(&prefs))),
+            windows: Mutex::default(),
             prefs_path: prefs,
             play,
             catalog: Catalog::bundled(),
@@ -344,6 +369,19 @@ impl Shell {
             dictation,
             keys: KeySlot::default(),
         })
+    }
+}
+
+/// Returns what a closed window freed once the OS window is gone too.
+fn release_memory_after_teardown() {
+    let spawned = thread::Builder::new()
+        .name("window-teardown".into())
+        .spawn(|| {
+            thread::sleep(WINDOW_TEARDOWN);
+            memory::release_freed();
+        });
+    if let Err(err) = spawned {
+        eprintln!("could not release a closed window's memory: {err}");
     }
 }
 
@@ -460,7 +498,8 @@ impl Shell {
 
     pub fn status_menu(&self, debug: bool) -> Result<Vec<MenuEntry>, ShellError> {
         let in_meeting = self.board.in_meeting.load(Ordering::SeqCst);
-        Ok(menus::status_menu(in_meeting, debug))
+        let setup_needed = !self.board.store.get().onboarding.finished;
+        Ok(menus::status_menu(in_meeting, setup_needed, debug))
     }
 
     /// Does what the item picked says. Some items save settings, so this touches the disk.
@@ -479,12 +518,9 @@ impl Shell {
                 board.change(|settings| choose_tier(settings, tier, &board.catalog));
             }
             MenuAction::ToggleMeeting => self.dictation.toggle_meeting(),
-            MenuAction::OpenMeetings => board.sink.on_event(ShellEvent::Open {
-                window: AppWindow::Meetings,
-            }),
-            MenuAction::OpenSettings => board.sink.on_event(ShellEvent::Open {
-                window: AppWindow::Settings,
-            }),
+            MenuAction::OpenMeetings => board.ask_for(AppWindow::Meetings),
+            MenuAction::OpenOnboarding => board.ask_for(AppWindow::Onboarding),
+            MenuAction::OpenSettings => board.ask_for(AppWindow::Settings),
             MenuAction::HideForAnHour => board.lock_pill().hide_for_an_hour(),
             MenuAction::Quit => board.sink.on_event(ShellEvent::QuitAsked),
             MenuAction::DebugState { state } => {
@@ -494,6 +530,29 @@ impl Shell {
             MenuAction::DebugSound { sound } => (board.play)(sound),
             MenuAction::DebugMicLevel => board.lock_pill().use_real_mic_level(),
         }
+        Ok(())
+    }
+
+    /// `window` is closed and Swift has let go of it.
+    pub fn window_closed(&self, window: AppWindow) -> Result<(), ShellError> {
+        self.board.lock_windows().closed(window);
+        release_memory_after_teardown();
+        Ok(())
+    }
+
+    /// The page Settings opens on, which is the one it was last on.
+    pub fn settings_page(&self) -> Result<SettingsPage, ShellError> {
+        Ok(self.board.lock_pill().prefs().settings_page)
+    }
+
+    /// The user moved to `page`. It's saved, so this touches the disk.
+    pub async fn set_settings_page(&self, page: SettingsPage) -> Result<(), ShellError> {
+        let prefs = {
+            let mut pill = self.board.lock_pill();
+            pill.set_settings_page(page);
+            pill.prefs().clone()
+        };
+        save_prefs(&prefs, &self.board.prefs_path);
         Ok(())
     }
 
