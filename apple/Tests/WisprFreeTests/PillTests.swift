@@ -165,6 +165,11 @@ struct PillRig {
         rig.controller.tick()
 
         #expect(redraws.withLock { $0 } == 0)
+
+        try rig.shell.stage(scene: .state(state: .processing))
+        rig.controller.tick()
+
+        #expect(redraws.withLock { $0 } == 1)
     }
 }
 

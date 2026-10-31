@@ -79,12 +79,9 @@ final class PillController {
         if panel.ignoresMouseEvents != ignores {
             panel.ignoresMouseEvents = ignores
         }
-        let look = PillLook(
+        model.look = PillLook(
             shown: frame.shown, capsule: frame.capsule, card: frame.card, tooltip: frame.tooltip,
             bars: frame.bars, barScale: frame.barScale)
-        if look != model.look {
-            model.look = look
-        }
         wantsDisplays = frame.wantsDisplays
         poll(every: frame.nextTickMs)
     }

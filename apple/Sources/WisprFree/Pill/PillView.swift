@@ -14,8 +14,8 @@ enum PillSkin {
     }
 }
 
-/// What the pill draws from one frame. Kept apart from the rest of the frame, so a tick that
-/// changes none of it redraws nothing.
+/// What the pill draws from one frame. Kept apart from the rest of the frame, as `@Observable`
+/// tells no one of an equal value, so a tick that changes none of it redraws nothing.
 struct PillLook: Equatable {
     var shown: PillState = .hidden
     var capsule = WfCore.Rect(x: 0, y: 0, width: 0, height: 0)
