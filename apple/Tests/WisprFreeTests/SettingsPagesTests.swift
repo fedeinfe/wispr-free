@@ -206,6 +206,8 @@ extension InspectableView {
         let row = model(index: 4, name: "Here", installed: true)
         let closed = ModelLine(row: row, pages: rig.pages)
         #expect((try? closed.body.inspect().confirmationDialog()) == nil)
+        try closed.inspect().press("Delete Here")
+        #expect(rig.core.calls.isEmpty)
 
         let line = ModelLine(row: row, pages: rig.pages, confirmingDelete: true)
         let dialog = try line.body.inspect().confirmationDialog()
@@ -423,6 +425,8 @@ extension InspectableView {
         let rig = try await PageRig()
         let closed = PrivacyPage(editor: rig.editor, pages: rig.pages)
         #expect((try? closed.body.inspect().confirmationDialog()) == nil)
+        try closed.inspect().press("Delete all data")
+        #expect(rig.core.calls.isEmpty)
 
         let page = PrivacyPage(editor: rig.editor, pages: rig.pages, confirmingDelete: true)
         let dialog = try page.body.inspect().confirmationDialog()
