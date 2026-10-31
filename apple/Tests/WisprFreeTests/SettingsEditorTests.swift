@@ -51,7 +51,7 @@ private func editorAndCore() async throws -> (SettingsEditor, FakeCore) {
         #expect(core.saves.map(\.general.languages) == [["en"], ["en", "it"], ["en", "it", "fr"]])
     }
 
-    @Test func aChangeStillSavingStaysShownWhenRustSaysSomethingNewer() async throws {
+    @Test func aChangeStillSavingStaysShownAndRustsNewsFollowsOnceItLands() async throws {
         let (editor, core) = try await editorAndCore()
         let (gate, open) = AsyncStream.makeStream(of: Void.self)
         core.gate = gate
@@ -63,10 +63,45 @@ private func editorAndCore() async throws -> (SettingsEditor, FakeCore) {
         editor.adopt(core.versioned)
 
         #expect(editor.settings.general.languages == ["it"])
-        #expect(editor.settings.style.dictionary == ["learned"])
         open.finish()
         #expect(await eventually { core.saves.count == 1 })
         #expect(core.versioned.settings.style.dictionary == ["learned"])
+        #expect(await eventually { editor.settings.style.dictionary == ["learned"] })
+        #expect(editor.settings.general.languages == ["it"])
+    }
+
+    /// Every save also sends `SettingsChanged`, and the event can beat the save's reply.
+    @Test func aChangeIsNotShownTwiceWhenRustsEventBeatsTheReply() async throws {
+        let (editor, core) = try await editorAndCore()
+        var shownWhenTheEventArrived: [String] = []
+        core.afterWrite = {
+            editor.adopt(core.versioned)
+            shownWhenTheEventArrived = editor.settings.style.dictionary
+        }
+
+        editor.edit { $0.style.dictionary.append("one") }
+
+        #expect(await eventually { core.saves.count == 1 })
+        #expect(shownWhenTheEventArrived == ["one"])
+        #expect(await eventually { editor.settings == core.versioned.settings })
+    }
+
+    @Test func aSecondChangeDuringASaveShowsOnceToo() async throws {
+        let (editor, core) = try await editorAndCore()
+        var shownAfterTheSecond: [String] = []
+        core.afterWrite = {
+            core.afterWrite = nil
+            editor.adopt(core.versioned)
+            editor.edit { $0.style.dictionary.append("two") }
+            shownAfterTheSecond = editor.settings.style.dictionary
+        }
+
+        editor.edit { $0.style.dictionary.append("one") }
+
+        #expect(await eventually { core.saves.count == 2 })
+        #expect(shownAfterTheSecond == ["one", "two"])
+        #expect(await eventually { editor.settings == core.versioned.settings })
+        #expect(core.versioned.settings.style.dictionary == ["one", "two"])
     }
 
     @Test func anOlderWordFromRustChangesNothing() async throws {
@@ -115,7 +150,6 @@ private func editorAndCore() async throws -> (SettingsEditor, FakeCore) {
         let settings = try shell.settings().settings
         #expect(Set(settings.style.dictionary) == ["one", "two"])
         #expect(settings.general.languages == ["it"])
-        editor.adopt(try shell.settings())
-        #expect(editor.settings == settings)
+        #expect(await eventually { editor.settings == settings })
     }
 }

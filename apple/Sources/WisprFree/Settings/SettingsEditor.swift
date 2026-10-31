@@ -29,7 +29,7 @@ final class SettingsEditor {
 
     func edit(_ change: @escaping Change) {
         waiting.append(change)
-        show()
+        change(&settings)
         guard !saving else { return }
         saving = true
         Task {
@@ -42,11 +42,12 @@ final class SettingsEditor {
         }
     }
 
-    /// Takes in what Rust says is current, unless a newer word got here first.
+    /// Takes in what Rust says is current, unless a newer word got here first. During a save it
+    /// shows when the save lands: Rust's word may already hold that change, and it would show twice.
     func adopt(_ current: Versioned) {
         guard current.revision > latest.revision else { return }
         latest = current
-        show()
+        if !saving { show() }
     }
 
     private func save(_ change: Change) async {

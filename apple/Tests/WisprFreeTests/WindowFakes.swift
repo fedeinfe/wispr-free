@@ -14,6 +14,8 @@ final class FakeCore: WindowsCore {
     var refuseWrites = false
     /// Runs inside the next save, before it compares revisions, as a rival writer would.
     var beforeSave: (() -> Void)?
+    /// Runs once a save has written, before it replies, as the `SettingsChanged` event may.
+    var afterWrite: (() -> Void)?
     /// Holds each save until the test lets it go, while the test looks at what shows.
     var gate: AsyncStream<Void>?
 
@@ -32,6 +34,7 @@ final class FakeCore: WindowsCore {
         guard revision == versioned.revision else { return .stale(current: versioned) }
         write(settings)
         saves.append(settings)
+        afterWrite?()
         if refuseWrites { throw ShellError.Disk(reason: "disk full") }
         return .saved(current: versioned)
     }
