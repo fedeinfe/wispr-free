@@ -7,18 +7,21 @@
 use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 pub struct Point {
     pub x: f64,
     pub y: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 pub struct Size {
     pub width: f64,
     pub height: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 pub struct Rect {
     pub x: f64,
     pub y: f64,
@@ -40,6 +43,7 @@ impl Rect {
 
 /// One screen. `work_area` excludes the macOS Dock and menu bar, or the Windows taskbar.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 pub struct Display {
     pub bounds: Rect,
     pub work_area: Rect,

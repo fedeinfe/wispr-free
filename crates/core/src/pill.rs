@@ -111,6 +111,7 @@ impl PillState {
 
 /// The short cue to play on a state change, behind the user's "Sounds" toggle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 pub enum Sound {
     Start,
     Stop,

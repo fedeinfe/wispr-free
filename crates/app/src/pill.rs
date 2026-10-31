@@ -14,25 +14,15 @@ use slint::{
 };
 use wf_audio::AudioBackend as _;
 use wf_audio::{CpalBackend, sounds};
-use wf_core::pill::dock::{Display, Point};
-use wf_core::pill::waveform::{BARS, Waveform};
-use wf_core::pill::{Pill, PillCommand, PillState, Sound, Tick};
+use wf_core::pill::dock::Point;
+use wf_core::pill::waveform::BARS;
+use wf_core::pill::{PillCommand, PillState, Sound};
 use wf_platform::overlay;
+use wf_shell::menus::menu_label;
+use wf_shell::pill::{CURSOR_POLL_MS, PillCore, Question, save_prefs};
 
 use crate::prefs::Prefs;
 use crate::{PillLook, PillWindow};
-
-/// Poll rates: animating, watching the cursor, and hidden.
-const FRAME_POLL: Duration = Duration::from_millis(16);
-const CURSOR_POLL: Duration = Duration::from_millis(40);
-const HIDDEN_POLL: Duration = Duration::from_millis(250);
-/// How often to re-read the screens and re-assert the stacking order.
-const DISPLAY_POLL: Duration = Duration::from_secs(1);
-const HIDE_DURATION: Duration = Duration::from_secs(60 * 60);
-const TOAST_DURATION: Duration = Duration::from_secs(4);
-/// How long a question stays up when nobody answers it.
-const CARD_SHOWN: Duration = Duration::from_secs(30);
-const MENU_LABEL_CHARS: usize = 48;
 
 /// The Language menu, with the code each entry stands for. Auto-detect has none.
 pub const LANGUAGES: [(&str, Option<&str>); 3] = [
@@ -41,14 +31,6 @@ pub const LANGUAGES: [(&str, Option<&str>); 3] = [
     ("Italiano", Some("it")),
 ];
 const PIPELINE_QUALITIES: [&str; 4] = ["Lite", "Balanced", "High", "Custom"];
-
-/// What the card is asking, kept to answer it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Question {
-    TakeNotes,
-    /// A finished dictation with nowhere to go.
-    CopyText(String),
-}
 
 /// What the user asked for through the pill, which is also where a word they fixed arrives, on
 /// its way to the settings. Moving and hiding the pill are handled internally.
@@ -137,19 +119,11 @@ struct Inner {
 }
 
 struct Core {
-    pill: Pill,
-    waveform: Waveform,
-    prefs: Prefs,
-    toast: Option<(String, Instant)>,
-    card_until: Option<Instant>,
-    question: Option<Question>,
-    displays: Vec<Display>,
+    pill: PillCore,
     started: Instant,
-    last_poll: Instant,
-    next_display_poll: Instant,
     overlay_applied: bool,
     hit_test: Option<bool>,
-    poll: Duration,
+    poll: u32,
 }
 
 impl PillController {
@@ -164,26 +138,17 @@ impl PillController {
         ui.set_languages(string_model(LANGUAGES.map(|(name, _)| name)));
         ui.set_pipeline_qualities(string_model(PIPELINE_QUALITIES));
 
-        let now = Instant::now();
         let controller = Self {
             inner: Rc::new(Inner {
                 ui,
                 bars,
                 timer: Timer::default(),
                 core: RefCell::new(Core {
-                    pill: Pill::new(prefs.edge),
-                    waveform: Waveform::new(),
-                    prefs,
-                    toast: None,
-                    card_until: None,
-                    question: None,
-                    displays: Vec::new(),
-                    started: now,
-                    last_poll: now,
-                    next_display_poll: now,
+                    pill: PillCore::new(prefs),
+                    started: Instant::now(),
                     overlay_applied: false,
                     hit_test: None,
-                    poll: CURSOR_POLL,
+                    poll: CURSOR_POLL_MS,
                 }),
                 handler: RefCell::new(None),
                 prefs_path,
@@ -199,9 +164,11 @@ impl PillController {
     pub fn show(&self) -> Result<(), PlatformError> {
         self.inner.ui.show()?;
         let this = self.clone();
-        self.inner
-            .timer
-            .start(TimerMode::Repeated, CURSOR_POLL, move || this.poll());
+        self.inner.timer.start(
+            TimerMode::Repeated,
+            Duration::from_millis(CURSOR_POLL_MS.into()),
+            move || this.poll(),
+        );
         Ok(())
     }
 
@@ -215,79 +182,64 @@ impl PillController {
     }
 
     pub fn set_state(&self, state: PillState) {
-        let mut core = self.inner.core.borrow_mut();
-        if state.bar_scale().is_none() {
-            core.waveform.reset();
-        }
-        let cue = core.pill.set_state(state);
-        if let Some(sound) = cue.filter(|_| core.prefs.sounds) {
+        let cue = self.inner.core.borrow_mut().pill.set_state(state);
+        if let Some(sound) = cue {
             sounds::play(sound);
         }
     }
 
     /// The Sounds setting.
     pub fn set_sounds(&self, sounds: bool) {
-        self.inner.core.borrow_mut().prefs.sounds = sounds;
+        self.inner.core.borrow_mut().pill.set_sounds(sounds);
     }
 
     /// The Show pill setting.
     pub fn set_shown(&self, shown: bool) {
-        self.inner.core.borrow_mut().pill.set_turned_off(!shown);
+        self.inner.core.borrow_mut().pill.set_shown(shown);
     }
 
     /// A short message by the pill. It shows even with the pill hidden, because the text it is
     /// about went somewhere the user can't see.
     pub fn show_toast(&self, text: String) {
-        let until = Instant::now() + TOAST_DURATION;
-        self.inner.core.borrow_mut().toast = Some((text, until));
+        self.inner.core.borrow_mut().pill.show_toast(text);
     }
 
     /// The Recent transcripts menu.
     /// Asks whether to take notes for a meeting in `app`. The card goes away by itself.
     pub fn suggest_meeting(&self, app: String) {
-        let text = format!("Take notes for this {app} meeting?");
-        self.ask(Question::TakeNotes, &text, "Take notes", "Not now");
+        self.inner.core.borrow_mut().pill.suggest_meeting(app);
+        self.show_question();
     }
 
     /// Asks whether to copy a dictation that had no text field to go to.
     pub fn offer_copy(&self, text: String) {
-        self.ask(
-            Question::CopyText(text),
-            "No text field here. Copy your text?",
-            "Copy",
-            "Dismiss",
-        );
+        self.inner.core.borrow_mut().pill.offer_copy(text);
+        self.show_question();
     }
 
-    fn ask(&self, question: Question, text: &str, accept: &str, decline: &str) {
-        let ui = &self.inner.ui;
-        ui.set_card_text(text.into());
-        ui.set_card_accept(accept.into());
-        ui.set_card_decline(decline.into());
-        let mut core = self.inner.core.borrow_mut();
-        core.question = Some(question);
-        core.pill.set_card(true);
-        core.card_until = Some(Instant::now() + CARD_SHOWN);
+    fn show_question(&self) {
+        let core = self.inner.core.borrow();
+        if let Some(question) = core.pill.question() {
+            let asked = question.asked();
+            let ui = &self.inner.ui;
+            ui.set_card_text(asked.text.into());
+            ui.set_card_accept(asked.accept.into());
+            ui.set_card_decline(asked.decline.into());
+        }
     }
 
     /// Takes down the meeting question, which is out of date once a meeting records. A question
     /// about the user's text stays.
     pub fn hide_meeting_card(&self) {
-        let asked = self.inner.core.borrow().question.clone();
-        if asked == Some(Question::TakeNotes) {
-            self.take_question();
-        }
+        self.inner.core.borrow_mut().pill.hide_meeting_card();
     }
 
     fn take_question(&self) -> Option<Question> {
-        let mut core = self.inner.core.borrow_mut();
-        core.pill.set_card(false);
-        core.card_until = None;
-        core.question.take()
+        self.inner.core.borrow_mut().pill.take_question()
     }
 
     pub fn set_recent(&self, transcripts: &[String]) {
-        let labels = transcripts.iter().map(|text| menu_label(text));
+        let labels = transcripts.iter().map(|text| menu_label(text).into());
         let labels: Vec<SharedString> = labels.collect();
         let labels = ModelRc::from(Rc::new(VecModel::from(labels)));
         self.inner.ui.set_recent_transcripts(labels);
@@ -306,7 +258,7 @@ impl PillController {
 
     /// Latest level from the meter, 0.0..=1.0.
     pub fn set_level(&self, level: f32) {
-        self.inner.core.borrow_mut().waveform.set_level(level);
+        self.inner.core.borrow_mut().pill.set_level(level);
     }
 
     pub fn play_sound(&self, sound: Sound) {
@@ -333,12 +285,12 @@ impl PillController {
         let this = self.clone();
         ui.on_pill_released(move || this.released());
         let this = self.clone();
-        ui.on_hide_for_an_hour(move || this.inner.core.borrow_mut().pill.hide_for(HIDE_DURATION));
+        ui.on_hide_for_an_hour(move || this.inner.core.borrow_mut().pill.hide_for_an_hour());
 
         ui.on_cancel_clicked(forward(PillEvent::Cancel));
         let this = self.clone();
         ui.on_card_accepted(move || match this.take_question() {
-            Some(Question::TakeNotes) => this.emit(PillEvent::TakeNotes),
+            Some(Question::TakeNotes { .. }) => this.emit(PillEvent::TakeNotes),
             Some(Question::CopyText(text)) => this.emit(PillEvent::CopyText(text)),
             None => {}
         });
@@ -397,23 +349,14 @@ impl PillController {
         let command = self.inner.core.borrow_mut().pill.release();
         match command {
             Some(PillCommand::ToggleHandsFree) => self.emit(PillEvent::ToggleHandsFree),
-            Some(PillCommand::EdgeChanged(edge)) => {
-                let prefs = {
-                    let mut core = self.inner.core.borrow_mut();
-                    core.prefs.edge = edge;
-                    core.prefs.clone()
-                };
-                self.save(&prefs);
-            }
+            Some(PillCommand::EdgeChanged(_)) => self.save(),
             None => {}
         }
     }
 
-    fn save(&self, prefs: &Prefs) {
-        if let Some(path) = &self.inner.prefs_path
-            && let Err(err) = prefs.save(path)
-        {
-            eprintln!("could not save pill preferences: {err}");
+    fn save(&self) {
+        if let Some(path) = &self.inner.prefs_path {
+            save_prefs(self.inner.core.borrow().pill.prefs(), path);
         }
     }
 
@@ -422,9 +365,7 @@ impl PillController {
         let window = inner.ui.window();
         let mut core = inner.core.borrow_mut();
         let core = &mut *core;
-        let now = Instant::now();
-        let dt = now - core.last_poll;
-        core.last_poll = now;
+        let now = core.started.elapsed();
 
         if !core.overlay_applied {
             let applied = window.with_winit_window(overlay::apply);
@@ -435,18 +376,17 @@ impl PillController {
                 }
             }
         }
-        if now >= core.next_display_poll {
-            core.next_display_poll = now + DISPLAY_POLL;
-            core.displays = overlay::displays(window.scale_factor());
+        let displays = core.pill.wants_displays(now).then(|| {
             window.with_winit_window(raise);
-        }
-
-        let frame = core.pill.tick(&Tick {
-            now: now - core.started,
-            cursor: overlay::cursor_position(),
-            displays: &core.displays,
-            escape: overlay::escape_pressed(),
+            overlay::displays(window.scale_factor())
         });
+
+        let frame = core.pill.tick(
+            now,
+            overlay::cursor_position(),
+            displays,
+            overlay::escape_pressed(),
+        );
 
         if let Some(origin) = frame.move_to {
             window.set_position(desktop_position(origin));
@@ -465,39 +405,26 @@ impl PillController {
         ui.set_capsule_y(frame.capsule.y as f32);
         ui.set_capsule_width(frame.capsule.width as f32);
         ui.set_capsule_height(frame.capsule.height as f32);
-        if core.card_until.is_some_and(|until| now >= until) {
-            core.card_until = None;
-            core.question = None;
-            core.pill.set_card(false);
-        }
         ui.set_card_shown(frame.card.is_some());
-        if let Some(card) = frame.card {
-            ui.set_card_x(card.x as f32);
-            ui.set_card_y(card.y as f32);
-            ui.set_card_width(card.width as f32);
-            ui.set_card_height(card.height as f32);
+        if let Some(card) = &frame.card {
+            ui.set_card_x(card.place.x as f32);
+            ui.set_card_y(card.place.y as f32);
+            ui.set_card_width(card.place.width as f32);
+            ui.set_card_height(card.place.height as f32);
         }
-        if core.toast.as_ref().is_some_and(|(_, until)| now >= *until) {
-            core.toast = None;
-        }
-        let toast = core.toast.as_ref().map(|(text, _)| text.as_str());
-        ui.set_tooltip(toast.or(frame.shown.tooltip()).unwrap_or_default().into());
-        let bar_scale = frame.shown.bar_scale();
-        if let Some(scale) = bar_scale {
-            ui.set_bar_scale(scale);
-            for (i, height) in core.waveform.advance(dt).into_iter().enumerate() {
+        ui.set_tooltip(frame.tooltip.unwrap_or_default().into());
+        if !frame.bars.is_empty() {
+            ui.set_bar_scale(frame.bar_scale);
+            for (i, height) in frame.bars.into_iter().enumerate() {
                 inner.bars.set_row_data(i, height);
             }
         }
 
-        let poll = match frame.shown {
-            PillState::Hidden if frame.card.is_none() => HIDDEN_POLL,
-            _ if bar_scale.is_some() || frame.hit_test => FRAME_POLL,
-            _ => CURSOR_POLL,
-        };
-        if poll != core.poll {
-            core.poll = poll;
-            inner.timer.set_interval(poll);
+        if frame.next_tick_ms != core.poll {
+            core.poll = frame.next_tick_ms;
+            inner
+                .timer
+                .set_interval(Duration::from_millis(core.poll.into()));
         }
     }
 }
@@ -527,15 +454,6 @@ fn look(state: &PillState) -> PillLook {
         PillState::Processing => PillLook::Processing,
         PillState::Error { .. } => PillLook::Error,
         PillState::Meeting => PillLook::Meeting,
-    }
-}
-
-/// One line of a transcript, short enough for a menu.
-fn menu_label(text: &str) -> SharedString {
-    let line = text.lines().next().unwrap_or_default();
-    match line.char_indices().nth(MENU_LABEL_CHARS) {
-        Some((end, _)) => format!("{}…", &line[..end]).into(),
-        None => line.into(),
     }
 }
 

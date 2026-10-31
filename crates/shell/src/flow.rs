@@ -4,7 +4,8 @@
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::thread;
 use std::time::Duration;
 
 use wf_core::settings::{Settings, data_dir};
@@ -23,6 +24,9 @@ const KEYS_RETRY: Duration = Duration::from_secs(5);
 
 /// What the flow reports to. Runs on the flow's threads.
 pub type OnEvent = Arc<dyn Fn(Event) + Send + Sync>;
+
+/// Holds the key listener of a run with no window to walk anyone through permissions.
+pub type KeySlot = Arc<Mutex<Option<KeyListener>>>;
 
 /// Starts the flow on the real machine. `on_event` runs on the flow's threads.
 pub fn start(settings: Settings, on_event: OnEvent) -> Dictation {
@@ -80,6 +84,34 @@ pub fn listen_to_keys(dictation: &Dictation, clock: &dyn Clock) -> KeyWatch {
         );
     }
     watch
+}
+
+/// [`listen_to_keys`] for a run with no UI thread to keep a timer on: a thread keeps trying, and
+/// `slot` keeps the listener once the OS allows it.
+pub fn listen_until_allowed(dictation: &Dictation, slot: &KeySlot) {
+    let dictation = dictation.clone();
+    let slot = Arc::clone(slot);
+    let spawned = thread::Builder::new()
+        .name("keys-retry".into())
+        .spawn(move || {
+            loop {
+                let flow = dictation.clone();
+                match keys::listen(move |signal| flow.on_key(signal)) {
+                    Ok(listener) => {
+                        dictation.set_blocked(None);
+                        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(listener);
+                        return;
+                    }
+                    Err(error) => {
+                        dictation.set_blocked(Some(error.to_string()));
+                        thread::sleep(KEYS_RETRY);
+                    }
+                }
+            }
+        });
+    if let Err(err) = spawned {
+        eprintln!("could not start listening to the keys: {err}");
+    }
 }
 
 #[derive(Clone)]

@@ -12,7 +12,9 @@ use tempfile::TempDir;
 use wf_core::pill::PillState;
 use wf_core::settings::{HistoryRetention, Settings, SettingsStore};
 use wf_dictation::{Dictation, Event};
-use wf_shell::bridge::{EventSink, SaveOutcome, Shell, ShellError, ShellEvent, Versioned};
+use wf_shell::bridge::{
+    EventSink, PillParts, SaveOutcome, Shell, ShellError, ShellEvent, Versioned,
+};
 use wf_shell::flow::{OnEvent, parts_at};
 use wf_shell::paths::Paths;
 
@@ -45,7 +47,12 @@ impl Rig {
         let sink = Arc::new(Recorder(Mutex::new(sender)));
         let store = SettingsStore::open(folder.path().join(settings));
         let mut flow = None;
-        let shell = Shell::wired(store, sink, |settings, on_event| {
+        let pill = PillParts {
+            prefs: paths.pill.clone(),
+            play: Box::new(|_| {}),
+            microphones: Box::new(Vec::new),
+        };
+        let shell = Shell::wired(store, sink, pill, |settings, on_event| {
             flow = Some(Arc::clone(&on_event));
             Dictation::start(parts_at(&paths, settings, on_event))
         });

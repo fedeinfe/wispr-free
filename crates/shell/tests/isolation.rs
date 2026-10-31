@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use tempfile::TempDir;
+use wf_core::pill::dock::{Display, Rect};
 use wf_core::settings::Settings;
 use wf_shell::bridge::{EventSink, SaveOutcome, Shell, ShellError, ShellEvent};
 use wf_shell::flow::parts_at;
@@ -159,6 +160,20 @@ fn child_starts_saves_and_quits() {
 
     let current = shell.settings().unwrap();
     assert!(current.settings.general.show_pill, "read the real settings");
+    let screen = Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 1000.0,
+        height: 800.0,
+    };
+    let display = Display {
+        bounds: screen,
+        work_area: screen,
+        units_per_point: 1.0,
+    };
+    let frame = shell.pill_tick(None, Some(vec![display]), false).unwrap();
+    let docked = frame.move_to.unwrap();
+    assert!(docked.x > 0.0, "read where the real pill was left: {docked:?}");
     let mut changed = current.settings.clone();
     changed.style.dictionary.push("dev-only-word".to_owned());
     let saved = now(Arc::clone(&shell).save(changed, current.revision)).unwrap();

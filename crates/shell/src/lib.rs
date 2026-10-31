@@ -7,9 +7,13 @@ pub mod flow;
 pub mod lists;
 pub mod meetings;
 pub mod memory;
+pub mod menus;
+pub mod mic_levels;
 pub mod onboarding;
 pub mod paths;
+pub mod pill;
 pub mod prefs;
+pub mod rehearsal;
 pub mod settings;
 pub mod windows;
 

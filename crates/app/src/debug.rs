@@ -7,8 +7,9 @@ use std::time::{Duration, Instant};
 
 use slint::{Timer, TimerMode};
 use wf_core::pill::{PillState, Sound};
+use wf_shell::mic_levels::MicLevels;
+use wf_shell::pill::{made_up_level, pill_state_named};
 
-use crate::mic_levels::MicLevels;
 use crate::pill::PillController;
 use crate::{PillLook, Tray};
 
@@ -16,25 +17,9 @@ const LEVEL_POLL: Duration = Duration::from_millis(150);
 
 /// Parses `--pill-state=<name>`.
 pub fn state_from_args(args: impl Iterator<Item = String>) -> Option<PillState> {
-    args.filter_map(|arg| arg.strip_prefix("--pill-state=").map(state_named))
+    args.filter_map(|arg| arg.strip_prefix("--pill-state=").map(pill_state_named))
         .last()
         .flatten()
-}
-
-fn state_named(name: &str) -> Option<PillState> {
-    Some(match name {
-        "hidden" => PillState::Hidden,
-        "resting" => PillState::Resting,
-        "ready" => PillState::Ready,
-        "listening" => PillState::ListeningPtt,
-        "locked" => PillState::ListeningHandsFree,
-        "processing" => PillState::Processing,
-        "error" => PillState::Error {
-            reason: "No microphone found".into(),
-        },
-        "meeting" => PillState::Meeting,
-        _ => return None,
-    })
 }
 
 fn state_for(look: PillLook) -> PillState {
@@ -99,13 +84,6 @@ pub fn install(tray: &Tray, pill: &PillController) {
     std::mem::forget(levels);
 }
 
-/// A speech-like rise and fall.
-fn made_up_level(seconds: f32) -> f32 {
-    let phrase = (seconds * 1.3).sin().abs();
-    let syllables = 0.6 + 0.4 * (seconds * 7.0).sin();
-    phrase * syllables
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,13 +113,5 @@ mod tests {
         let args = vec!["--pill-state=sideways".to_owned()].into_iter();
         assert_eq!(state_from_args(args), None);
         assert_eq!(state_from_args(std::iter::empty()), None);
-    }
-
-    #[test]
-    fn the_made_up_level_stays_in_range() {
-        for i in 0..10_000 {
-            let level = made_up_level(i as f32 * 0.01);
-            assert!((0.0..=1.0).contains(&level), "{level}");
-        }
     }
 }

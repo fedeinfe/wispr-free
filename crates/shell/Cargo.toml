@@ -15,6 +15,7 @@ crate-type = ["staticlib", "lib"]
 [dependencies]
 wf-core = { workspace = true, features = ["uniffi"] }
 wf-audio.workspace = true
+wf-pipeline.workspace = true
 wf-platform.workspace = true
 wf-models.workspace = true
 wf-meetings.workspace = true
