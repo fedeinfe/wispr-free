@@ -103,6 +103,21 @@ final class FakeCore: WindowsCore {
     func reopenApp() throws { calls.append("reopen") }
     func startTrial() throws { calls.append("start trial") }
     func stopTrial() throws { calls.append("stop trial") }
+    func toggleMeeting() throws { calls.append("toggle") }
+    func selectMeeting(id: String, row: Int32) throws { calls.append("select \(id) \(row)") }
+    func searchMeetings(query: String) throws { calls.append("search \(query)") }
+    func editMeetingTitle(title: String) throws { calls.append("title \(title)") }
+    func editMeetingNotes(notes: String) throws { calls.append("notes \(notes)") }
+    func nameSpeaker(speaker: Int32, name: String) throws { calls.append("name \(speaker) \(name)") }
+    func exportMeeting() throws { calls.append("export meeting") }
+    func deleteMeeting() throws { calls.append("delete meeting") }
+    func resumeMeeting() throws { calls.append("resume") }
+    func finishMeeting() throws { calls.append("finish") }
+    func cancelMeetingWork() throws { calls.append("cancel work") }
+    func regenerateSummary() throws { calls.append("regenerate") }
+    func updateSummary() throws { calls.append("update summary") }
+    func askMeeting(question: String) throws { calls.append("ask \(question)") }
+    func stopMeetingChat() throws { calls.append("stop chat") }
 }
 
 /// A stage that shows nothing and records the order of things.

@@ -3,7 +3,7 @@ import SwiftUI
 import WfCore
 
 /// What the windows need of Rust, so that they can run on a fake. Each window adds its own.
-protocol WindowsCore: SettingsCore, OnboardingCore {
+protocol WindowsCore: SettingsCore, OnboardingCore, MeetingsCore {
     func windowClosed(window: AppWindow) throws
 }
 
@@ -17,6 +17,8 @@ final class Windows {
     private let walk: SetupWalk
     private let stage: WindowStage
     private var controllers: [AppWindow: WindowController] = [:]
+    /// What the Meetings window shows, for as long as it's open.
+    private(set) var book: MeetingsBook?
 
     init(
         core: any WindowsCore, editor: SettingsEditor, pages: SettingsPages, walk: SetupWalk,
@@ -67,8 +69,10 @@ final class Windows {
                     navigation: SettingsNavigation(core: core), editor: editor, pages: pages),
                 onClose: onClose)
         case .meetings:
+            let book = MeetingsBook(core: core)
+            self.book = book
             return WindowController(
-                shape: MeetingsView.shape, content: MeetingsView(), onClose: onClose)
+                shape: MeetingsView.shape, content: MeetingsView(book: book), onClose: onClose)
         case .onboarding:
             return WindowController(
                 shape: OnboardingView.shape,
@@ -79,6 +83,7 @@ final class Windows {
     /// AppKit is still in the middle of closing it, so the controller lasts until it's done.
     private func closed(_ window: AppWindow) {
         let closing = controllers.removeValue(forKey: window)
+        if window == .meetings { book = nil }
         DispatchQueue.main.async { withExtendedLifetime(closing) {} }
         do {
             try core.windowClosed(window: window)

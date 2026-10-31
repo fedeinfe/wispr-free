@@ -72,14 +72,3 @@ private func view(on model: SettingsNavigation, core: FakeCore) throws -> Settin
         #expect(page == .sounds)
     }
 }
-
-@MainActor
-@Suite struct OtherSkeletons {
-    @Test func meetingsHasItsFourTabs() throws {
-        let view = try MeetingsView().inspect()
-
-        for tab in ["Summary", "Notes", "Transcript", "Chat"] {
-            #expect(try view.find(viewWithAccessibilityIdentifier: tab).text().string() == tab)
-        }
-    }
-}

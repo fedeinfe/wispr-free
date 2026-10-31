@@ -24,8 +24,10 @@ struct LaunchOptions: Equatable {
     var windowShots: String?
     /// Stands in for the folder picker's answer, for a run with nobody to pick.
     var pickFolder: String?
-    /// Opens Settings, walks its pages and closes it this many times, then says so.
+    /// Uses every window and closes it this many times, then says so.
     var tour: Int?
+    /// Moves through the first meeting, timing the main thread, then quits.
+    var walkMeeting = false
 
     init(arguments: [String]) {
         #if DEBUG
@@ -38,6 +40,7 @@ struct LaunchOptions: Equatable {
             case "--debug-pill": debugPill = true
             case "--rehearse": rehearse = true
             case "--setup": setup = true
+            case "--walk-meeting": walkMeeting = true
             default:
                 pillState = Self.value(of: "--pill-state=", in: argument) ?? pillState
                 picks += Self.value(of: "--pick=", in: argument).map { [$0] } ?? []

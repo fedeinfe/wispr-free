@@ -16,10 +16,6 @@ final class WindowShots {
     /// scrolled to its end, the rest shows too.
     private static let tallHeight: CGFloat = 1500
 
-    private static let scenes: [(String, AppWindow, MenuAction)] = [
-        ("meetings", .meetings, .openMeetings)
-    ]
-
     private let shell: Shell
     private let windows: Windows
     private let folder: URL
@@ -56,12 +52,7 @@ final class WindowShots {
                 window.close()
                 await closed(.settings)
             }
-            for (name, kind, action) in Self.scenes {
-                try await shell.menuAction(action: action)
-                guard let window = await open(kind) else { throw Shots.ShotError.noPicture(name) }
-                try await shoot(name, window)
-                window.close()
-            }
+            try await shootTheMeetings()
             try await shootTheMissingModels()
             log("shots taken")
         } catch {
@@ -103,6 +94,74 @@ final class WindowShots {
         await closed(.onboarding)
     }
 
+    /// With nothing picked, then each tab of the first meeting and the states that show only for a
+    /// moment. The last picture is the smallest the window goes.
+    private func shootTheMeetings() async throws {
+        let (window, book) = try await openTheMeetings()
+        try await shoot("meetings-nothing-picked", window)
+        try await pickAMeeting(book)
+        for tab in MeetingTab.allCases {
+            book.tab = tab
+            try await shoot("meetings-\(tab.title.lowercased())", window)
+        }
+        book.tab = .transcript
+        try await Task.sleep(for: Self.settle)
+        scrollToEnd(window)
+        try await shoot("meetings-transcript-end", window)
+        book.tab = .chat
+        book.askAbout("What was decided?")
+        try await waitFor("the answer") { book.streamingText.contains(" ") }
+        try await shoot("meetings-chat-streaming", window)
+        try await waitFor("the end of the answer") { !book.chatRunning }
+        try await shoot("meetings-chat-answered", window)
+        if let chip = book.chat.last?.blocks.first?.chips.first, chip.row >= 0 {
+            book.show(row: chip.row)
+            try await shoot("meetings-jumped", window)
+        }
+        try shell.exportMeeting()
+        try await waitFor("the export") { !book.notice.isEmpty }
+        book.tab = .summary
+        try await shoot("meetings-exported", window)
+        book.query = "budget"
+        try await waitFor("the hits") { book.meetings.contains { !$0.snippet.isEmpty } }
+        try await shoot("meetings-search", window)
+        book.query = "no such words"
+        try await waitFor("no hits") { book.meetings.isEmpty }
+        try await shoot("meetings-no-hits", window)
+        book.query = ""
+        try await waitFor("the list") { !book.meetings.isEmpty }
+        let first = book.title
+        book.selection = book.meetings.last?.id
+        try await waitFor("the other meeting") { !book.when.isEmpty && book.title != first }
+        try await shoot("meetings-unfinished", window)
+        window.setContentSize(MeetingsView.shape.minimum)
+        try await shoot("meetings-smallest", window)
+        window.close()
+        await closed(.meetings)
+    }
+
+    private func openTheMeetings() async throws -> (NSWindow, MeetingsBook) {
+        try await shell.menuAction(action: .openMeetings)
+        guard let window = await open(.meetings), let book = windows.book else {
+            throw Shots.ShotError.noPicture("meetings")
+        }
+        return (window, book)
+    }
+
+    private func pickAMeeting(_ book: MeetingsBook) async throws {
+        try await waitFor("the list") { !book.meetings.isEmpty }
+        book.selection = book.meetings.first?.id
+        try await waitFor("the meeting") { !book.when.isEmpty && !book.transcript.isEmpty }
+    }
+
+    private func waitFor(_ what: String, _ done: () -> Bool) async throws {
+        for _ in 0..<Self.attempts {
+            if done() { return }
+            try await Task.sleep(for: Self.poll)
+        }
+        throw Shots.ShotError.noPicture(what)
+    }
+
     /// The pages' tier needs models that aren't there, so the walk comes back to that step.
     private func shootTheMissingModels() async throws {
         let window = try await openTheWalk()
@@ -139,7 +198,7 @@ final class WindowShots {
         page.scroll(NSPoint(x: 0, y: page.isFlipped ? page.bounds.maxY : page.bounds.minY))
     }
 
-    private static func scrollers(in view: NSView) -> [NSScrollView] {
+    static func scrollers(in view: NSView) -> [NSScrollView] {
         view.subviews.flatMap(scrollers) + [view as? NSScrollView].compactMap { $0 }
     }
 
@@ -157,25 +216,85 @@ final class WindowShots {
             index: 0, row: Snippet(trigger: "my address", text: "Via Roma 1, Milano"))
     }
 
-    /// `cargo xtask footprint --settings`: every page, drawn, `rounds` times over.
+    /// `cargo xtask footprint`: every window, used and closed, `rounds` times over.
     func tour(_ rounds: Int) async {
         do {
             for _ in 0..<rounds {
-                for row in settingsPages() {
-                    try await shell.setSettingsPage(page: row.page)
-                    try await shell.menuAction(action: .openSettings)
-                    guard let window = await open(.settings) else {
-                        throw Shots.ShotError.noPicture("settings")
-                    }
-                    try await Task.sleep(for: Self.settle)
-                    window.close()
-                    await closed(.settings)
-                }
+                try await tourSettings()
+                try await tourTheMeetings()
+                try await tourTheWalk()
             }
             log("toured")
         } catch {
             log("the tour failed: \(error)")
         }
+    }
+
+    private func tourSettings() async throws {
+        for row in settingsPages() {
+            try await shell.setSettingsPage(page: row.page)
+            try await shell.menuAction(action: .openSettings)
+            guard let window = await open(.settings) else {
+                throw Shots.ShotError.noPicture("settings")
+            }
+            try await Task.sleep(for: Self.settle)
+            window.close()
+            await closed(.settings)
+        }
+    }
+
+    /// Every tab drawn, the transcript to its end, an answer asked for and a search run. A library
+    /// with nothing in it still opens the window.
+    private func tourTheMeetings() async throws {
+        let (window, book) = try await openTheMeetings()
+        try await Task.sleep(for: Self.settle)
+        if try await pickIfAny(book) {
+            for tab in MeetingTab.allCases {
+                book.tab = tab
+                try await Task.sleep(for: Self.settle)
+            }
+            book.tab = .transcript
+            try await Task.sleep(for: Self.settle)
+            scrollToEnd(window)
+            try await Task.sleep(for: Self.settle)
+            book.tab = .chat
+            book.askAbout("What was decided?")
+            try await Task.sleep(for: Self.settle)
+            try? await waitFor("the end of the answer") { !book.chatRunning }
+            book.query = "the"
+            try await Task.sleep(for: Self.settle)
+            book.query = ""
+        }
+        window.close()
+        await closed(.meetings)
+    }
+
+    private func pickIfAny(_ book: MeetingsBook) async throws -> Bool {
+        guard !book.meetings.isEmpty else { return false }
+        try await pickAMeeting(book)
+        return true
+    }
+
+    /// As far through the steps as this run can go. Only a rehearsal answers what's asked.
+    private func tourTheWalk() async throws {
+        let window = try await openTheWalk()
+        for _ in 0..<3 {
+            try await Task.sleep(for: Self.settle)
+            for permission: Int32 in [0, 2, 1] { try shell.askPermission(index: permission) }
+            guard await canContinueSoon() else { break }
+            try shell.setupContinue()
+        }
+        try await Task.sleep(for: Self.settle)
+        window.close()
+        await closed(.onboarding)
+    }
+
+    private func canContinueSoon() async -> Bool {
+        for _ in 0..<Self.attempts / 5 {
+            if let page = try? await shell.steps(), page.canContinue { return true }
+            try? await Task.sleep(for: Self.poll)
+        }
+        return false
     }
 
     private func closed(_ kind: AppWindow) async {

@@ -124,6 +124,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let rounds = options.tour, let windows {
             Task { await WindowShots(shell: shell, windows: windows).tour(rounds) }
         }
+        if options.walkMeeting, let windows {
+            Task {
+                await MeetingWalk(shell: shell, windows: windows).take()
+                NSApp.terminate(nil)
+            }
+        }
     }
 
     private func follow() async {
@@ -141,6 +147,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 windows?.close(window)
             case .setup(let page):
                 walk?.adopt(page)
+            case .meetings(let changes):
+                windows?.book?.adopt(changes)
             case .settingsChanged(let current):
                 editor?.adopt(current)
             case .pages(let state):
