@@ -154,7 +154,7 @@ struct ModelLine: View {
                     Text(row.usedFor)
                 }
                 Text(row.detail)
-                Text(row.status)
+                Text(row.status).foregroundStyle(.secondary)
             }
             if row.downloading {
                 ProgressView(value: row.progress)

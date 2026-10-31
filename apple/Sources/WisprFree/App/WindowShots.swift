@@ -12,7 +12,8 @@ final class WindowShots {
     /// Backdrop around the window, so its corners and shadow show.
     private static let margin: CGFloat = 28
 
-    /// Settings is shot once per page. Tall, a long page shows whole.
+    /// Settings is shot once per page. Tall, a long page shows whole, up to the screen's height;
+    /// scrolled to its end, the rest shows too.
     private static let tallHeight: CGFloat = 1500
 
     private static let scenes: [(String, AppWindow, MenuAction)] = [
@@ -50,6 +51,8 @@ final class WindowShots {
                 try await shoot(name, window)
                 window.setContentSize(NSSize(width: SettingsView.shape.size.width, height: Self.tallHeight))
                 try await shoot("\(name)-tall", window)
+                scrollToEnd(window)
+                try await shoot("\(name)-end", window)
                 window.close()
                 await closed(.settings)
             }
@@ -63,6 +66,19 @@ final class WindowShots {
         } catch {
             log("shots failed: \(error)")
         }
+    }
+
+    private func scrollToEnd(_ window: NSWindow) {
+        guard let content = window.contentView else { return }
+        let page = Self.scrollers(in: content)
+            .compactMap(\.documentView)
+            .max { $0.frame.height < $1.frame.height }
+        guard let page else { return }
+        page.scroll(NSPoint(x: 0, y: page.isFlipped ? page.bounds.maxY : page.bounds.minY))
+    }
+
+    private static func scrollers(in view: NSView) -> [NSScrollView] {
+        view.subviews.flatMap(scrollers) + [view as? NSScrollView].compactMap { $0 }
     }
 
     /// So the pages show their lists open, with something in them.

@@ -31,7 +31,7 @@ const USED_GOAL_MB: f64 = 55.0;
 const SETTLE: Duration = Duration::from_secs(20);
 /// Rounds of every Settings page: one, and then the spec's reopening five times more.
 const TOURS: [u32; 2] = [1, 6];
-const TOUR_LIMIT: Duration = Duration::from_secs(120);
+const ROUND_LIMIT: Duration = Duration::from_secs(60);
 pub(crate) const POLL: Duration = Duration::from_millis(100);
 /// What the app logs if anything ever activates it.
 const TOOK_THE_FOCUS: &str = "took the focus";
@@ -242,11 +242,15 @@ fn settings_footprint(rounds: u32) -> anyhow::Result<()> {
     let log = home.0.join("app.log");
     let args = ["--behind".to_owned(), format!("--tour={rounds}")];
     let mut app = start_logging(&home.0, &args, &log)?;
-    let deadline = Instant::now() + TOUR_LIMIT;
-    while !fs::read_to_string(&log)?.contains("toured") {
-        ensure!(Instant::now() < deadline, "the tour didn't finish");
-        thread::sleep(POLL);
+    let started = Instant::now();
+    let toured = tour_finished(&log, ROUND_LIMIT * rounds);
+    if !matches!(toured, Ok(true)) {
+        app.kill()?;
+        app.wait()?;
     }
+    let said = fs::read_to_string(&log)?;
+    ensure!(toured?, "the tour didn't finish: {said}");
+    let took = started.elapsed();
     thread::sleep(SETTLE);
     let summary = tool("vmmap")
         .args(["--summary", &app.id().to_string()])
@@ -257,7 +261,20 @@ fn settings_footprint(rounds: u32) -> anyhow::Result<()> {
     ensure!(said.contains("shell closed"), "it didn't quit: {said}");
     no_focus_taken(&said)?;
     let footprint = footprint_in(&summary?).context("vmmap gave no footprint")?;
-    let what = format!("after {rounds} round(s) of Settings, closed for {SETTLE:?}:");
+    let what = format!("after {rounds} round(s) of Settings in {took:.0?}, closed for {SETTLE:?}:");
     println!("{}", verdict_against(&what, footprint, USED_GOAL_MB));
     Ok(())
+}
+
+fn tour_finished(log: &Path, limit: Duration) -> anyhow::Result<bool> {
+    let deadline = Instant::now() + limit;
+    while Instant::now() < deadline {
+        let said = fs::read_to_string(log)?;
+        ensure!(!said.contains("tour failed"), "{said}");
+        if said.contains("toured") {
+            return Ok(true);
+        }
+        thread::sleep(POLL);
+    }
+    Ok(false)
 }

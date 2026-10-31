@@ -75,6 +75,7 @@ struct StylePage: View {
 
     private var replacements: some View {
         Section {
+            AddRowLine(label: "New replacement", title: "Add replacement") { pages.ask { try $0.addReplacement() } }
             ForEach(Array(pages.state.replacements.enumerated()), id: \.offset) { index, row in
                 let at = UInt32(index)
                 HStack(spacing: 8) {
@@ -90,7 +91,6 @@ struct StylePage: View {
                         .accessibilityIdentifier("Remove replacement \(row.wrong)")
                 }
             }
-            AddRowLine(title: "Add replacement") { pages.ask { try $0.addReplacement() } }
         } header: {
             Text("Replacements")
         } footer: {
@@ -100,6 +100,7 @@ struct StylePage: View {
 
     private var snippets: some View {
         Section {
+            AddRowLine(label: "New snippet", title: "Add snippet") { pages.ask { try $0.addSnippet() } }
             ForEach(Array(pages.state.snippets.enumerated()), id: \.offset) { index, row in
                 let at = UInt32(index)
                 VStack(alignment: .leading, spacing: 8) {
@@ -117,7 +118,6 @@ struct StylePage: View {
                     }
                 }
             }
-            AddRowLine(title: "Add snippet") { pages.ask { try $0.addSnippet() } }
         } header: {
             Text("Snippets")
         } footer: {

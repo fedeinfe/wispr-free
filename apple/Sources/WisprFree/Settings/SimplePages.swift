@@ -27,15 +27,19 @@ struct MeetingsPage: View {
                     isOn: editor.binding(\.meetings.refinePass))
                 SettingToggle(
                     title: "Tell speakers apart", isOn: editor.binding(\.meetings.diarization))
-                TextField(
-                    "Summary template", text: editor.binding(\.meetings.summaryTemplate),
-                    prompt: Text(
-                        "Extra instructions for the summary. Leave empty for the standard sections."
-                    ),
-                    axis: .vertical
-                )
-                .lineLimit(3...8)
-                .accessibilityIdentifier("Summary template")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Summary template")
+                    TextField(
+                        "Summary template", text: editor.binding(\.meetings.summaryTemplate),
+                        prompt: Text(
+                            "Extra instructions for the summary. Leave empty for the standard sections."
+                        ),
+                        axis: .vertical
+                    )
+                    .labelsHidden()
+                    .lineLimit(3...8)
+                    .accessibilityIdentifier("Summary template")
+                }
             }
         }
     }

@@ -99,17 +99,18 @@ struct FolderLine<Buttons: View>: View {
     }
 }
 
-/// A button that adds a row, at the end of the list it adds to and inside its section. Alone in a
-/// row a `Form` moves it out of the section.
+/// A button that adds a row, above the list it adds to. Below it, a `Form` leaves the row out of
+/// the section's card and takes the footer in.
 struct AddRowLine: View {
+    let label: String
     let title: String
     let action: () -> Void
 
     var body: some View {
-        HStack {
-            Spacer()
-            Button(title, action: action)
+        LabeledContent(label) {
+            Button("Add", action: action)
                 .accessibilityIdentifier(title)
+                .accessibilityLabel(title)
         }
     }
 }
