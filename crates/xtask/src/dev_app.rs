@@ -5,7 +5,11 @@
 //! `cargo xtask shots --out dir` takes every pill state over its own backdrop, once per edge the
 //! pill docks to, and every window in light and dark. Read `sheet.png` in each edge's folder and
 //! the pictures in `windows`. `cargo xtask footprint` reports what the idle app costs, against the
-//! spec's goal, and what it holds once Settings has been used and closed.
+//! spec's goal, and what it holds once every window has been used and closed.
+//! `cargo xtask meeting-walk --kept dir` moves through a real meeting and times the main thread.
+//!
+//! `--kept dir` names meetings `real_meeting` kept, which a run copies without their audio. Without
+//! it, `shots` and `footprint` use two small ones made for the run.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,6 +20,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, bail, ensure};
 
 use crate::bundle::{DEV, target_dir, tool};
+use crate::meeting_seed::{copy_kept, seed};
 
 const EDGES: [&str; 3] = ["bottom", "left", "right"];
 /// Every edge's pictures take under a minute.
@@ -29,9 +34,11 @@ const IDLE_GOAL_MB: f64 = 25.0;
 const USED_GOAL_MB: f64 = 55.0;
 /// The spec's wait after closing a window, before it measured.
 const SETTLE: Duration = Duration::from_secs(20);
-/// Rounds of every Settings page: one, and then the spec's reopening five times more.
+/// Rounds of every window: one, and then the spec's reopening five times more.
 const TOURS: [u32; 2] = [1, 6];
 const ROUND_LIMIT: Duration = Duration::from_secs(60);
+/// A real meeting's walk, with its minutes of scrolling and an answer.
+const WALK_LIMIT: Duration = Duration::from_secs(300);
 pub(crate) const POLL: Duration = Duration::from_millis(100);
 /// What the app logs if anything ever activates it.
 const TOOK_THE_FOCUS: &str = "took the focus";
@@ -165,16 +172,31 @@ pub(crate) fn wait_for_exit(app: &mut Child, limit: Duration) -> anyhow::Result<
     Ok(said)
 }
 
+/// Fills the run's meetings from `kept`, or with the two small ones.
+fn fill_meetings(home: &Path, kept: Option<&Path>) -> anyhow::Result<()> {
+    let meetings = home.join(DEV_ROOT).join("meetings");
+    match kept {
+        Some(kept) => copy_kept(kept, &meetings),
+        None => seed(&meetings),
+    }
+}
+
+fn kept_flag(arg: &str, args: &mut impl Iterator<Item = String>) -> anyhow::Result<PathBuf> {
+    ensure!(arg == "--kept", "unknown flag {arg:?}");
+    Ok(args.next().context("--kept needs a folder")?.into())
+}
+
 pub fn shots(mut args: impl Iterator<Item = String>) -> anyhow::Result<()> {
     let mut out = target_dir().join("shots");
+    let mut kept = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--out" => out = args.next().context("--out needs a folder")?.into(),
-            other => bail!("unknown flag {other:?}"),
+            other => kept = Some(kept_flag(other, &mut args)?),
         }
     }
     edge_shots(&out)?;
-    window_shots(&out.join("windows"))
+    window_shots(&out.join("windows"), kept.as_deref())
 }
 
 fn edge_shots(out: &Path) -> anyhow::Result<()> {
@@ -197,8 +219,9 @@ fn edge_shots(out: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn window_shots(folder: &Path) -> anyhow::Result<()> {
+fn window_shots(folder: &Path, kept: Option<&Path>) -> anyhow::Result<()> {
     let home = Home::new("shots")?;
+    fill_meetings(&home.0, kept)?;
     let mut app = start(
         &home.0,
         &[
@@ -214,7 +237,11 @@ fn window_shots(folder: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn footprint() -> anyhow::Result<()> {
+pub fn footprint(mut args: impl Iterator<Item = String>) -> anyhow::Result<()> {
+    let mut kept = None;
+    while let Some(arg) = args.next() {
+        kept = Some(kept_flag(&arg, &mut args)?);
+    }
     let home = Home::new("footprint")?;
     let mut app = start(&home.0, &[])?;
     thread::sleep(IDLE);
@@ -231,16 +258,22 @@ pub fn footprint() -> anyhow::Result<()> {
     let footprint = footprint_in(&summary).context("vmmap gave no footprint")?;
     println!("{}", verdict(footprint));
     for rounds in TOURS {
-        settings_footprint(rounds)?;
+        tour_footprint(rounds, false, kept.as_deref())?;
     }
-    Ok(())
+    // On the real flow onboarding stops at the step this Mac leaves to do. A rehearsal goes through
+    // all four, and answers in the chat.
+    tour_footprint(TOURS[0], true, kept.as_deref())
 }
 
-/// Walks every Settings page `rounds` times, closes it and lets it settle, as the spec measured.
-fn settings_footprint(rounds: u32) -> anyhow::Result<()> {
+/// Uses every window `rounds` times, closes them and lets it settle, as the spec measured.
+fn tour_footprint(rounds: u32, rehearse: bool, kept: Option<&Path>) -> anyhow::Result<()> {
     let home = Home::new("footprint")?;
+    fill_meetings(&home.0, kept)?;
     let log = home.0.join("app.log");
-    let args = ["--behind".to_owned(), format!("--tour={rounds}")];
+    let mut args = vec!["--behind".to_owned(), format!("--tour={rounds}")];
+    if rehearse {
+        args.push("--rehearse".to_owned());
+    }
     let mut app = start_logging(&home.0, &args, &log)?;
     let started = Instant::now();
     let toured = tour_finished(&log, ROUND_LIMIT * rounds);
@@ -261,7 +294,9 @@ fn settings_footprint(rounds: u32) -> anyhow::Result<()> {
     ensure!(said.contains("shell closed"), "it didn't quit: {said}");
     no_focus_taken(&said)?;
     let footprint = footprint_in(&summary?).context("vmmap gave no footprint")?;
-    let what = format!("after {rounds} round(s) of Settings in {took:.0?}, closed for {SETTLE:?}:");
+    let run = if rehearse { "a rehearsal" } else { "the real flow" };
+    let what =
+        format!("after {rounds} round(s) of every window on {run} in {took:.0?}, closed for {SETTLE:?}:");
     println!("{}", verdict_against(&what, footprint, USED_GOAL_MB));
     Ok(())
 }
@@ -277,4 +312,31 @@ fn tour_finished(log: &Path, limit: Duration) -> anyhow::Result<bool> {
         thread::sleep(POLL);
     }
     Ok(false)
+}
+
+/// What the walk timed, line by line.
+pub fn walk_report(said: &str) -> Vec<&str> {
+    let lines = said.lines();
+    lines
+        .filter(|line| ["stalls ", "meeting: ", "chat: ", "scrolled "].iter().any(|s| line.starts_with(s)))
+        .collect()
+}
+
+pub fn meeting_walk(mut args: impl Iterator<Item = String>) -> anyhow::Result<()> {
+    let arg = args.next().context("--kept needs a folder")?;
+    let kept = kept_flag(&arg, &mut args)?;
+    let home = Home::new("meeting-walk")?;
+    fill_meetings(&home.0, Some(&kept))?;
+    let log = home.0.join("app.log");
+    let flags = ["--rehearse", "--behind", "--walk-meeting"].map(str::to_owned);
+    let mut app = start_logging(&home.0, &flags, &log)?;
+    let finished = wait_for_exit(&mut app, WALK_LIMIT);
+    let said = fs::read_to_string(&log)?;
+    finished.with_context(|| said.clone())?;
+    ensure!(said.contains("walked"), "the walk didn't finish: {said}");
+    no_focus_taken(&said)?;
+    for line in walk_report(&said) {
+        println!("{line}");
+    }
+    Ok(())
 }

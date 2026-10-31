@@ -1,7 +1,7 @@
 //! The parts of `cargo xtask shots` and `cargo xtask footprint` that decide things. The bundle
 //! itself runs in `dev_bundle.rs`.
 
-use xtask::dev_app::{Footprint, footprint_in, no_focus_taken, pill_file, verdict};
+use xtask::dev_app::{Footprint, footprint_in, no_focus_taken, pill_file, verdict, walk_report};
 
 const SUMMARY: &str = "Process:         wispr-free [123]\n\
     Physical footprint:         18.4M\n\
@@ -53,4 +53,11 @@ fn the_pill_file_is_one_the_app_reads() {
 fn a_run_that_was_activated_fails() {
     assert!(no_focus_taken("shell started\nshell closed\n").is_ok());
     assert!(no_focus_taken("shell started\ntook the focus\nshell closed\n").is_err());
+}
+
+#[test]
+fn a_walks_report_is_what_it_timed_and_not_the_rest_of_the_log() {
+    let said = "shell started\nstalls open: longest 5 ms\nreleased Meetings\nmeeting: 195 lines\n";
+
+    assert_eq!(walk_report(said), ["stalls open: longest 5 ms", "meeting: 195 lines"]);
 }

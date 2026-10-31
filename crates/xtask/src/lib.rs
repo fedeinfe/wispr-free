@@ -12,4 +12,5 @@ pub mod meeting_eval;
 pub mod meeting_fixture;
 #[cfg(feature = "meeting")]
 pub mod meeting_run;
+pub mod meeting_seed;
 pub mod speech_fixture;

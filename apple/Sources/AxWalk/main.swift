@@ -7,11 +7,13 @@ import AppKit
 //   ax-walk close <pid> <window identifier>
 //   ax-walk select <pid> <window identifier> <row identifier>
 //   ax-walk press <pid> <window identifier> <control identifier>
+//   ax-walk set <pid> <window identifier> <field identifier> <text>
 
 struct Node: Encodable {
     let role: String
     let identifier: String
     let title: String
+    let value: String
     let enabled: Bool
 }
 
@@ -56,7 +58,7 @@ func descendants(of root: AXUIElement) -> [AXUIElement] {
 func node(_ element: AXUIElement) -> Node {
     Node(
         role: text(element, kAXRoleAttribute), identifier: text(element, kAXIdentifierAttribute),
-        title: text(element, kAXTitleAttribute),
+        title: text(element, kAXTitleAttribute), value: text(element, kAXValueAttribute),
         enabled: attribute(element, kAXEnabledAttribute) as? Bool ?? true)
 }
 
@@ -123,6 +125,16 @@ func press(control identifier: String, in windowIdentifier: String, of pid: pid_
     press(control)
 }
 
+func set(field identifier: String, in windowIdentifier: String, of pid: pid_t, to value: String) {
+    let nodes = descendants(of: window(windowIdentifier, of: pid))
+    guard let field = nodes.first(where: { text($0, kAXIdentifierAttribute) == identifier }) else {
+        fail("no field \(identifier)")
+    }
+    let result = AXUIElementSetAttributeValue(
+        field, kAXValueAttribute as CFString, value as CFString)
+    guard result == .success else { fail("setting failed: \(result.rawValue)") }
+}
+
 func ancestors(of element: AXUIElement) -> [AXUIElement] {
     var found: [AXUIElement] = []
     var next = attribute(element, kAXParentAttribute)
@@ -141,7 +153,7 @@ func fail(_ reason: String) -> Never {
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 guard arguments.count >= 2, let pid = pid_t(arguments[1]) else {
-    fail("usage: ax-walk walk|close|select|press <pid> [window] [row or control]")
+    fail("usage: ax-walk walk|close|select|press|set <pid> [window] [row or control] [text]")
 }
 switch (arguments[0], arguments.count) {
 case ("walk", 2):
@@ -154,6 +166,8 @@ case ("select", 4):
     select(row: arguments[3], in: arguments[2], of: pid)
 case ("press", 4):
     press(control: arguments[3], in: arguments[2], of: pid)
+case ("set", 5):
+    set(field: arguments[3], in: arguments[2], of: pid, to: arguments[4])
 default:
-    fail("usage: ax-walk walk|close|select|press <pid> [window] [row or control]")
+    fail("usage: ax-walk walk|close|select|press|set <pid> [window] [row or control] [text]")
 }

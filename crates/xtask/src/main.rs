@@ -2,8 +2,9 @@
 //! Flags: `--rules-only` scores rule cleanup alone, `--dev` skips the holdout cases, `--cpu` keeps
 //! every layer off the GPU, and `--no-language` withholds each case's language, which is what
 //! cleanup gets from Parakeet on auto-detect. `cargo xtask bundle` is in [`xtask::bundle`],
-//! `cargo xtask bridge` in [`xtask::bridge`], `cargo xtask shots` and `cargo xtask footprint` in
-//! [`xtask::dev_app`], and `cargo xtask ax-check` in [`xtask::ax_check`].
+//! `cargo xtask bridge` in [`xtask::bridge`], `cargo xtask shots`, `cargo xtask footprint` and
+//! `cargo xtask meeting-walk` in [`xtask::dev_app`], and `cargo xtask ax-check` in
+//! [`xtask::ax_check`].
 //!
 //! `cargo xtask-meeting meeting-fixture --out dir` builds the 30-minute meeting with macOS `say`.
 //! `cargo xtask-meeting meeting-run --fixture dir --models dir --out dir` runs it through every
@@ -40,7 +41,8 @@ fn main() -> anyhow::Result<ExitCode> {
         "bundle" => return bundle::run(args).map(|()| ExitCode::SUCCESS),
         "bridge" => return bridge::run().map(|()| ExitCode::SUCCESS),
         "shots" => return dev_app::shots(args).map(|()| ExitCode::SUCCESS),
-        "footprint" => return dev_app::footprint().map(|()| ExitCode::SUCCESS),
+        "footprint" => return dev_app::footprint(args).map(|()| ExitCode::SUCCESS),
+        "meeting-walk" => return dev_app::meeting_walk(args).map(|()| ExitCode::SUCCESS),
         "ax-check" => return ax_check::run().map(|()| ExitCode::SUCCESS),
         "signing-identity" => return bundle::create_identity().map(|()| ExitCode::SUCCESS),
         "meeting-fixture" | "meeting-run" | "meeting-summary" | "meeting-diarize"

@@ -24,6 +24,7 @@ use crate::bundle::{SWIFT_JOBS, tool};
 use crate::dev_app::{
     DEV_ROOT, Home, POLL, QUIT_LIMIT, no_focus_taken, start_logging, wait_for_exit,
 };
+use crate::meeting_seed::{FINISHED_TITLE, UNFINISHED_TITLE, seed};
 
 const WALKER: &str = "ax-walk";
 const WAIT: Duration = Duration::from_secs(15);
@@ -32,6 +33,7 @@ const LAST_PAGE_NAME: &str = "privacy";
 const NEXT_PAGE: &str = "General";
 const NEXT_PAGE_NAME: &str = "general";
 const SETTINGS: &str = "Settings";
+const MEETINGS: &str = "Meetings";
 const SETUP: &str = "Set up Wispr Free";
 /// Where a run's folder picker lands, under its dev root.
 const ELSEWHERE: &str = "elsewhere";
@@ -41,6 +43,7 @@ pub struct Node {
     pub role: String,
     pub identifier: String,
     pub title: String,
+    pub value: String,
     pub enabled: bool,
 }
 
@@ -198,6 +201,64 @@ pub const STEPS: [StepContract; 4] = [
         ],
     },
 ];
+
+/// One tab of a meeting, on the real bundle, over [`crate::meeting_seed`]'s first meeting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TabContract {
+    pub tab: &'static str,
+    pub labels: &'static [&'static str],
+}
+
+pub const TABS: [TabContract; 4] = [
+    TabContract {
+        tab: "Summary",
+        labels: &[
+            "Regenerate",
+            "Go to [01:15]",
+            "[00:33] matches no line of the transcript",
+            "Go to [00:12]",
+        ],
+    },
+    TabContract {
+        tab: "Notes",
+        labels: &["Meeting notes"],
+    },
+    TabContract {
+        tab: "Transcript",
+        labels: &["Name of Speaker 1", "Name of Speaker 2"],
+    },
+    TabContract {
+        tab: "Chat",
+        labels: &[
+            "Chat hint",
+            "Draft a follow-up email",
+            "Ask about this meeting",
+            "Send",
+        ],
+    },
+];
+
+/// The controls every meeting's toolbar and header have, on a meeting that's done.
+const MEETING_CONTROLS: [&str; 7] = [
+    "Meeting title",
+    "When",
+    "Speakers",
+    "Second pass",
+    "Keep recording",
+    "Export",
+    "Delete",
+];
+/// The same on the seeded meeting that isn't done.
+const UNFINISHED_CONTROLS: [&str; 4] = [
+    "Failures",
+    "Second pass off",
+    "Finish processing",
+    "No summary",
+];
+/// What only shows with a meeting picked.
+const NEEDING_A_MEETING: [&str; 3] = ["Keep recording", "Export", "Delete"];
+/// What the status menu and the window share.
+const START: &str = "Start meeting notes";
 
 /// What the trial has shown once the mouse has run it.
 const TRIED: [&str; 3] = ["Shortcut: failed", "Microphone: works", "Models: works"];
@@ -392,6 +453,17 @@ pub fn broken(contract: &Contract, walk: &Walk, app: i32) -> Vec<String> {
     broken
 }
 
+/// Whether a seeded meeting's notes say `text`.
+fn meeting_noted(root: &Path, text: &str) -> anyhow::Result<bool> {
+    for meeting in fs::read_dir(root.join("meetings"))? {
+        let notes = fs::read_to_string(meeting?.path().join("notes.md")).unwrap_or_default();
+        if notes.contains(text) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// One start of the app, gone when this is.
 struct Run {
     home: Home,
@@ -405,13 +477,29 @@ impl Run {
         Self::start_with(walker, &["--rehearse", "--behind"], items, prefs)
     }
 
+    /// With [`crate::meeting_seed`]'s meetings in its library.
+    fn start_on_meetings(walker: &Path, items: &[&str]) -> anyhow::Result<Self> {
+        let home = Home::new("ax-check")?;
+        seed(&home.0.join(DEV_ROOT).join("meetings"))?;
+        Self::start_in(home, walker, &["--rehearse", "--behind"], items, None)
+    }
+
     fn start_with(
         walker: &Path,
         flags: &[&str],
         items: &[&str],
         prefs: Option<&str>,
     ) -> anyhow::Result<Self> {
-        let home = Home::new("ax-check")?;
+        Self::start_in(Home::new("ax-check")?, walker, flags, items, prefs)
+    }
+
+    fn start_in(
+        home: Home,
+        walker: &Path,
+        flags: &[&str],
+        items: &[&str],
+        prefs: Option<&str>,
+    ) -> anyhow::Result<Self> {
         if let Some(prefs) = prefs {
             fs::write(home.0.join(DEV_ROOT).join("pill.toml"), prefs)?;
         }
@@ -532,6 +620,24 @@ impl Run {
         }
     }
 
+    fn press_and_see(&self, control: &str, shows: &'static str) -> anyhow::Result<()> {
+        self.press(MEETINGS, control, Outcome::Shows(shows))
+            .with_context(|| format!("{control} then {shows}"))
+    }
+
+    /// Reads a control's value until it holds `text`.
+    fn wait_for_value(&self, control: &str, text: &str) -> anyhow::Result<()> {
+        self.walk_until(|walk| {
+            let value = walk.control(control).map(|node| node.value.as_str());
+            if value.is_some_and(|value| value.contains(text)) {
+                Vec::new()
+            } else {
+                vec![format!("{control} says {value:?}")]
+            }
+        })?;
+        Ok(())
+    }
+
     /// Asks it to quit, then holds it to no window having taken the focus.
     fn finish(mut self) -> anyhow::Result<()> {
         tool("kill").arg(self.app.id().to_string()).succeed()?;
@@ -623,6 +729,92 @@ fn follow_a_page(run: &Run) -> anyhow::Result<()> {
         thread::sleep(POLL);
     }
     Ok(())
+}
+
+/// A library by its rows, each tab of a meeting, and what its controls reach, on the real app. The
+/// delete dialog isn't here: showing it could take the focus, so `MeetingsViewTests` presses it.
+fn check_the_meetings(walker: &Path) -> anyhow::Result<()> {
+    let run = Run::start_on_meetings(walker, &["Meetings…"])?;
+    let app = run.pid();
+    let empty = Contract {
+        item: "",
+        window: MEETINGS,
+        title: MEETINGS,
+        labels: &[
+            FINISHED_TITLE,
+            UNFINISHED_TITLE,
+            "Detail hint",
+            START,
+        ],
+    };
+    let walk = run.walk_until(|walk| broken(&empty, walk, app))?;
+    for control in NEEDING_A_MEETING {
+        ensure!(walk.control(control).is_none(), "{control} shows with nothing picked");
+    }
+    run.walker_does("select", &[MEETINGS, UNFINISHED_TITLE])?;
+    let unfinished = Contract {
+        labels: &UNFINISHED_CONTROLS,
+        ..empty
+    };
+    run.walk_until(|walk| broken(&unfinished, walk, app))?;
+    run.walker_does("select", &[MEETINGS, FINISHED_TITLE])?;
+    let finished = Contract {
+        labels: &MEETING_CONTROLS,
+        ..empty
+    };
+    run.walk_until(|walk| broken(&finished, walk, app))?;
+    run.wait_for_value("Meeting title", FINISHED_TITLE)?;
+    for tab in &TABS {
+        run.walker_does("press", &[MEETINGS, tab.tab])?;
+        let contract = Contract {
+            labels: tab.labels,
+            ..empty
+        };
+        let walk = run
+            .walk_until(|walk| broken(&contract, walk, app))
+            .with_context(|| tab.tab)?;
+        let nodes: usize = walk.opened().map(|window| window.nodes.len()).sum();
+        println!(
+            "{MEETINGS} {}: {} labels among {nodes} nodes",
+            tab.tab,
+            tab.labels.len()
+        );
+    }
+    check_the_meetings_chat(&run)?;
+    check_what_meetings_save(&run)?;
+    run.walker_does("close", &[MEETINGS])?;
+    run.wait_to_say(&format!("released {MEETINGS}"))?;
+    run.finish()?;
+    println!("{MEETINGS}: list, tabs, chat, saves and export, released on close");
+    Ok(())
+}
+
+/// An answer on its way, stopped, then another all the way to a time that jumps.
+fn check_the_meetings_chat(run: &Run) -> anyhow::Result<()> {
+    run.press_and_see("List open questions", "Stop")?;
+    run.wait_for_control(MEETINGS, "Answer on its way")?;
+    run.press_and_see("Stop", "Send")?;
+    run.press_and_see("Draft a follow-up email", "Stop")?;
+    run.wait_for_control(MEETINGS, "Go to [00:05]")?;
+    run.wait_for_control(MEETINGS, "[59:59] matches no line of the transcript")?;
+    run.press_and_see("Go to [00:05]", "Name of Speaker 1")?;
+    Ok(())
+}
+
+/// Notes set the way an assistive tool would, reaching the disk, and an export. A title set that way
+/// never reached the disk, as a SwiftUI text field's binding doesn't seem to hear of it, so its way
+/// there is held by `MeetingsViewTests`, then `tests/meetings_bridge.rs`.
+fn check_what_meetings_save(run: &Run) -> anyhow::Result<()> {
+    run.walker_does("press", &[MEETINGS, "Notes"])?;
+    run.wait_for_control(MEETINGS, "Meeting notes")?;
+    let (root, notes) = (run.root(), "Ring them on Monday");
+    run.walker_does("set", &[MEETINGS, "Meeting notes", notes])?;
+    let deadline = Instant::now() + WAIT;
+    while !meeting_noted(&root, notes)? {
+        ensure!(Instant::now() < deadline, "the notes never reached the disk");
+        thread::sleep(POLL);
+    }
+    run.press(MEETINGS, "Export", Outcome::Landed("exports"))
 }
 
 /// Opening Settings during onboarding raises onboarding, on the real app. Picks run in order, so
@@ -761,6 +953,7 @@ pub fn run() -> anyhow::Result<()> {
         check_a_window(&walker, contract).with_context(|| contract.window)?;
     }
     check_the_pages(&walker)?;
+    check_the_meetings(&walker)?;
     check_the_rule(&walker)?;
     check_the_first_run(&walker)?;
     check_a_real_look(&walker)?;
