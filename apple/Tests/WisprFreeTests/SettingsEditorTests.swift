@@ -104,6 +104,23 @@ private func editorAndCore() async throws -> (SettingsEditor, FakeCore) {
         #expect(core.versioned.settings.style.dictionary == ["one", "two"])
     }
 
+    @Test func aChangeStillWaitingStaysShownWhenTheOneBeforeItLands() async throws {
+        let (editor, core) = try await editorAndCore()
+        let (gate, open) = AsyncStream.makeStream(of: Void.self)
+        core.gate = gate
+        editor.edit { $0.general.languages.append("en") }
+        editor.edit { $0.general.languages.append("it") }
+
+        open.yield()
+        #expect(await eventually { core.saves.count == 1 })
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(core.saves.count == 1)
+        #expect(editor.settings.general.languages == ["en", "it"])
+        open.finish()
+        #expect(await eventually { core.saves.count == 2 })
+    }
+
     @Test func anOlderWordFromRustChangesNothing() async throws {
         let (editor, core) = try await editorAndCore()
         var newer = core.versioned.settings
