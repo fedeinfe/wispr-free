@@ -17,6 +17,9 @@ const BUNDLE_ID: &str = "com.wispr-free.app";
 const EXECUTABLE: &str = "wispr-free";
 const ENGINE_HOST: &str = "wf-engine-host";
 const ENGINE_HOST_ID: &str = "com.wispr-free.wf-engine-host";
+const SHELL: &str = "wf-shell";
+/// The crates ADR-0005 keeps out of everything but the engine host.
+const ENGINES: [&str; 3] = ["llama-cpp-2", "whisper-rs", "sherpa-onnx"];
 const HELPERS: &str = "Contents/Helpers";
 const FRAMEWORKS: &str = "Contents/Frameworks";
 const ICON: &str = "AppIcon";
@@ -130,6 +133,14 @@ pub fn foreign_libraries(otool: &str) -> Vec<String> {
                 && !path.starts_with("/System/")
         })
         .map(str::to_owned)
+        .collect()
+}
+
+/// Which engines a `cargo tree` lists. `otool` can't see the ones linked statically.
+pub fn engines_in(tree: &str) -> Vec<&'static str> {
+    ENGINES
+        .into_iter()
+        .filter(|engine| tree.contains(engine))
         .collect()
 }
 
@@ -365,6 +376,11 @@ fn assemble(target: &Path, signer: &Signer) -> anyhow::Result<PathBuf> {
         rpath_libraries(&linked).is_empty() && foreign_libraries(&linked).is_empty(),
         "the app should link macOS alone: {linked}"
     );
+    for package in [EXECUTABLE, SHELL] {
+        let tree = cargo_tree(package)?;
+        let engines = engines_in(&tree);
+        ensure!(engines.is_empty(), "{package} links {engines:?}");
+    }
     let helper = helper_path(&app);
     fs::copy(&built.engine_host, &helper)?;
     let carried = carry_libraries(&helper, &built.libraries, &frameworks)?;
@@ -448,6 +464,15 @@ fn cargo_build(binary: &str) -> anyhow::Result<String> {
         .arg("--message-format=json-render-diagnostics")
         .current_dir(workspace_root())
         .stderr(Stdio::inherit())
+        .text()
+}
+
+/// What cargo resolves for `package` alone, so with no other package's features.
+fn cargo_tree(package: &str) -> anyhow::Result<String> {
+    tool("cargo")
+        .args(["tree", "--locked", "--package", package])
+        .args(["--edges", "normal", "--prefix", "none"])
+        .current_dir(workspace_root())
         .text()
 }
 

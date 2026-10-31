@@ -4,9 +4,7 @@
 //! `Prefs` to a [`Controller`] of the Settings pages, and adds the steps and the trial.
 
 mod host;
-pub mod steps;
 mod system;
-pub mod trial;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -24,11 +22,12 @@ use wf_platform::permissions::{Access, Permission, Permissions, settings_link};
 use crate::settings_window::values::choose_tier;
 use crate::settings_window::{Controller, SettingsParts, Surface};
 use crate::{Consent, Mark, OnboardingWindow, Prefs, Setup, SetupStep, TrialPhase};
-use steps::{Facts, Hardware, Models, Step, first_open};
-use trial::{Check, Phase, Trial};
+use wf_shell::onboarding::steps::{Facts, Hardware, Models, Step, first_open};
+use wf_shell::onboarding::trial::{self, Check, Phase, Trial};
 
 pub use host::{FlowWatcher, OnboardingHost, Opening};
 pub use system::SystemMachine;
+pub use wf_shell::onboarding::steps;
 
 /// Looks with both permissions on and no keys before suggesting a reopen. One look a second, so
 /// that the key listener has had its chance.

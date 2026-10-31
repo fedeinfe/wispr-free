@@ -17,18 +17,17 @@ wf-models.workspace = true
 wf-meetings.workspace = true
 wf-dictation.workspace = true
 wf-history.workspace = true
+wf-shell.workspace = true
 slint = { workspace = true, features = ["unstable-winit-030"] }
-mimalloc.workspace = true
 directories.workspace = true
-chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
-serde.workspace = true
-toml.workspace = true
+chrono.workspace = true
 rfd.workspace = true
 
 [dev-dependencies]
 i-slint-backend-testing = { workspace = true, features = ["renderer-software"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 tempfile.workspace = true
+toml.workspace = true
 wf-pipeline.workspace = true
 
 [build-dependencies]

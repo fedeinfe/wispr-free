@@ -3,7 +3,6 @@
 //! weak references to it, so dropping the controller frees the window. It drives any [`Surface`],
 //! which is how onboarding gets the Models machinery without a second copy.
 
-pub mod data;
 mod host;
 pub mod rows;
 pub mod system;
@@ -39,6 +38,7 @@ use rows::{
 };
 use values::{ModelChoices, apply_values, models_in_use, values_of};
 use wf_dictation::plan::vad_forced;
+use wf_shell::settings::data;
 
 pub use host::{MakeParts, Redirect, SettingsHost, system_parts};
 

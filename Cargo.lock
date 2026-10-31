@@ -6439,6 +6439,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "wf-shell"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "directories",
+ "mimalloc",
+ "serde",
+ "tempfile",
+ "toml",
+ "wf-audio",
+ "wf-core",
+ "wf-dictation",
+ "wf-history",
+ "wf-meetings",
+ "wf-models",
+ "wf-platform",
+]
+
+[[package]]
 name = "wgpu"
 version = "30.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6983,9 +7002,7 @@ dependencies = [
  "directories",
  "i-slint-backend-testing",
  "image",
- "mimalloc",
  "rfd",
- "serde",
  "slint",
  "slint-build",
  "tempfile",
@@ -6998,6 +7015,7 @@ dependencies = [
  "wf-models",
  "wf-pipeline",
  "wf-platform",
+ "wf-shell",
 ]
 
 [[package]]

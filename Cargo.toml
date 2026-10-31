@@ -23,6 +23,7 @@ wf-models = { path = "crates/models" }
 wf-history = { path = "crates/history" }
 wf-dictation = { path = "crates/dictation" }
 wf-meetings = { path = "crates/meetings" }
+wf-shell = { path = "crates/shell" }
 
 # UI
 slint = "1.18.1"
@@ -37,6 +38,9 @@ rfd = "0.17.2"
 
 # Files
 same-file = "1.0.6"
+
+# Dates
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 
 # Audio
 cpal = "0.18.2"

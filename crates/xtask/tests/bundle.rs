@@ -6,8 +6,8 @@ use std::process::Command;
 
 use wf_dictation::remote::engine_host_beside;
 use xtask::bundle::{
-    Signer, built_binary, codesign_args, foreign_libraries, helper_path, iconset_files, info_plist,
-    llama_libraries, rpath_libraries, signing_order,
+    Signer, built_binary, codesign_args, engines_in, foreign_libraries, helper_path, iconset_files,
+    info_plist, llama_libraries, rpath_libraries, signing_order,
 };
 
 const OTOOL: &str = "\
@@ -105,22 +105,40 @@ fn signing_goes_inside_out_and_the_helper_is_named() {
     );
 }
 
-/// ADR-0005. What cargo builds for the app alone, which is how `bundle` builds it.
-#[test]
-fn the_app_depends_on_no_engine() {
+/// What cargo resolves for `package` on its own, which is how `bundle` builds it.
+fn tree_of(package: &str) -> String {
     let output = Command::new(env!("CARGO"))
-        .args(["tree", "--locked", "--package", "wispr-free"])
+        .args(["tree", "--locked", "--package", package])
         .args(["--edges", "normal", "--prefix", "none"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .expect("cargo runs");
     assert!(output.status.success());
-    let tree = String::from_utf8_lossy(&output.stdout);
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
 
-    assert!(tree.contains("wf-dictation"));
-    for engine in ["llama-cpp-2", "whisper-rs", "sherpa-onnx"] {
-        assert!(!tree.contains(engine), "the app links {engine}");
+/// ADR-0005.
+#[test]
+fn the_app_depends_on_no_engine() {
+    for package in ["wispr-free", "wf-shell"] {
+        let tree = tree_of(package);
+
+        assert!(tree.contains("wf-dictation"), "{package}");
+        assert_eq!(engines_in(&tree), Vec::<&str>::new(), "{package}");
     }
+}
+
+#[test]
+fn the_shell_depends_on_no_toolkit() {
+    assert!(!tree_of("wf-shell").contains("slint"));
+}
+
+#[test]
+fn a_tree_with_an_engine_in_it_is_caught() {
+    assert_eq!(
+        engines_in("wf-pipeline v0.1.0\nwhisper-rs v0.16.0\n"),
+        ["whisper-rs"]
+    );
 }
 
 #[test]
