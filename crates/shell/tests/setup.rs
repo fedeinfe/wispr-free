@@ -601,10 +601,15 @@ fn opening_again_in_the_same_run_starts_where_the_work_is() {
     rig.reach_the_trial();
     rig.swift_closed(SETUP);
     rig.settle();
+    rig.forget_events();
 
     rig.pick(MenuAction::OpenOnboarding);
 
-    assert_eq!(rig.page().unwrap().step, Step::Trial);
+    let first = rig.seen().into_iter().find_map(|event| match event {
+        ShellEvent::Setup { page } => Some(page.step),
+        _ => None,
+    });
+    assert_eq!(first, Some(Step::Trial), "the pages know the hardware");
 }
 
 #[test]
