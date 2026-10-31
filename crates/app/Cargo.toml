@@ -19,8 +19,6 @@ wf-dictation.workspace = true
 wf-history.workspace = true
 wf-shell.workspace = true
 slint = { workspace = true, features = ["unstable-winit-030"] }
-directories.workspace = true
-chrono.workspace = true
 rfd.workspace = true
 
 [dev-dependencies]

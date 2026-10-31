@@ -2,21 +2,85 @@
 //! tested as text.
 
 use chrono::{Local, TimeZone};
-use slint::{ModelRc, VecModel};
 use wf_dictation::{MeetingsStatus, WorkStep};
 use wf_meetings::{
     ChatTurn, MeetingDetail, MeetingEntry, SearchHit, Stage, StageState, Stages, Summary,
     TranscriptRow, parse_answer, row_at, timestamp,
 };
 
-use crate::TranscriptLine;
-use crate::{ChatBlock, ChatChip, ChatMessage, MeetingRow, SpeakerRow, StageRow, SummaryLine};
-
 const UNTITLED: &str = "Untitled meeting";
 const STOPPED_NOTE: &str = "Stopped.";
 const PARTIAL_NOTE: &str = "The meeting is too long to read whole, so this looked only at the parts closest to the question.";
 const UNBACKED_NOTE: &str =
     "No time in this answer matches a line of the transcript. Check it there.";
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MeetingRow {
+    pub id: String,
+    pub title: String,
+    pub when: String,
+    /// Why a search found it. Empty outside a search.
+    pub snippet: String,
+    /// Where in the transcript the search found it, or -1.
+    pub hit_row: i32,
+    pub recording: bool,
+    pub busy: bool,
+    pub failed: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StageRow {
+    pub label: String,
+    /// 0 waiting, 1 done, 2 skipped, 3 failed.
+    pub state: i32,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SummaryLine {
+    /// 0 a heading, 1 a list item, 2 plain text.
+    pub kind: i32,
+    pub text: String,
+    /// Empty when the line has no time.
+    pub time: String,
+    /// The transcript line it points to, or -1 if there is none.
+    pub row: i32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TranscriptLine {
+    pub time: String,
+    pub speaker: String,
+    pub text: String,
+    pub gap: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SpeakerRow {
+    pub id: i32,
+    pub label: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChatChip {
+    pub label: String,
+    /// The transcript line, or -1 for a time that matches none.
+    pub row: i32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChatBlock {
+    pub text: String,
+    pub chips: Vec<ChatChip>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChatMessage {
+    pub question: String,
+    pub blocks: Vec<ChatBlock>,
+    pub note: String,
+}
 
 pub fn when_text(created_ms: u64, length_ms: u64) -> String {
     let when = Local
@@ -190,11 +254,11 @@ pub fn chat_message(turn: &ChatTurn, rows: &[TranscriptRow]) -> ChatMessage {
     } else {
         ""
     };
-    let blocks: Vec<ChatBlock> = parsed
+    let blocks = parsed
         .blocks
         .iter()
         .map(|block| {
-            let chips: Vec<ChatChip> = block
+            let chips = block
                 .citations
                 .iter()
                 .map(|citation| ChatChip {
@@ -204,13 +268,13 @@ pub fn chat_message(turn: &ChatTurn, rows: &[TranscriptRow]) -> ChatMessage {
                 .collect();
             ChatBlock {
                 text: block.text.as_str().into(),
-                chips: ModelRc::new(VecModel::from(chips)),
+                chips,
             }
         })
         .collect();
     ChatMessage {
         question: turn.question.as_str().into(),
-        blocks: ModelRc::new(VecModel::from(blocks)),
+        blocks,
         note: note.into(),
     }
 }
@@ -252,11 +316,10 @@ mod tests {
 
         let message = chat_message(&turn("Friday. [00:05] [09:09]"), &rows);
 
-        use slint::Model;
-        let block = message.blocks.row_data(0).unwrap();
+        let block = &message.blocks[0];
         assert_eq!(block.text, "Friday.");
-        assert_eq!(block.chips.row_data(0).unwrap().row, 0);
-        assert_eq!(block.chips.row_data(1).unwrap().row, -1);
+        assert_eq!(block.chips[0].row, 0);
+        assert_eq!(block.chips[1].row, -1);
         assert_eq!(message.note, "");
     }
 

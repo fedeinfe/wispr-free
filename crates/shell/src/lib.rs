@@ -4,6 +4,7 @@
 pub mod clock;
 pub mod flow;
 pub mod lists;
+pub mod meetings;
 pub mod memory;
 pub mod onboarding;
 pub mod prefs;
