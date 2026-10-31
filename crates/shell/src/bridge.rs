@@ -53,6 +53,8 @@ pub enum SaveOutcome {
 }
 
 /// What the app gets told. Delivered on the flow's threads.
+// It crosses by value, so a box would save nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum ShellEvent {
     Pill { state: PillState },

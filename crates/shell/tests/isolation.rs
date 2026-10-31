@@ -19,6 +19,8 @@ use wf_shell::bridge::{EventSink, SaveOutcome, Shell, ShellError, ShellEvent};
 use wf_shell::flow::parts_at;
 use wf_shell::paths::{Paths, dev_paths};
 
+type AimAtReal = fn(&mut Paths, PathBuf);
+
 /// Set by the parent, so the child tests do nothing when `--ignored` runs them directly.
 const CHILD: &str = "WF_ISOLATION_CHILD";
 const SUPPORT: &str = "Library/Application Support";
@@ -186,7 +188,7 @@ fn child_is_refused_every_real_path() {
     let home = PathBuf::from(std::env::var_os("HOME").unwrap());
     let real = real_root(&home);
     let safe = dev_paths().unwrap();
-    let cases: [(&str, fn(&mut Paths, PathBuf)); 5] = [
+    let cases: [(&str, AimAtReal); 5] = [
         ("settings", |paths, real| {
             paths.settings = real.join("settings.toml");
         }),
