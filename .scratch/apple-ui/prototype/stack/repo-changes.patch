@@ -1,0 +1,240 @@
+--- a/crates/dictation/Cargo.toml
++++ b/crates/dictation/Cargo.toml
+@@ -11,7 +11,7 @@
+ [dependencies]
+ wf-core.workspace = true
+ wf-audio.workspace = true
+-wf-pipeline = { workspace = true, features = ["silero", "whisper", "sherpa", "diarization", "llama"] }
++wf-pipeline.workspace = true
+ wf-platform.workspace = true
+ wf-models.workspace = true
+ wf-history.workspace = true
+@@ -19,9 +19,8 @@
+ serde.workspace = true
+ serde_json.workspace = true
+ 
+-# Whisper needs this for the GPU. Windows and Linux stay on the CPU until they get a Vulkan build.
+-[target.'cfg(target_os = "macos")'.dependencies]
+-wf-pipeline = { workspace = true, features = ["metal"] }
++[features]
++engines = ["wf-pipeline/silero", "wf-pipeline/whisper", "wf-pipeline/sherpa", "wf-pipeline/diarization", "wf-pipeline/llama", "wf-pipeline/metal"]
+ 
+ [dev-dependencies]
+ tempfile.workspace = true
+--- a/crates/dictation/src/remote.rs
++++ b/crates/dictation/src/remote.rs
+@@ -533,6 +533,7 @@
+ }
+ 
+ /// Loads the real engines. Runs in the host process.
++#[cfg(feature = "engines")]
+ pub fn load_engine(spec: &EngineSpec) -> Result<Hosted, PipelineError> {
+     use wf_pipeline::diarization::{DiarizationConfig, SherpaDiarizer};
+     use wf_pipeline::llama::{LlamaConfig, LlamaEngine};
+@@ -561,6 +562,7 @@
+ }
+ 
+ /// The whole life of a host process: `main` calls this when it's given [`ENGINE_HOST_ARG`].
++#[cfg(feature = "engines")]
+ pub fn run_engine_host() -> io::Result<()> {
+     serve(io::stdin().lock(), io::stdout().lock(), &mut load_engine)
+ }
+--- a/crates/core/Cargo.toml
++++ b/crates/core/Cargo.toml
+@@ -7,7 +7,11 @@
+ repository.workspace = true
+ publish.workspace = true
+ 
++[features]
++uniffi = ["dep:uniffi"]
++
+ [dependencies]
++uniffi = { version = "=0.32.2", optional = true }
+ directories.workspace = true
+ serde.workspace = true
+ thiserror.workspace = true
+--- a/crates/core/src/lib.rs
++++ b/crates/core/src/lib.rs
+@@ -1,6 +1,9 @@
+ //! Pure, engine-free logic shared by every other crate: the audio format the pipeline speaks,
+ //! the shortcut model, the dictation state machine and the settings.
+ 
++#[cfg(feature = "uniffi")]
++uniffi::setup_scaffolding!("wfsettings");
++
+ pub mod audio;
+ pub mod dictation;
+ pub mod pill;
+--- a/crates/core/src/settings.rs
++++ b/crates/core/src/settings.rs
+@@ -13,6 +13,7 @@
+ 
+ /// All settings. A file that omits one gets its default, so new settings need no migration.
+ #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+ #[serde(default)]
+ pub struct Settings {
+     pub general: General,
+@@ -28,12 +29,14 @@
+ /// Whether the first-run flow was seen through. Delete all resets it with everything else, which
+ /// is right: what it set up is gone.
+ #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+ #[serde(default)]
+ pub struct Onboarding {
+     pub finished: bool,
+ }
+ 
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+ #[serde(default)]
+ pub struct General {
+     /// Input device ids, best first (`wf_audio::CaptureConfig::ranking`). Empty means auto.
+@@ -64,6 +67,7 @@
+ }
+ 
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+ #[serde(rename_all = "snake_case")]
+ pub enum Theme {
+     #[default]
+@@ -73,6 +77,7 @@
+ }
+ 
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+ #[serde(default)]
+ pub struct Pipeline {
+     pub tier: PipelineTier,
+@@ -111,6 +116,7 @@
+ }
+ 
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+ #[serde(rename_all = "snake_case")]
+ pub enum PipelineTier {
+     Lite,
+@@ -122,6 +128,7 @@
+ 
+ /// How far LLM cleanup may depart from the spoken words.
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+ #[serde(rename_all = "snake_case")]
+ pub enum CleanupStrength {
+     None,
+@@ -132,6 +139,7 @@
+ }
+ 
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+ #[serde(rename_all = "snake_case")]
+ pub enum KeepModels {
+     Always,
+@@ -142,6 +150,7 @@
+ 
+ /// Styles per app category, the dictionary and snippets.
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+ #[serde(default)]
+ pub struct StyleSettings {
+     pub personal_messages: Style,
+@@ -189,6 +198,7 @@
+ /// Tone and punctuation preset for an app category. LLM cleanup applies a style by rewriting;
+ /// `wf_pipeline::passes::apply_style` does the mechanical part, so it holds with the LLM off too.
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+ #[serde(rename_all = "snake_case")]
+ pub enum Style {
+     Formal,
+@@ -199,6 +209,7 @@
+ 
+ /// A dictionary replacement: `wrong` is always written as `right`.
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+ pub struct Replacement {
+     pub wrong: String,
+     pub right: String,
+@@ -206,12 +217,14 @@
+ 
+ /// A user snippet: saying `trigger` writes `text`.
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+ pub struct Snippet {
+     pub trigger: String,
+     pub text: String,
+ }
+ 
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+ #[serde(default)]
+ pub struct Meetings {
+     /// Suggest taking notes when a meeting app starts using the mic. Never records by itself.
+@@ -240,6 +253,7 @@
+ }
+ 
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+ #[serde(default)]
+ pub struct Media {
+     pub sounds: bool,
+@@ -256,6 +270,7 @@
+ }
+ 
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+ #[serde(rename_all = "snake_case")]
+ pub enum MediaWhileDictating {
+     #[default]
+@@ -265,6 +280,7 @@
+ }
+ 
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+ #[serde(default)]
+ pub struct Privacy {
+     pub context_awareness: bool,
+@@ -281,6 +297,7 @@
+ }
+ 
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+ #[serde(rename_all = "snake_case")]
+ pub enum HistoryRetention {
+     #[default]
+@@ -293,6 +310,13 @@
+ 
+ /// The settings of this run, backed by a TOML file. Every update is written through at once, so
+ /// a crash loses nothing.
++#[cfg(feature = "uniffi")]
++uniffi::custom_type!(PathBuf, String, {
++    remote,
++    lower: |path| path.to_string_lossy().into_owned(),
++    try_lift: |text| Ok(PathBuf::from(text)),
++});
++
+ #[derive(Debug)]
+ pub struct SettingsStore {
+     path: PathBuf,
+--- a/crates/core/src/shortcut.rs
++++ b/crates/core/src/shortcut.rs
+@@ -336,6 +336,7 @@
+ /// The combo bound to each action. A file that omits an action gets its default.
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+ #[serde(default)]
++#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+ pub struct Bindings {
+     pub push_to_talk: Combo,
+     pub hands_free: Combo,
+@@ -399,3 +400,12 @@
+         *slot = combo;
+     }
+ }
++
++#[cfg(feature = "uniffi")]
++uniffi::custom_type!(Combo, Vec<String>, {
++    lower: |combo| combo.0.iter().map(|key| String::from(*key)).collect(),
++    try_lift: |keys| {
++        let keys: Result<Vec<Key>, _> = keys.into_iter().map(Key::try_from).collect();
++        Ok(Combo(keys.map_err(|error| uniffi::deps::anyhow::anyhow!("{error:?}"))?))
++    },
++});

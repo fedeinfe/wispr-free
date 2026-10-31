@@ -1,0 +1,2 @@
+module wfcoreFFI { header "wfcoreFFI.h" export * }
+module wfsettingsFFI { header "wfsettingsFFI.h" export * }
