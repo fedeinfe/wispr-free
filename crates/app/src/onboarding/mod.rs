@@ -19,11 +19,11 @@ use wf_dictation::plan::{plan, preset_tier};
 use wf_models::{Catalog, ModelStatus, ModelStore};
 use wf_platform::permissions::{Access, Permission, Permissions, settings_link};
 
-use crate::settings_window::values::choose_tier;
 use crate::settings_window::{Controller, SettingsParts, Surface};
 use crate::{Consent, Mark, OnboardingWindow, Prefs, Setup, SetupStep, TrialPhase};
 use wf_shell::onboarding::steps::{Facts, Hardware, Models, Step, first_open};
 use wf_shell::onboarding::trial::{self, Check, Phase, Trial};
+use wf_shell::settings::values::choose_tier;
 
 pub use host::{FlowWatcher, OnboardingHost, Opening};
 pub use system::SystemMachine;

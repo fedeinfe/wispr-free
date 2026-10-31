@@ -8,12 +8,49 @@ use wf_core::settings::{
 use wf_dictation::plan::{effective_models, preset_tier, speaker_model_ids, vad_on};
 use wf_models::{Catalog, ModelKind};
 
-use crate::SettingsValues;
+/// Every setting edited in place. Choices are indexes into the option lists below.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SettingsValues {
+    pub app_language: i32,
+    pub theme: i32,
+    pub launch_at_login: bool,
+    pub show_pill: bool,
+    pub show_in_dock: bool,
+    pub tier: i32,
+    pub denoise: bool,
+    pub vad: bool,
+    pub llm_cleanup: bool,
+    pub cleanup_strength: i32,
+    pub vad_auto_stop: bool,
+    pub vad_auto_stop_seconds: i32,
+    pub asr_model: i32,
+    pub vad_model: i32,
+    pub llm_model: i32,
+    pub keep_models_loaded: i32,
+    pub style_personal: i32,
+    pub style_work: i32,
+    pub style_email: i32,
+    pub style_other: i32,
+    pub auto_add_corrections: bool,
+    pub press_enter_command: bool,
+    pub meeting_auto_detect: bool,
+    pub meeting_live_transcript: bool,
+    pub meeting_refine_pass: bool,
+    pub meeting_diarization: bool,
+    pub meeting_keep_audio: bool,
+    pub meeting_max_length_minutes: i32,
+    pub meeting_summary_template: String,
+    pub sounds: bool,
+    pub media_while_dictating: i32,
+    pub context_awareness: bool,
+    pub history_retention: i32,
+}
 
-// The order of each list is the order of the options in the .slint pages.
+// The order of each list is the order of the options on the pages.
 const APP_LANGUAGES: [&str; 2] = ["system", "en"];
 const THEMES: [Theme; 3] = [Theme::System, Theme::Light, Theme::Dark];
-const TIERS: [PipelineTier; 4] = [
+/// Also the pill's Pipeline quality menu, in the same order.
+pub const TIERS: [PipelineTier; 4] = [
     PipelineTier::Lite,
     PipelineTier::Balanced,
     PipelineTier::High,
@@ -152,7 +189,7 @@ fn model_index(ids: &[String], model: Option<&String>) -> i32 {
     model.map_or(-1, |model| index_of(ids, model))
 }
 
-/// The theme as the windows' `Prefs.values` hold it.
+/// The theme as [`SettingsValues`] holds it.
 pub fn theme_index(settings: &Settings) -> i32 {
     index_of(&THEMES, &settings.general.theme)
 }
@@ -231,7 +268,9 @@ pub fn apply_values(
     meetings.diarization = values.meeting_diarization;
     meetings.keep_audio = values.meeting_keep_audio;
     meetings.max_length_minutes = values.meeting_max_length_minutes.max(1) as u32;
-    meetings.summary_template = values.meeting_summary_template.to_string();
+    meetings
+        .summary_template
+        .clone_from(&values.meeting_summary_template);
 
     settings.media.sounds = values.sounds;
     settings.media.while_dictating = pick(

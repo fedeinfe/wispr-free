@@ -14,8 +14,8 @@ use wf_meetings::MeetingStore;
 use wf_platform::desktop;
 
 use super::{MeetingsController, MeetingsParts};
-use crate::settings_window::values::theme_index;
 use crate::{MeetingsWindow, memory};
+use wf_shell::settings::values::theme_index;
 
 /// Long enough for the OS window to be gone once the controller is dropped.
 const WINDOW_TEARDOWN: Duration = Duration::from_millis(600);

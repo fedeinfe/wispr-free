@@ -537,7 +537,7 @@ fn persist_write(folder: &Path) {
     let prefs = window.global::<Prefs>();
 
     let choices = ModelChoices::from_catalog(&catalog);
-    prefs.set_values(values_of(&wanted, &catalog, &choices));
+    prefs.set_values(values_of(&wanted, &catalog, &choices).into());
     prefs.invoke_commit();
 
     for (index, action) in Action::ALL.into_iter().enumerate() {

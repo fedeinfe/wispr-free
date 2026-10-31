@@ -6,8 +6,7 @@ use wf_core::settings::{
     Style, Theme,
 };
 use wf_models::{Catalog, Tier};
-use wispr_free::SettingsValues;
-use wispr_free::settings_window::values::{ModelChoices, apply_values, values_of};
+use wf_shell::settings::values::{ModelChoices, SettingsValues, apply_values, values_of};
 
 fn fixtures() -> (Catalog, ModelChoices) {
     let catalog = Catalog::bundled();

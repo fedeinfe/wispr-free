@@ -3,23 +3,31 @@
 use std::any::Any;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use directories::UserDirs;
 use wf_audio::{AudioBackend, Capture, CaptureConfig, CaptureEvent, CpalBackend, LevelMeter};
+use wf_core::settings::{SettingsStore, data_dir};
+use wf_core::shortcut::Platform;
 use wf_dictation::Dictation;
-use wf_models::hardware;
+use wf_models::{Catalog, hardware};
 use wf_platform::autostart::LaunchAtLogin;
 use wf_platform::desktop;
 use wf_platform::keys::{self, KeyListener, KeySignal};
 
 use super::rows::hardware_summary;
-use super::{Desktop, Event, Mailbox};
+use super::{Desktop, Event, Mailbox, OnChange, Paths, SettingsParts};
+
+/// The folder picker is the toolkit's. `done` runs on the UI thread, only if one is picked.
+pub type PickFolder = Rc<dyn Fn(&Path, Box<dyn FnOnce(PathBuf)>)>;
 
 pub struct SystemDesktop {
     pub dictation: Dictation,
+    pub pick_folder: PickFolder,
 }
 
 impl Desktop for SystemDesktop {
@@ -45,18 +53,7 @@ impl Desktop for SystemDesktop {
     }
 
     fn pick_folder(&self, start: &Path, done: Box<dyn FnOnce(PathBuf)>) {
-        let dialog = rfd::AsyncFileDialog::new()
-            .set_title("Choose a folder for models")
-            .set_directory(start);
-        // Not the blocking dialog: its nested run loop would re-enter Slint's event handler.
-        let picked = slint::spawn_local(async move {
-            if let Some(folder) = dialog.pick_folder().await {
-                done(folder.path().to_path_buf());
-            }
-        });
-        if let Err(error) = picked {
-            eprintln!("could not open the folder picker: {error}");
-        }
+        (self.pick_folder)(start, done);
     }
 
     fn capture_keys(
@@ -174,4 +171,39 @@ fn look_for_microphones(mailbox: &Mailbox) {
         LOOKING.store(false, Ordering::SeqCst);
         mailbox.post(Event::Microphones { devices, default });
     });
+}
+
+/// Where exports land: the Downloads folder, or as near as the machine has.
+pub fn export_folder(data_dir: &Path) -> PathBuf {
+    UserDirs::new()
+        .and_then(|user| {
+            let downloads = user.download_dir().map(PathBuf::from);
+            downloads.or_else(|| Some(user.home_dir().to_path_buf()))
+        })
+        .unwrap_or_else(|| data_dir.to_path_buf())
+}
+
+/// What a window on the real machine is built from.
+pub fn system_parts(
+    store: Arc<SettingsStore>,
+    on_change: OnChange,
+    dictation: Dictation,
+    pick_folder: PickFolder,
+) -> SettingsParts {
+    let data_dir = data_dir().unwrap_or_else(|| PathBuf::from("wispr-free"));
+    let export_dir = export_folder(&data_dir);
+    SettingsParts {
+        store,
+        catalog: Arc::new(Catalog::bundled()),
+        desktop: Rc::new(SystemDesktop {
+            dictation,
+            pick_folder,
+        }),
+        on_change,
+        paths: Paths {
+            data_dir,
+            export_dir,
+        },
+        platform: Platform::current(),
+    }
 }

@@ -18,7 +18,7 @@ use wispr_free::onboarding::{
 };
 use wispr_free::pill::{self, PillController};
 use wispr_free::settings_window::{SettingsHost, system_parts};
-use wispr_free::{Tray, debug, prefs};
+use wispr_free::{Tray, debug, folder_picker, prefs};
 
 /// How long quitting waits for a running recording to be closed. If it isn't done by then, the
 /// next launch repairs the meeting.
@@ -152,6 +152,7 @@ fn run(args: &[String]) -> Result<(), slint::PlatformError> {
                     Arc::clone(&store),
                     Rc::clone(&apply_settings),
                     flow.clone(),
+                    folder_picker(),
                 ),
                 machine: Rc::new(machine),
             });

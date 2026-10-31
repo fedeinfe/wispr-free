@@ -1,13 +1,10 @@
 //! What the list-like parts of the pages show, built from plain data.
 
-use slint::SharedString;
 use wf_audio::{InputDevice, rank_devices};
 use wf_core::settings::Settings;
 use wf_core::shortcut::{Action, Platform};
 use wf_models::hardware::{GpuBackend, HardwareInfo};
 use wf_models::{ModelEntry, ModelKind, ModelStatus};
-
-use crate::{LanguageRow, ModelRow, ShortcutRow};
 
 /// The languages "My languages" offers: ISO 639-1 code and name.
 pub const LANGUAGES: [(&str, &str); 15] = [
@@ -27,6 +24,38 @@ pub const LANGUAGES: [(&str, &str); 15] = [
     ("ja", "Japanese"),
     ("zh", "Chinese"),
 ];
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ShortcutRow {
+    pub action: String,
+    pub combo: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LanguageRow {
+    pub name: String,
+    pub selected: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ModelRow {
+    /// Its place in the catalog, and so in the list of models.
+    pub index: i32,
+    pub name: String,
+    pub size: String,
+    /// Which pipeline stage runs on it, or empty.
+    pub used_for: String,
+    pub detail: String,
+    pub status: String,
+    pub installed: bool,
+    /// Started but not finished, so Download resumes it.
+    pub partial: bool,
+    /// This row is downloading or verifying.
+    pub busy: bool,
+    pub downloading: bool,
+    /// 0..1 while downloading.
+    pub progress: f32,
+}
 
 pub fn shortcut_rows(settings: &Settings, platform: Platform) -> Vec<ShortcutRow> {
     Action::ALL
@@ -86,7 +115,7 @@ pub fn microphone_lines(
     lines
 }
 
-/// `index` is the model's place in the catalog, which is also its row in `Prefs.models`.
+/// `index` is the model's place in the catalog, which is also its row in the list of models.
 pub fn model_row(index: usize, model: &ModelEntry, status: ModelStatus) -> ModelRow {
     let kind = match model.kind {
         ModelKind::Vad => "Voice detection",
@@ -101,7 +130,7 @@ pub fn model_row(index: usize, model: &ModelEntry, status: ModelStatus) -> Model
         format_bytes(model.ram_mb * 1024 * 1024),
         model.license,
     );
-    let (status_text, installed, partial): (SharedString, _, _) = match status {
+    let (status_text, installed, partial): (String, _, _) = match status {
         ModelStatus::NotInstalled => ("Not downloaded".into(), false, false),
         ModelStatus::Partial { downloaded } => (
             format!("{} downloaded", format_bytes(downloaded)).into(),
@@ -114,7 +143,7 @@ pub fn model_row(index: usize, model: &ModelEntry, status: ModelStatus) -> Model
         index: index as i32,
         name: model.name.as_str().into(),
         size: format_bytes(model.download_size()).into(),
-        used_for: SharedString::new(),
+        used_for: String::new(),
         detail: detail.into(),
         status: status_text,
         installed,
