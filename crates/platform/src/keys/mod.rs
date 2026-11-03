@@ -2,6 +2,7 @@
 //! low-level hook on Windows, evdev on Linux. Not register-a-hotkey APIs: push-to-talk needs the
 //! release too. `examples/keys.rs` prints the stream through the dictation state machine.
 
+pub mod held;
 pub mod keymap;
 
 #[cfg(target_os = "linux")]

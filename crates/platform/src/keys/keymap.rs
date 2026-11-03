@@ -103,6 +103,30 @@ pub fn mac_key(code: u16) -> Key {
     }
 }
 
+/// Where macOS keeps the live state of a key: a virtual keycode or a mouse button number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MacInput {
+    Key(u16),
+    Button(u32),
+}
+
+/// The inverse of [`mac_key`] and of the tap's button numbers. `None` for Fn, which some keyboards
+/// report only through HID, so its keycode state can't be trusted.
+pub fn mac_input(key: Key) -> Option<MacInput> {
+    match key {
+        Key::Fn => None,
+        Key::Mouse(button) => Some(MacInput::Button(match button {
+            MouseButton::Middle => 2,
+            MouseButton::Back => 3,
+            MouseButton::Forward => 4,
+            MouseButton::Other(number) => u32::from(number),
+        })),
+        _ => (0..=0x7F)
+            .find(|&code| mac_key(code) == key)
+            .map(MacInput::Key),
+    }
+}
+
 /// A macOS modifier keycode and the event flags of its `flagsChanged` event: whether it went down.
 /// `None` for keys without a held state (Caps Lock toggles) and non-modifiers.
 pub fn mac_modifier_pressed(code: u16, flags: u64) -> Option<bool> {

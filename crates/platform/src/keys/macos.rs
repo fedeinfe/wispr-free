@@ -11,7 +11,8 @@ use std::thread::{self, JoinHandle};
 
 use wf_core::shortcut::{Key, KeyEvent, MouseButton};
 
-use super::keymap::{mac_key, mac_modifier_pressed};
+use super::held::Held;
+use super::keymap::{MacInput, mac_input, mac_key, mac_modifier_pressed};
 use super::{Callback, KeySignal, KeysError};
 
 type CfRef = *const c_void;
@@ -57,6 +58,8 @@ unsafe extern "C" {
     fn CGEventTapEnable(tap: CfRef, enable: bool);
     fn CGEventGetFlags(event: CgEvent) -> u64;
     fn CGEventGetIntegerValueField(event: CgEvent, field: u32) -> i64;
+    fn CGEventSourceKeyState(state: i32, key: u16) -> bool;
+    fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
 }
 
 #[link(name = "IOKit", kind = "framework")]
@@ -90,6 +93,9 @@ const EVENT_OTHER_MOUSE_UP: u32 = 26;
 const EVENT_TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFF_FFFE;
 const EVENT_TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFF_FFFF;
 
+/// `kCGEventSourceStateHIDSystemState`: what the hardware reports now, secure input or not.
+const SOURCE_STATE_HID_SYSTEM: i32 = 1;
+
 const FIELD_MOUSE_BUTTON_NUMBER: u32 = 3;
 const FIELD_KEYCODE: u32 = 9;
 const FIELD_SOURCE_PID: u32 = 41;
@@ -112,6 +118,31 @@ struct Context {
     on_signal: Callback,
     tap: CfRef,
     own_pid: i64,
+    held: Held,
+}
+
+impl Context {
+    /// Reports `event`, preceded by the releases of earlier keys that are no longer down.
+    fn key(&mut self, event: KeyEvent) -> bool {
+        for missed in self.held.on_event(event, is_down) {
+            (self.on_signal)(KeySignal::Key(missed));
+        }
+        (self.on_signal)(KeySignal::Key(event))
+    }
+
+    fn lost(&mut self) {
+        self.held.clear();
+        (self.on_signal)(KeySignal::Lost);
+    }
+}
+
+fn is_down(key: Key) -> Option<bool> {
+    Some(match mac_input(key)? {
+        MacInput::Key(code) => unsafe { CGEventSourceKeyState(SOURCE_STATE_HID_SYSTEM, code) },
+        MacInput::Button(number) => unsafe {
+            CGEventSourceButtonState(SOURCE_STATE_HID_SYSTEM, number)
+        },
+    })
 }
 
 pub struct Listener {
@@ -174,6 +205,7 @@ fn run(on_signal: Callback, stop: &AtomicBool, ready: &mpsc::Sender<Result<Start
         on_signal,
         tap: null(),
         own_pid: i64::from(std::process::id()),
+        held: Held::default(),
     }));
     let user_info = context.cast::<c_void>();
     let Some((tap, can_swallow)) = create_tap(user_info) else {
@@ -198,7 +230,7 @@ fn run(on_signal: Callback, stop: &AtomicBool, ready: &mpsc::Sender<Result<Start
         }));
         while !stop.load(Ordering::SeqCst) {
             if CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1.0, 0) == RUN_LOOP_FINISHED {
-                ((*context).on_signal)(KeySignal::Lost);
+                (*context).lost();
                 break;
             }
         }
@@ -300,14 +332,14 @@ extern "C" fn on_tap_event(
         EVENT_TAP_DISABLED_BY_TIMEOUT | EVENT_TAP_DISABLED_BY_USER_INPUT
     ) {
         unsafe { CGEventTapEnable(context.tap, true) };
-        (context.on_signal)(KeySignal::Lost);
+        context.lost();
         return event;
     }
     if unsafe { CGEventGetIntegerValueField(event, FIELD_SOURCE_PID) } == context.own_pid {
         return event; // our own paste keystroke
     }
     match key_event(kind, event) {
-        Some(key_event) if (context.on_signal)(KeySignal::Key(key_event)) => null_mut(),
+        Some(key_event) if context.key(key_event) => null_mut(),
         _ => event,
     }
 }
@@ -354,9 +386,9 @@ extern "C" fn on_hid_value(
     };
     if USAGE_PAGES_FN.contains(&page) && usage == USAGE_FN {
         let pressed = level != 0;
-        (context.on_signal)(KeySignal::Key(KeyEvent {
+        context.key(KeyEvent {
             key: Key::Fn,
             pressed,
-        }));
+        });
     }
 }

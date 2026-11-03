@@ -132,3 +132,33 @@ fn macos_flags_changed_tells_press_from_release_per_side() {
         assert_eq!(mac_modifier_pressed(code, flags), expected, "{name}");
     }
 }
+
+#[test]
+fn macos_live_state_inputs_invert_the_keycodes_and_buttons() {
+    use wf_platform::keys::keymap::{MacInput, mac_input};
+
+    for code in 0..=0x7F {
+        let key = mac_key(code);
+        if key != Key::Fn {
+            assert_eq!(mac_input(key), Some(MacInput::Key(code)), "{code:#x}");
+        }
+    }
+    assert_eq!(mac_input(Key::Fn), None);
+    assert_eq!(
+        mac_input(Key::Mouse(MouseButton::Middle)),
+        Some(MacInput::Button(2))
+    );
+    assert_eq!(
+        mac_input(Key::Mouse(MouseButton::Back)),
+        Some(MacInput::Button(3))
+    );
+    assert_eq!(
+        mac_input(Key::Mouse(MouseButton::Forward)),
+        Some(MacInput::Button(4))
+    );
+    assert_eq!(
+        mac_input(Key::Mouse(MouseButton::Other(5))),
+        Some(MacInput::Button(5))
+    );
+    assert_eq!(mac_input(Key::PrintScreen), None);
+}
